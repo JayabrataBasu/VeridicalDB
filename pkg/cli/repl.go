@@ -11,6 +11,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 )
 
 const (
@@ -26,10 +27,11 @@ const (
 
 // REPL provides an interactive Read-Eval-Print Loop for VeridicalDB.
 type REPL struct {
-	in     io.Reader
-	out    io.Writer
-	logger *log.Logger
-	tm     *catalog.TableManager
+	in       io.Reader
+	out      io.Writer
+	logger   *log.Logger
+	tm       *catalog.TableManager
+	executor *sql.Executor
 
 	// running tracks if the REPL is currently active
 	running bool
@@ -37,11 +39,16 @@ type REPL struct {
 
 // NewREPL creates a new REPL instance.
 func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager) *REPL {
+	var executor *sql.Executor
+	if tm != nil {
+		executor = sql.NewExecutor(tm)
+	}
 	return &REPL{
-		in:     in,
-		out:    out,
-		logger: logger,
-		tm:     tm,
+		in:       in,
+		out:      out,
+		logger:   logger,
+		tm:       tm,
+		executor: executor,
 	}
 }
 
@@ -150,19 +157,22 @@ func (r *REPL) execute(input string) {
 		fmt.Fprint(r.out, "\033[2J\033[H")
 
 	case strings.HasPrefix(cmdUpper, "CREATE TABLE"):
-		fmt.Fprintln(r.out, "CREATE TABLE: Not yet implemented (Stage 2)")
+		r.executeSQL(input)
+
+	case strings.HasPrefix(cmdUpper, "DROP TABLE"):
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "INSERT"):
-		fmt.Fprintln(r.out, "INSERT: Not yet implemented (Stage 3)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "SELECT"):
-		fmt.Fprintln(r.out, "SELECT: Not yet implemented (Stage 3)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "UPDATE"):
-		fmt.Fprintln(r.out, "UPDATE: Not yet implemented (Stage 3)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "DELETE"):
-		fmt.Fprintln(r.out, "DELETE: Not yet implemented (Stage 3)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "BEGIN"):
 		fmt.Fprintln(r.out, "BEGIN: Not yet implemented (Stage 4)")
@@ -199,12 +209,15 @@ Meta Commands:
   \s                 Show status
   \c                 Clear screen
 
-SQL Commands (Coming Soon):
-  CREATE TABLE ...   Create a new table (Stage 2)
-  INSERT INTO ...    Insert rows (Stage 3)
-  SELECT ...         Query data (Stage 3)
-  UPDATE ...         Update rows (Stage 3)
-  DELETE ...         Delete rows (Stage 3)
+SQL Commands:
+  CREATE TABLE name (col type, ...);   Create a new table
+  DROP TABLE name;                     Drop a table
+  INSERT INTO name VALUES (...);       Insert rows
+  SELECT ... FROM name [WHERE ...];    Query data
+  UPDATE name SET ... [WHERE ...];     Update rows
+  DELETE FROM name [WHERE ...];        Delete rows
+
+Transaction Commands (Coming Soon):
   BEGIN;             Start transaction (Stage 4)
   COMMIT;            Commit transaction (Stage 4)
   ROLLBACK;          Rollback transaction (Stage 4)
@@ -221,10 +234,11 @@ func (r *REPL) printStatus() {
 	fmt.Fprintf(r.out, `
 Server Status:
 ═══════════════════════════════════════════════════════════
-  Version:           %s (Stage 2 - Catalog & Schema)
+  Version:           %s (Stage 3 - SQL Layer)
   Status:            Running
   Tables:            %d
   Storage Engine:    Heap (row store)
+  SQL Support:       CREATE, DROP, INSERT, SELECT, UPDATE, DELETE
   Transactions:      Not yet implemented (Stage 4)
   Connections:       CLI only (TCP not implemented)
 ═══════════════════════════════════════════════════════════
@@ -274,6 +288,137 @@ func (r *REPL) describeTable(name string) {
 		fmt.Fprintf(r.out, "%-4d %-20s %-12s %-10s\n", c.ID, c.Name, c.Type.String(), nullable)
 	}
 	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+}
+
+// executeSQL parses and executes a SQL statement.
+func (r *REPL) executeSQL(input string) {
+	if r.executor == nil {
+		fmt.Fprintln(r.out, "SQL executor not initialized.")
+		return
+	}
+
+	// Parse the SQL statement
+	parser := sql.NewParser(input)
+	stmt, err := parser.Parse()
+	if err != nil {
+		fmt.Fprintf(r.out, "Syntax error: %v\n", err)
+		return
+	}
+
+	// Execute the statement
+	result, err := r.executor.Execute(stmt)
+	if err != nil {
+		fmt.Fprintf(r.out, "Error: %v\n", err)
+		return
+	}
+
+	// Display the result
+	r.displayResult(result)
+}
+
+// displayResult formats and prints a query result.
+func (r *REPL) displayResult(result *sql.Result) {
+	// If it's a message-only result (CREATE, INSERT, UPDATE, DELETE)
+	if result.Message != "" && result.Columns == nil {
+		fmt.Fprintln(r.out, result.Message)
+		return
+	}
+
+	// It's a SELECT query result
+	if len(result.Columns) == 0 {
+		fmt.Fprintln(r.out, "(no columns)")
+		return
+	}
+
+	// Calculate column widths
+	widths := make([]int, len(result.Columns))
+	for i, col := range result.Columns {
+		widths[i] = len(col)
+	}
+	for _, row := range result.Rows {
+		for i, val := range row {
+			str := formatValue(val)
+			if len(str) > widths[i] {
+				widths[i] = len(str)
+			}
+		}
+	}
+
+	// Cap max column width at 40 characters
+	for i := range widths {
+		if widths[i] > 40 {
+			widths[i] = 40
+		}
+	}
+
+	// Print header
+	fmt.Fprint(r.out, "\n")
+	for i, col := range result.Columns {
+		fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(col, widths[i]))
+		if i < len(result.Columns)-1 {
+			fmt.Fprint(r.out, "│")
+		}
+	}
+	fmt.Fprintln(r.out)
+
+	// Print separator
+	for i := range result.Columns {
+		fmt.Fprint(r.out, strings.Repeat("─", widths[i]+2))
+		if i < len(result.Columns)-1 {
+			fmt.Fprint(r.out, "┼")
+		}
+	}
+	fmt.Fprintln(r.out)
+
+	// Print rows
+	for _, row := range result.Rows {
+		for i, val := range row {
+			str := formatValue(val)
+			fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(str, widths[i]))
+			if i < len(row)-1 {
+				fmt.Fprint(r.out, "│")
+			}
+		}
+		fmt.Fprintln(r.out)
+	}
+
+	// Print row count
+	fmt.Fprintf(r.out, "\n(%d row(s))\n", len(result.Rows))
+}
+
+// formatValue converts a catalog.Value to a string for display.
+func formatValue(v catalog.Value) string {
+	if v.IsNull {
+		return "NULL"
+	}
+	switch v.Type {
+	case catalog.TypeInt32:
+		return fmt.Sprintf("%d", v.Int32)
+	case catalog.TypeInt64:
+		return fmt.Sprintf("%d", v.Int64)
+	case catalog.TypeText:
+		return v.Text
+	case catalog.TypeBool:
+		if v.Bool {
+			return "true"
+		}
+		return "false"
+	case catalog.TypeTimestamp:
+		return v.Timestamp.Format("2006-01-02 15:04:05")
+	default:
+		return "?"
+	}
+}
+
+// truncate limits a string to maxLen characters.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen < 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // RunInteractive starts an interactive REPL using stdin/stdout.

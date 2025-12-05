@@ -121,3 +121,19 @@ func fetchTuple(buf []byte, slot int) ([]byte, error) {
     copy(data, buf[start:end])
     return data, nil
 }
+
+// deleteTuple marks a slot as deleted by setting length to 0.
+// The space is not reclaimed (would need compaction), but the slot can be reused.
+func deleteTuple(buf []byte, slot int) error {
+    slotCount := pageSlotCount(buf)
+    if slot < 0 || slot >= slotCount {
+        return errors.New("invalid slot")
+    }
+    off, l := getSlot(buf, slot)
+    if l == 0 || off == 0 {
+        return errors.New("slot already empty")
+    }
+    // Mark slot as empty by setting offset and length to 0
+    setSlot(buf, slot, 0, 0)
+    return nil
+}

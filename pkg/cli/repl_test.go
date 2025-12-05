@@ -47,19 +47,19 @@ func TestREPLCommands(t *testing.T) {
 			expected: []string{"Unknown command", "FOOBAR"},
 		},
 		{
-			name:     "create table stub",
+			name:     "create table without executor",
 			input:    "CREATE TABLE users(id INT);\n",
-			expected: []string{"Not yet implemented", "Stage 2"},
+			expected: []string{"SQL executor not initialized"},
 		},
 		{
-			name:     "select stub",
+			name:     "select without executor",
 			input:    "SELECT * FROM users;\n",
-			expected: []string{"Not yet implemented", "Stage 3"},
+			expected: []string{"SQL executor not initialized"},
 		},
 		{
-			name:     "insert stub",
+			name:     "insert without executor",
 			input:    "INSERT INTO users VALUES (1);\n",
-			expected: []string{"Not yet implemented", "Stage 3"},
+			expected: []string{"SQL executor not initialized"},
 		},
 		{
 			name:     "begin stub",
@@ -101,7 +101,8 @@ func TestREPLMultilineInput(t *testing.T) {
 	}
 
 	result := output.String()
-	if !strings.Contains(result, "Not yet implemented") {
+	// Without TableManager, SQL executor is not initialized
+	if !strings.Contains(result, "SQL executor not initialized") {
 		t.Errorf("multiline SELECT should be processed, got:\n%s", result)
 	}
 }

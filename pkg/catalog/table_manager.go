@@ -99,3 +99,8 @@ func (tm *TableManager) DescribeTable(name string) ([]Column, error) {
 	}
 	return meta.Columns, nil
 }
+
+// Delete removes a row by RID.
+func (tm *TableManager) Delete(rid storage.RID) error {
+	return tm.storage.Delete(rid)
+}

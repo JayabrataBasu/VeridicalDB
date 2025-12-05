@@ -149,10 +149,10 @@ VeridicalDB/
 | Stage | Description | Status |
 |-------|-------------|--------|
 | 0 | Foundation (CLI, Config, Logging) | ✅ Complete |
-| 1 | Heap Storage Engine | 🔜 Next |
-| 2 | Catalog & Schema | ⏳ Planned |
-| 3 | SQL Parser & Executor | ⏳ Planned |
-| 4 | MVCC Transactions | ⏳ Planned |
+| 1 | Heap Storage Engine | ✅ Complete |
+| 2 | Catalog & Schema | ✅ Complete |
+| 3 | SQL Parser & Executor | ✅ Complete |
+| 4 | MVCC Transactions | 🔜 Next |
 | 5 | Concurrency & Locking | ⏳ Planned |
 | 6 | B+ Tree Indexes | ⏳ Planned |
 | 7 | WAL & Recovery | ⏳ Planned |

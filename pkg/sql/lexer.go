@@ -1,0 +1,272 @@
+// Package sql provides SQL parsing and execution for VeridicalDB.
+package sql
+
+import (
+	"strings"
+	"unicode"
+)
+
+// TokenType represents the type of a token.
+type TokenType int
+
+const (
+	// Special tokens
+	TOKEN_EOF TokenType = iota
+	TOKEN_ILLEGAL
+
+	// Literals
+	TOKEN_IDENT   // identifiers: table names, column names
+	TOKEN_INT     // integer literals
+	TOKEN_STRING  // string literals 'hello'
+
+	// Operators and delimiters
+	TOKEN_COMMA     // ,
+	TOKEN_SEMICOLON // ;
+	TOKEN_LPAREN    // (
+	TOKEN_RPAREN    // )
+	TOKEN_STAR      // *
+	TOKEN_EQ        // =
+	TOKEN_NE        // != or <>
+	TOKEN_LT        // <
+	TOKEN_LE        // <=
+	TOKEN_GT        // >
+	TOKEN_GE        // >=
+
+	// Keywords
+	TOKEN_SELECT
+	TOKEN_FROM
+	TOKEN_WHERE
+	TOKEN_INSERT
+	TOKEN_INTO
+	TOKEN_VALUES
+	TOKEN_UPDATE
+	TOKEN_SET
+	TOKEN_DELETE
+	TOKEN_CREATE
+	TOKEN_TABLE
+	TOKEN_DROP
+	TOKEN_AND
+	TOKEN_OR
+	TOKEN_NOT
+	TOKEN_NULL
+	TOKEN_TRUE
+	TOKEN_FALSE
+	TOKEN_PRIMARY
+	TOKEN_KEY
+	TOKEN_INT_TYPE
+	TOKEN_BIGINT
+	TOKEN_TEXT
+	TOKEN_BOOL
+	TOKEN_TIMESTAMP
+)
+
+var keywords = map[string]TokenType{
+	"SELECT":    TOKEN_SELECT,
+	"FROM":      TOKEN_FROM,
+	"WHERE":     TOKEN_WHERE,
+	"INSERT":    TOKEN_INSERT,
+	"INTO":      TOKEN_INTO,
+	"VALUES":    TOKEN_VALUES,
+	"UPDATE":    TOKEN_UPDATE,
+	"SET":       TOKEN_SET,
+	"DELETE":    TOKEN_DELETE,
+	"CREATE":    TOKEN_CREATE,
+	"TABLE":     TOKEN_TABLE,
+	"DROP":      TOKEN_DROP,
+	"AND":       TOKEN_AND,
+	"OR":        TOKEN_OR,
+	"NOT":       TOKEN_NOT,
+	"NULL":      TOKEN_NULL,
+	"TRUE":      TOKEN_TRUE,
+	"FALSE":     TOKEN_FALSE,
+	"PRIMARY":   TOKEN_PRIMARY,
+	"KEY":       TOKEN_KEY,
+	"INT":       TOKEN_INT_TYPE,
+	"INTEGER":   TOKEN_INT_TYPE,
+	"BIGINT":    TOKEN_BIGINT,
+	"TEXT":      TOKEN_TEXT,
+	"VARCHAR":   TOKEN_TEXT,
+	"STRING":    TOKEN_TEXT,
+	"BOOL":      TOKEN_BOOL,
+	"BOOLEAN":   TOKEN_BOOL,
+	"TIMESTAMP": TOKEN_TIMESTAMP,
+	"DATETIME":  TOKEN_TIMESTAMP,
+}
+
+// Token represents a lexical token.
+type Token struct {
+	Type    TokenType
+	Literal string
+	Pos     int
+}
+
+// Lexer tokenizes SQL input.
+type Lexer struct {
+	input   string
+	pos     int  // current position
+	readPos int  // next position to read
+	ch      byte // current character
+}
+
+// NewLexer creates a new Lexer for the input string.
+func NewLexer(input string) *Lexer {
+	l := &Lexer{input: input}
+	l.readChar()
+	return l
+}
+
+func (l *Lexer) readChar() {
+	if l.readPos >= len(l.input) {
+		l.ch = 0
+	} else {
+		l.ch = l.input[l.readPos]
+	}
+	l.pos = l.readPos
+	l.readPos++
+}
+
+func (l *Lexer) peekChar() byte {
+	if l.readPos >= len(l.input) {
+		return 0
+	}
+	return l.input[l.readPos]
+}
+
+func (l *Lexer) skipWhitespace() {
+	for l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r' {
+		l.readChar()
+	}
+}
+
+// NextToken returns the next token from the input.
+func (l *Lexer) NextToken() Token {
+	l.skipWhitespace()
+
+	var tok Token
+	tok.Pos = l.pos
+
+	switch l.ch {
+	case 0:
+		tok.Type = TOKEN_EOF
+		tok.Literal = ""
+	case ',':
+		tok = Token{Type: TOKEN_COMMA, Literal: ",", Pos: l.pos}
+		l.readChar()
+	case ';':
+		tok = Token{Type: TOKEN_SEMICOLON, Literal: ";", Pos: l.pos}
+		l.readChar()
+	case '(':
+		tok = Token{Type: TOKEN_LPAREN, Literal: "(", Pos: l.pos}
+		l.readChar()
+	case ')':
+		tok = Token{Type: TOKEN_RPAREN, Literal: ")", Pos: l.pos}
+		l.readChar()
+	case '*':
+		tok = Token{Type: TOKEN_STAR, Literal: "*", Pos: l.pos}
+		l.readChar()
+	case '=':
+		tok = Token{Type: TOKEN_EQ, Literal: "=", Pos: l.pos}
+		l.readChar()
+	case '<':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = Token{Type: TOKEN_LE, Literal: "<=", Pos: l.pos - 1}
+			l.readChar()
+		} else if l.peekChar() == '>' {
+			l.readChar()
+			tok = Token{Type: TOKEN_NE, Literal: "<>", Pos: l.pos - 1}
+			l.readChar()
+		} else {
+			tok = Token{Type: TOKEN_LT, Literal: "<", Pos: l.pos}
+			l.readChar()
+		}
+	case '>':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = Token{Type: TOKEN_GE, Literal: ">=", Pos: l.pos - 1}
+			l.readChar()
+		} else {
+			tok = Token{Type: TOKEN_GT, Literal: ">", Pos: l.pos}
+			l.readChar()
+		}
+	case '!':
+		if l.peekChar() == '=' {
+			l.readChar()
+			tok = Token{Type: TOKEN_NE, Literal: "!=", Pos: l.pos - 1}
+			l.readChar()
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: string(l.ch), Pos: l.pos}
+			l.readChar()
+		}
+	case '\'':
+		tok.Type = TOKEN_STRING
+		tok.Literal = l.readString()
+		tok.Pos = l.pos
+	default:
+		if isLetter(l.ch) {
+			tok.Pos = l.pos
+			tok.Literal = l.readIdentifier()
+			tok.Type = lookupKeyword(tok.Literal)
+			return tok
+		} else if isDigit(l.ch) || (l.ch == '-' && isDigit(l.peekChar())) {
+			tok.Pos = l.pos
+			tok.Literal = l.readNumber()
+			tok.Type = TOKEN_INT
+			return tok
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: string(l.ch), Pos: l.pos}
+			l.readChar()
+		}
+	}
+	return tok
+}
+
+func (l *Lexer) readIdentifier() string {
+	pos := l.pos
+	for isLetter(l.ch) || isDigit(l.ch) || l.ch == '_' {
+		l.readChar()
+	}
+	return l.input[pos:l.pos]
+}
+
+func (l *Lexer) readNumber() string {
+	pos := l.pos
+	if l.ch == '-' {
+		l.readChar()
+	}
+	for isDigit(l.ch) {
+		l.readChar()
+	}
+	return l.input[pos:l.pos]
+}
+
+func (l *Lexer) readString() string {
+	l.readChar() // consume opening quote
+	pos := l.pos
+	for l.ch != '\'' && l.ch != 0 {
+		if l.ch == '\\' && l.peekChar() == '\'' {
+			l.readChar() // skip escape
+		}
+		l.readChar()
+	}
+	str := l.input[pos:l.pos]
+	if l.ch == '\'' {
+		l.readChar() // consume closing quote
+	}
+	return str
+}
+
+func isLetter(ch byte) bool {
+	return unicode.IsLetter(rune(ch)) || ch == '_'
+}
+
+func isDigit(ch byte) bool {
+	return ch >= '0' && ch <= '9'
+}
+
+func lookupKeyword(ident string) TokenType {
+	if tok, ok := keywords[strings.ToUpper(ident)]; ok {
+		return tok
+	}
+	return TOKEN_IDENT
+}

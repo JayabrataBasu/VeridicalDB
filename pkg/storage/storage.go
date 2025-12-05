@@ -90,6 +90,23 @@ func (s *Storage) Fetch(rid RID) ([]byte, error) {
     return fetchTuple(pageBuf, int(rid.Slot))
 }
 
+// Delete marks a record as deleted by clearing its slot.
+func (s *Storage) Delete(rid RID) error {
+    pager, err := OpenPager(s.dataDir, tableFileName(rid.Table), s.pageSize)
+    if err != nil {
+        return err
+    }
+    defer pager.Close()
+    pageBuf := make([]byte, s.pageSize)
+    if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+        return err
+    }
+    if err := deleteTuple(pageBuf, int(rid.Slot)); err != nil {
+        return err
+    }
+    return pager.WritePage(rid.Page, pageBuf)
+}
+
 func tableFileName(table string) string {
     return filepath.Join("tables", table+".tbl")
 }
