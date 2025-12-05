@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 )
 
@@ -27,17 +29,19 @@ type REPL struct {
 	in     io.Reader
 	out    io.Writer
 	logger *log.Logger
+	tm     *catalog.TableManager
 
 	// running tracks if the REPL is currently active
 	running bool
 }
 
 // NewREPL creates a new REPL instance.
-func NewREPL(in io.Reader, out io.Writer, logger *log.Logger) *REPL {
+func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager) *REPL {
 	return &REPL{
 		in:     in,
 		out:    out,
 		logger: logger,
+		tm:     tm,
 	}
 }
 
@@ -128,16 +132,14 @@ func (r *REPL) execute(input string) {
 		fmt.Fprintf(r.out, "VeridicalDB version %s\n", Version)
 
 	case cmdUpper == "\\LIST" || cmdUpper == "\\DT":
-		// List tables (stub for now)
-		fmt.Fprintln(r.out, "No tables yet. (Storage engine not implemented)")
+		r.listTables()
 
 	case strings.HasPrefix(cmdUpper, "\\DESCRIBE ") || strings.HasPrefix(cmdUpper, "\\D "):
-		// Describe table (stub for now)
 		parts := strings.Fields(cmd)
 		if len(parts) < 2 {
 			fmt.Fprintln(r.out, "Usage: \\describe <table_name>")
 		} else {
-			fmt.Fprintf(r.out, "Table '%s' not found. (Storage engine not implemented)\n", parts[1])
+			r.describeTable(parts[1])
 		}
 
 	case cmdUpper == "STATUS" || cmdUpper == "\\S":
@@ -212,19 +214,70 @@ SQL Commands (Coming Soon):
 
 // printStatus displays current server status.
 func (r *REPL) printStatus() {
-	fmt.Fprintln(r.out, `
+	tableCount := 0
+	if r.tm != nil {
+		tableCount = len(r.tm.ListTables())
+	}
+	fmt.Fprintf(r.out, `
 Server Status:
 ═══════════════════════════════════════════════════════════
-  Version:           0.1.0 (Stage 0 - Skeleton)
+  Version:           %s (Stage 2 - Catalog & Schema)
   Status:            Running
-  Storage Engine:    Not yet implemented
-  Transactions:      Not yet implemented
+  Tables:            %d
+  Storage Engine:    Heap (row store)
+  Transactions:      Not yet implemented (Stage 4)
   Connections:       CLI only (TCP not implemented)
-═══════════════════════════════════════════════════════════`)
+═══════════════════════════════════════════════════════════
+`, Version, tableCount)
+}
+
+// listTables prints all tables in the database.
+func (r *REPL) listTables() {
+	if r.tm == nil {
+		fmt.Fprintln(r.out, "TableManager not initialized.")
+		return
+	}
+	tables := r.tm.ListTables()
+	if len(tables) == 0 {
+		fmt.Fprintln(r.out, "No tables found.")
+		return
+	}
+	sort.Strings(tables)
+	fmt.Fprintln(r.out, "\nTables:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════")
+	for _, t := range tables {
+		fmt.Fprintf(r.out, "  %s\n", t)
+	}
+	fmt.Fprintf(r.out, "\n(%d table(s))\n", len(tables))
+}
+
+// describeTable prints column info for a table.
+func (r *REPL) describeTable(name string) {
+	if r.tm == nil {
+		fmt.Fprintln(r.out, "TableManager not initialized.")
+		return
+	}
+	cols, err := r.tm.DescribeTable(name)
+	if err != nil {
+		fmt.Fprintf(r.out, "Error: %v\n", err)
+		return
+	}
+	fmt.Fprintf(r.out, "\nTable: %s\n", name)
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	fmt.Fprintf(r.out, "%-4s %-20s %-12s %-10s\n", "ID", "Column", "Type", "Nullable")
+	fmt.Fprintln(r.out, "───────────────────────────────────────────────────────")
+	for _, c := range cols {
+		nullable := "YES"
+		if c.NotNull {
+			nullable = "NO"
+		}
+		fmt.Fprintf(r.out, "%-4d %-20s %-12s %-10s\n", c.ID, c.Name, c.Type.String(), nullable)
+	}
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }
 
 // RunInteractive starts an interactive REPL using stdin/stdout.
-func RunInteractive(logger *log.Logger) error {
-	repl := NewREPL(os.Stdin, os.Stdout, logger)
+func RunInteractive(logger *log.Logger, tm *catalog.TableManager) error {
+	repl := NewREPL(os.Stdin, os.Stdout, logger, tm)
 	return repl.Run()
 }

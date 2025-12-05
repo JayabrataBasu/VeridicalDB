@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
@@ -72,9 +73,17 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// Initialize TableManager
+	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, cfg.Storage.PageSize)
+	if err != nil {
+		logger.Error("Failed to initialize TableManager", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("TableManager initialized", "tables", len(tm.ListTables()))
+
 	// Run in interactive mode
 	if *interactive {
-		if err := cli.RunInteractive(logger); err != nil {
+		if err := cli.RunInteractive(logger, tm); err != nil {
 			logger.Error("REPL error", "error", err)
 			os.Exit(1)
 		}
