@@ -58,6 +58,11 @@ const (
 	TOKEN_TEXT
 	TOKEN_BOOL
 	TOKEN_TIMESTAMP
+
+	// Transaction keywords
+	TOKEN_BEGIN
+	TOKEN_COMMIT
+	TOKEN_ROLLBACK
 )
 
 var keywords = map[string]TokenType{
@@ -91,6 +96,9 @@ var keywords = map[string]TokenType{
 	"BOOLEAN":   TOKEN_BOOL,
 	"TIMESTAMP": TOKEN_TIMESTAMP,
 	"DATETIME":  TOKEN_TIMESTAMP,
+	"BEGIN":     TOKEN_BEGIN,
+	"COMMIT":    TOKEN_COMMIT,
+	"ROLLBACK":  TOKEN_ROLLBACK,
 }
 
 // Token represents a lexical token.

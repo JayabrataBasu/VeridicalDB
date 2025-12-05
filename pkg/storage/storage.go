@@ -107,6 +107,24 @@ func (s *Storage) Delete(rid RID) error {
     return pager.WritePage(rid.Page, pageBuf)
 }
 
+// Update updates a record in place. The new data must be the same size as the old.
+// This is primarily used for MVCC XMax updates.
+func (s *Storage) Update(rid RID, data []byte) error {
+    pager, err := OpenPager(s.dataDir, tableFileName(rid.Table), s.pageSize)
+    if err != nil {
+        return err
+    }
+    defer pager.Close()
+    pageBuf := make([]byte, s.pageSize)
+    if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+        return err
+    }
+    if err := updateTupleInPlace(pageBuf, int(rid.Slot), data); err != nil {
+        return err
+    }
+    return pager.WritePage(rid.Page, pageBuf)
+}
+
 func tableFileName(table string) string {
     return filepath.Join("tables", table+".tbl")
 }

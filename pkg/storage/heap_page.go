@@ -137,3 +137,23 @@ func deleteTuple(buf []byte, slot int) error {
     setSlot(buf, slot, 0, 0)
     return nil
 }
+
+// updateTupleInPlace updates the data at a slot in place.
+// The new data must be exactly the same size as the old data.
+// This is used for MVCC XMax updates which don't change tuple size.
+func updateTupleInPlace(buf []byte, slot int, newData []byte) error {
+    slotCount := pageSlotCount(buf)
+    if slot < 0 || slot >= slotCount {
+        return errors.New("invalid slot")
+    }
+    off, l := getSlot(buf, slot)
+    if l == 0 || off == 0 {
+        return errors.New("slot empty")
+    }
+    if len(newData) != int(l) {
+        return errors.New("new data size must match existing tuple size")
+    }
+    start := int(off)
+    copy(buf[start:start+len(newData)], newData)
+    return nil
+}

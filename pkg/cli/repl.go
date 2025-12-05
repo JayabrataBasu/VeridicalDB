@@ -12,6 +12,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
 const (
@@ -20,6 +21,9 @@ const (
 
 	// Prompt displayed to users
 	Prompt = "veridical> "
+
+	// TxPrompt displayed when in a transaction
+	TxPrompt = "veridical*> "
 
 	// ContinuePrompt for multi-line statements
 	ContinuePrompt = "       ... "
@@ -33,6 +37,10 @@ type REPL struct {
 	tm       *catalog.TableManager
 	executor *sql.Executor
 
+	// MVCC support
+	mtm     *catalog.MVCCTableManager
+	session *sql.Session
+
 	// running tracks if the REPL is currently active
 	running bool
 }
@@ -40,15 +48,26 @@ type REPL struct {
 // NewREPL creates a new REPL instance.
 func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager) *REPL {
 	var executor *sql.Executor
+	var mtm *catalog.MVCCTableManager
+	var session *sql.Session
+
 	if tm != nil {
 		executor = sql.NewExecutor(tm)
+
+		// Create MVCC layer
+		txnMgr := txn.NewManager()
+		mtm = catalog.NewMVCCTableManager(tm, txnMgr)
+		session = sql.NewSession(mtm)
 	}
+
 	return &REPL{
 		in:       in,
 		out:      out,
 		logger:   logger,
 		tm:       tm,
 		executor: executor,
+		mtm:      mtm,
+		session:  session,
 	}
 }
 
@@ -61,9 +80,9 @@ func (r *REPL) Run() error {
 	var buffer strings.Builder
 
 	for r.running {
-		// Print appropriate prompt
+		// Print appropriate prompt (with transaction indicator if active)
 		if buffer.Len() == 0 {
-			fmt.Fprint(r.out, Prompt)
+			fmt.Fprint(r.out, r.getPrompt())
 		} else {
 			fmt.Fprint(r.out, ContinuePrompt)
 		}
@@ -103,6 +122,14 @@ func (r *REPL) Run() error {
 
 	fmt.Fprintln(r.out, "Goodbye!")
 	return nil
+}
+
+// getPrompt returns the appropriate prompt based on transaction state.
+func (r *REPL) getPrompt() string {
+	if r.session != nil && r.session.InTransaction() {
+		return fmt.Sprintf("veridical [tx]> ")
+	}
+	return Prompt
 }
 
 // printWelcome displays the welcome banner.
@@ -175,13 +202,13 @@ func (r *REPL) execute(input string) {
 		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "BEGIN"):
-		fmt.Fprintln(r.out, "BEGIN: Not yet implemented (Stage 4)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "COMMIT"):
-		fmt.Fprintln(r.out, "COMMIT: Not yet implemented (Stage 4)")
+		r.executeSQL(input)
 
 	case strings.HasPrefix(cmdUpper, "ROLLBACK"):
-		fmt.Fprintln(r.out, "ROLLBACK: Not yet implemented (Stage 4)")
+		r.executeSQL(input)
 
 	default:
 		fmt.Fprintf(r.out, "Unknown command: %s\nType HELP; for available commands.\n", cmd)
@@ -217,10 +244,10 @@ SQL Commands:
   UPDATE name SET ... [WHERE ...];     Update rows
   DELETE FROM name [WHERE ...];        Delete rows
 
-Transaction Commands (Coming Soon):
-  BEGIN;             Start transaction (Stage 4)
-  COMMIT;            Commit transaction (Stage 4)
-  ROLLBACK;          Rollback transaction (Stage 4)
+Transaction Commands:
+  BEGIN;             Start a new transaction
+  COMMIT;            Commit current transaction
+  ROLLBACK;          Rollback current transaction
 
 ═══════════════════════════════════════════════════════════`)
 }
@@ -231,18 +258,23 @@ func (r *REPL) printStatus() {
 	if r.tm != nil {
 		tableCount = len(r.tm.ListTables())
 	}
+	txnStatus := "Not active"
+	if r.session != nil && r.session.InTransaction() {
+		txnStatus = "Active"
+	}
 	fmt.Fprintf(r.out, `
 Server Status:
 ═══════════════════════════════════════════════════════════
-  Version:           %s (Stage 3 - SQL Layer)
+  Version:           %s (Stage 4 - MVCC)
   Status:            Running
   Tables:            %d
   Storage Engine:    Heap (row store)
   SQL Support:       CREATE, DROP, INSERT, SELECT, UPDATE, DELETE
-  Transactions:      Not yet implemented (Stage 4)
+  Transactions:      MVCC (Snapshot Isolation)
+  Current Txn:       %s
   Connections:       CLI only (TCP not implemented)
 ═══════════════════════════════════════════════════════════
-`, Version, tableCount)
+`, Version, tableCount, txnStatus)
 }
 
 // listTables prints all tables in the database.
@@ -292,6 +324,18 @@ func (r *REPL) describeTable(name string) {
 
 // executeSQL parses and executes a SQL statement.
 func (r *REPL) executeSQL(input string) {
+	// Prefer session (MVCC-enabled) over executor
+	if r.session != nil {
+		result, err := r.session.ExecuteSQL(input)
+		if err != nil {
+			fmt.Fprintf(r.out, "Error: %v\n", err)
+			return
+		}
+		r.displayResult(result)
+		return
+	}
+
+	// Fallback to legacy executor if no session
 	if r.executor == nil {
 		fmt.Fprintln(r.out, "SQL executor not initialized.")
 		return

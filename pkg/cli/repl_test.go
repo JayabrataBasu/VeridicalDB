@@ -62,9 +62,9 @@ func TestREPLCommands(t *testing.T) {
 			expected: []string{"SQL executor not initialized"},
 		},
 		{
-			name:     "begin stub",
+			name:     "begin without session",
 			input:    "BEGIN;\n",
-			expected: []string{"Not yet implemented", "Stage 4"},
+			expected: []string{"SQL executor not initialized"},
 		},
 	}
 

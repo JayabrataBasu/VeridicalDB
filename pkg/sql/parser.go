@@ -67,6 +67,12 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseCreate()
 	case TOKEN_DROP:
 		return p.parseDrop()
+	case TOKEN_BEGIN:
+		return p.parseBegin()
+	case TOKEN_COMMIT:
+		return p.parseCommit()
+	case TOKEN_ROLLBACK:
+		return p.parseRollback()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -523,4 +529,22 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	default:
 		return nil, fmt.Errorf("unexpected token in expression: %v (%q)", p.cur.Type, p.cur.Literal)
 	}
+}
+
+// parseBegin parses: BEGIN
+func (p *Parser) parseBegin() (*BeginStmt, error) {
+	p.nextToken() // consume BEGIN
+	return &BeginStmt{}, nil
+}
+
+// parseCommit parses: COMMIT
+func (p *Parser) parseCommit() (*CommitStmt, error) {
+	p.nextToken() // consume COMMIT
+	return &CommitStmt{}, nil
+}
+
+// parseRollback parses: ROLLBACK
+func (p *Parser) parseRollback() (*RollbackStmt, error) {
+	p.nextToken() // consume ROLLBACK
+	return &RollbackStmt{}, nil
 }

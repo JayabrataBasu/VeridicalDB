@@ -116,3 +116,20 @@ type UnaryExpr struct {
 }
 
 func (e *UnaryExpr) exprNode() {}
+
+// Transaction statements
+
+// BeginStmt represents BEGIN statement.
+type BeginStmt struct{}
+
+func (s *BeginStmt) statementNode() {}
+
+// CommitStmt represents COMMIT statement.
+type CommitStmt struct{}
+
+func (s *CommitStmt) statementNode() {}
+
+// RollbackStmt represents ROLLBACK statement.
+type RollbackStmt struct{}
+
+func (s *RollbackStmt) statementNode() {}
