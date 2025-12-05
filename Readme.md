@@ -1,0 +1,1 @@
+Veridical means truthful
