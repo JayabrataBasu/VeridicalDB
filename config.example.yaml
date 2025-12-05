@@ -1,0 +1,22 @@
+# VeridicalDB Configuration File
+# Copy this to config.yaml and customize as needed
+
+server:
+  # Port for TCP connections (used in Stage 5+)
+  port: 5432
+  # Host address to bind to
+  host: "127.0.0.1"
+
+storage:
+  # Directory where database files are stored
+  data_dir: "./data"
+  # Page size in bytes (must be power of 2, 1024-65536)
+  page_size: 8192
+
+logging:
+  # Minimum log level: debug, info, warn, error
+  level: "info"
+  # Log format: text or json
+  format: "text"
+  # Output: stdout, stderr, or file path
+  output: "stdout"

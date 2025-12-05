@@ -1,0 +1,58 @@
+# Build artifacts
+/build/
+/data/
+
+# Test artifacts
+coverage.out
+coverage.html
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+veridicaldb
+
+# Config files (user-specific)
+veridicaldb.yaml
+veridicaldb.json
+veridicaldb.toml
+
+# Log files
+*.log
+
+# Temp files
+*.tmp
+*.temp
+
+# Local documentation and notes (personal/working files)
+Roadmap.md
+roadmap.md
+
+# Local config overrides and secrets
+config.yaml
+config.json
+.env
+*.key
+*.pem
+
+# Database files
+*.db
+*.sqlite
+
+# History / Shell state
+.history
+
