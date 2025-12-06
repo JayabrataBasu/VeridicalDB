@@ -312,3 +312,16 @@ func (m *Manager) ActiveCount() int {
 	}
 	return count
 }
+
+// GetActiveTransactions returns all active transactions.
+func (m *Manager) GetActiveTransactions() []*Transaction {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var active []*Transaction
+	for _, tx := range m.transactions {
+		if tx.State == TxInProgress {
+			active = append(active, tx)
+		}
+	}
+	return active
+}

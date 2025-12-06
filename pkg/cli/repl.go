@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -179,6 +180,21 @@ func (r *REPL) execute(input string) {
 	case cmdUpper == "STATUS" || cmdUpper == "\\S":
 		r.printStatus()
 
+	case cmdUpper == "\\DI":
+		r.listIndexes()
+
+	case cmdUpper == "\\STATS":
+		r.printStatistics()
+
+	case cmdUpper == "\\LOCKS":
+		r.printLocks()
+
+	case cmdUpper == "\\TXNS":
+		r.printTransactions()
+
+	case cmdUpper == "\\MEMORY" || cmdUpper == "\\MEM":
+		r.printMemoryStats()
+
 	case cmdUpper == "CLEAR" || cmdUpper == "\\C":
 		// Clear screen (ANSI escape code)
 		fmt.Fprint(r.out, "\033[2J\033[H")
@@ -229,12 +245,19 @@ Available Commands:
 
 Meta Commands:
   \dt, \list         List all tables
+  \di                List all indexes
   \d <table>         Describe a table
   \h, \?             Show help
   \q                 Quit
   \v                 Show version
   \s                 Show status
   \c                 Clear screen
+
+Monitoring Commands:
+  \stats             Show database statistics
+  \locks             Show active locks
+  \txns              Show active transactions
+  \mem, \memory      Show memory statistics
 
 SQL Commands:
   CREATE TABLE name (col type, ...);   Create a new table
@@ -469,4 +492,80 @@ func truncate(s string, maxLen int) string {
 func RunInteractive(logger *log.Logger, tm *catalog.TableManager) error {
 	repl := NewREPL(os.Stdin, os.Stdout, logger, tm)
 	return repl.Run()
+}
+
+// listIndexes prints all indexes in the database.
+func (r *REPL) listIndexes() {
+	// Indexes are managed by btree.IndexManager, which we don't have direct access to
+	// For now, show a placeholder message
+	fmt.Fprintln(r.out, "\nIndexes:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════")
+	fmt.Fprintln(r.out, "  (Index listing requires IndexManager integration)")
+	fmt.Fprintln(r.out, "  Use CREATE INDEX to create indexes on tables")
+	fmt.Fprintln(r.out, "")
+}
+
+// printStatistics prints database statistics.
+func (r *REPL) printStatistics() {
+	fmt.Fprintln(r.out, "\nDatabase Statistics:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+
+	tableCount := 0
+	if r.tm != nil {
+		tableCount = len(r.tm.ListTables())
+	}
+
+	txnStatus := "None"
+	if r.session != nil && r.session.InTransaction() {
+		txnStatus = "Active"
+	}
+
+	fmt.Fprintf(r.out, "  %-25s %d\n", "Tables:", tableCount)
+	fmt.Fprintf(r.out, "  %-25s %s\n", "Current Transaction:", txnStatus)
+	fmt.Fprintln(r.out, "")
+	fmt.Fprintln(r.out, "  Note: Full statistics available via SystemCatalog API")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+}
+
+// printLocks prints current lock information.
+func (r *REPL) printLocks() {
+	fmt.Fprintln(r.out, "\nActive Locks:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	fmt.Fprintln(r.out, "  (Lock information requires LockManager integration)")
+	fmt.Fprintln(r.out, "  Use SystemCatalog.GetLocks() for programmatic access")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+}
+
+// printTransactions prints active transaction information.
+func (r *REPL) printTransactions() {
+	fmt.Fprintln(r.out, "\nActive Transactions:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+
+	if r.session == nil {
+		fmt.Fprintln(r.out, "  (Session not initialized)")
+	} else if r.session.InTransaction() {
+		fmt.Fprintln(r.out, "  Current session has an active transaction")
+	} else {
+		fmt.Fprintln(r.out, "  No active transaction in current session")
+	}
+
+	fmt.Fprintln(r.out, "")
+	fmt.Fprintln(r.out, "  Use SystemCatalog.GetActiveTransactions() for full list")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+}
+
+// printMemoryStats prints memory statistics.
+func (r *REPL) printMemoryStats() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	fmt.Fprintln(r.out, "\nMemory Statistics:")
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap Allocated:", m.HeapAlloc/1024/1024)
+	fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap System:", m.HeapSys/1024/1024)
+	fmt.Fprintf(r.out, "  %-25s %d\n", "Heap Objects:", m.HeapObjects)
+	fmt.Fprintf(r.out, "  %-25s %d\n", "Goroutines:", runtime.NumGoroutine())
+	fmt.Fprintf(r.out, "  %-25s %d\n", "GC Cycles:", m.NumGC)
+	fmt.Fprintf(r.out, "  %-25s %.2f ms\n", "Last GC Pause:", float64(m.PauseNs[(m.NumGC+255)%256])/1e6)
+	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }

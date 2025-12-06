@@ -321,3 +321,38 @@ func (m *Manager) Stats() (activeLocks, waitingRequests int) {
 	}
 	return
 }
+
+// LockInfo holds information about a single lock for monitoring.
+type LockInfo struct {
+	Resource     ResourceID
+	HolderTxIDs  []txn.TxID
+	Mode         Mode
+	WaitingCount int
+}
+
+// GetLockInfo returns information about all currently held locks.
+func (m *Manager) GetLockInfo() []LockInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var infos []LockInfo
+	for resource, entry := range m.locks {
+		if len(entry.holders) == 0 {
+			continue
+		}
+
+		info := LockInfo{
+			Resource:     resource,
+			WaitingCount: len(entry.waiters),
+		}
+
+		// Collect all holder transaction IDs
+		for txID, mode := range entry.holders {
+			info.HolderTxIDs = append(info.HolderTxIDs, txID)
+			info.Mode = mode // In shared mode, all holders have same mode
+		}
+
+		infos = append(infos, info)
+	}
+	return infos
+}
