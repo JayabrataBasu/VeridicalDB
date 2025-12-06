@@ -24,8 +24,9 @@ type ColumnDef struct {
 
 // CreateTableStmt represents CREATE TABLE statement.
 type CreateTableStmt struct {
-	TableName string
-	Columns   []ColumnDef
+	TableName   string
+	Columns     []ColumnDef
+	StorageType string // "ROW" (default) or "COLUMN"
 }
 
 func (s *CreateTableStmt) statementNode() {}

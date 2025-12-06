@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 )
@@ -344,6 +345,21 @@ func (p *Parser) parseCreate() (Statement, error) {
 
 	if err := p.expect(TOKEN_RPAREN); err != nil {
 		return nil, err
+	}
+
+	// Optional USING COLUMN clause
+	stmt.StorageType = "ROW" // default
+	if p.curTokenIs(TOKEN_USING) {
+		p.nextToken() // consume USING
+		if p.curTokenIs(TOKEN_COLUMN) {
+			stmt.StorageType = "COLUMN"
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ROW" {
+			stmt.StorageType = "ROW"
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected ROW or COLUMN after USING, got %v", p.cur.Literal)
+		}
 	}
 
 	return stmt, nil

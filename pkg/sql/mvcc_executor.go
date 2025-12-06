@@ -61,12 +61,22 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		}
 	}
 
-	if err := e.mtm.CreateTable(stmt.TableName, cols); err != nil {
+	// Use storage type from statement (default is "ROW")
+	storageType := strings.ToLower(stmt.StorageType)
+	if storageType == "" {
+		storageType = "row"
+	}
+
+	if err := e.mtm.CreateTableWithStorage(stmt.TableName, cols, storageType); err != nil {
 		return nil, err
 	}
 
+	msg := fmt.Sprintf("Table '%s' created", stmt.TableName)
+	if storageType == "column" {
+		msg += " (columnar storage)"
+	}
 	return &Result{
-		Message: fmt.Sprintf("Table '%s' created.", stmt.TableName),
+		Message: msg + ".",
 	}, nil
 }
 

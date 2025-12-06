@@ -1,7 +1,9 @@
 package sql
 
 import (
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
@@ -84,6 +86,7 @@ func TestParser(t *testing.T) {
 		{name: "insert single", input: "INSERT INTO users VALUES (1, 'alice');", wantErr: false},
 		{name: "insert with cols", input: "INSERT INTO users (id, name) VALUES (1, 'alice');", wantErr: false},
 		{name: "create table", input: "CREATE TABLE users (id INT, name TEXT);", wantErr: false},
+		{name: "create table columnar", input: "CREATE TABLE analytics (id INT, value INT) USING COLUMN;", wantErr: false},
 		{name: "drop table", input: "DROP TABLE users;", wantErr: false},
 		{name: "update", input: "UPDATE users SET name = 'bob' WHERE id = 1;", wantErr: false},
 		{name: "delete", input: "DELETE FROM users WHERE id = 1;", wantErr: false},
@@ -140,6 +143,113 @@ func TestExecutorCreateTable(t *testing.T) {
 	}
 	if !found {
 		t.Error("table 'users' not found after create")
+	}
+}
+
+// TestExecutorCreateColumnarTable verifies CREATE TABLE USING COLUMN works.
+func TestExecutorCreateColumnarTable(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create a columnar table
+	parser := NewParser("CREATE TABLE analytics (id INT, value INT) USING COLUMN;")
+	stmt, err := parser.Parse()
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	result, err := executor.Execute(stmt)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+
+	if !strings.Contains(result.Message, "columnar storage") {
+		t.Errorf("expected message to mention columnar storage, got: %s", result.Message)
+	}
+
+	// Verify table exists with correct storage type
+	meta, err := tm.Catalog().GetTable("analytics")
+	if err != nil {
+		t.Fatalf("table not found: %v", err)
+	}
+
+	if meta.StorageType != "column" {
+		t.Errorf("expected storage type 'column', got: %s", meta.StorageType)
+	}
+
+	// Test INSERT into columnar table
+	insertParser := NewParser("INSERT INTO analytics VALUES (1, 100);")
+	insertStmt, err := insertParser.Parse()
+	if err != nil {
+		t.Fatalf("parse INSERT error: %v", err)
+	}
+
+	result, err = executor.Execute(insertStmt)
+	if err != nil {
+		t.Fatalf("execute INSERT error: %v", err)
+	}
+
+	if result.RowsAffected != 1 {
+		t.Errorf("expected 1 row affected, got: %d", result.RowsAffected)
+	}
+
+	// Insert more rows
+	for i := 2; i <= 5; i++ {
+		sql := fmt.Sprintf("INSERT INTO analytics VALUES (%d, %d);", i, i*100)
+		parser := NewParser(sql)
+		stmt, _ := parser.Parse()
+		_, err := executor.Execute(stmt)
+		if err != nil {
+			t.Fatalf("insert row %d: %v", i, err)
+		}
+	}
+
+	// Test SELECT from columnar table
+	selectParser := NewParser("SELECT * FROM analytics;")
+	selectStmt, err := selectParser.Parse()
+	if err != nil {
+		t.Fatalf("parse SELECT error: %v", err)
+	}
+
+	result, err = executor.Execute(selectStmt)
+	if err != nil {
+		t.Fatalf("execute SELECT error: %v", err)
+	}
+
+	if len(result.Rows) != 5 {
+		t.Errorf("expected 5 rows, got: %d", len(result.Rows))
+	}
+}
+
+// TestParseUsingColumn verifies USING COLUMN parsing.
+func TestParseUsingColumn(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		storageType string
+	}{
+		{"default", "CREATE TABLE t1 (id INT);", "ROW"},
+		{"explicit row", "CREATE TABLE t2 (id INT) USING ROW;", "ROW"},
+		{"columnar", "CREATE TABLE t3 (id INT) USING COLUMN;", "COLUMN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+
+			createStmt, ok := stmt.(*CreateTableStmt)
+			if !ok {
+				t.Fatalf("expected CreateTableStmt, got %T", stmt)
+			}
+
+			if createStmt.StorageType != tt.storageType {
+				t.Errorf("storage type = %s, want %s", createStmt.StorageType, tt.storageType)
+			}
+		})
 	}
 }
 

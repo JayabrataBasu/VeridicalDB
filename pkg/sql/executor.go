@@ -20,9 +20,9 @@ func NewExecutor(tm *catalog.TableManager) *Executor {
 
 // Result represents the result of executing a SQL statement.
 type Result struct {
-	Message    string
-	Columns    []string
-	Rows       [][]catalog.Value
+	Message      string
+	Columns      []string
+	Rows         [][]catalog.Value
 	RowsAffected int
 }
 
@@ -56,11 +56,21 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		}
 	}
 
-	if err := e.tm.CreateTable(stmt.TableName, cols); err != nil {
+	// Use storage type from statement (default is "ROW")
+	storageType := strings.ToLower(stmt.StorageType)
+	if storageType == "" {
+		storageType = "row"
+	}
+
+	if err := e.tm.CreateTableWithStorage(stmt.TableName, cols, storageType); err != nil {
 		return nil, err
 	}
 
-	return &Result{Message: fmt.Sprintf("Table '%s' created.", stmt.TableName)}, nil
+	msg := fmt.Sprintf("Table '%s' created", stmt.TableName)
+	if storageType == "column" {
+		msg += " (columnar storage)"
+	}
+	return &Result{Message: msg + "."}, nil
 }
 
 func (e *Executor) executeDrop(stmt *DropTableStmt) (*Result, error) {

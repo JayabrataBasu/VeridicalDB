@@ -160,7 +160,6 @@ VeridicalDB/
 | 9 | Sharding | ⏳ Planned |
 | 10 | Polish & Observability | ⏳ Planned |
 
-See [Roadmap.md](Roadmap.md) for detailed specifications.
 
 ## License
 

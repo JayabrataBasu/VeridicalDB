@@ -229,6 +229,11 @@ func (m *MVCCTableManager) CreateTable(name string, cols []Column) error {
 	return m.tm.CreateTable(name, cols)
 }
 
+// CreateTableWithStorage delegates to the underlying TableManager.
+func (m *MVCCTableManager) CreateTableWithStorage(name string, cols []Column, storageType string) error {
+	return m.tm.CreateTableWithStorage(name, cols, storageType)
+}
+
 // DropTable delegates to the underlying TableManager.
 func (m *MVCCTableManager) DropTable(name string) error {
 	return m.tm.catalog.DropTable(name)

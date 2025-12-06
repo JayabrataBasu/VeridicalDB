@@ -68,6 +68,10 @@ const (
 	TOKEN_INDEX
 	TOKEN_UNIQUE
 	TOKEN_ON
+
+	// Storage keywords
+	TOKEN_USING
+	TOKEN_COLUMN
 )
 
 var keywords = map[string]TokenType{
@@ -107,6 +111,8 @@ var keywords = map[string]TokenType{
 	"INDEX":     TOKEN_INDEX,
 	"UNIQUE":    TOKEN_UNIQUE,
 	"ON":        TOKEN_ON,
+	"USING":     TOKEN_USING,
+	"COLUMN":    TOKEN_COLUMN,
 }
 
 // Token represents a lexical token.
