@@ -1,0 +1,89 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          echo "Building $GOOS/$GOARCH"
+          BINARY_NAME=veridicaldb
+          SUFFIX=""
+          if [ "$GOOS" = "windows" ]; then SUFFIX=".exe"; fi
+          OUT=build/release/${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}
+          mkdir -p build/release
+          go build -ldflags "-s -w" -o "$OUT" ./cmd/veridicaldb
+          if [ "$GOOS" = "windows" ]; then
+            PKG=veridicaldb-${{ github.ref_name }}-${GOOS}-${GOARCH}.zip
+            (cd build/release && zip -r "$PKG" "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}")
+          else
+            PKG=veridicaldb-${{ github.ref_name }}-${GOOS}-${GOARCH}.tar.gz
+            (cd build/release && tar czf "$PKG" "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}")
+          fi
+
+      - name: Create checksum
+        if: ${{ matrix.goos == 'linux' && matrix.goarch == 'amd64' }}
+        run: |
+          pushd build/release >/dev/null
+          sha256sum * > SHA256SUMS || true
+          popd >/dev/null
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: build/release/**
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build/release
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: true
+
+      - name: Upload release assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/release
+          asset_name: |
+            $(basename build/release/*)
+          asset_content_type: application/octet-stream

@@ -1,3 +1,20 @@
+.PHONY: all release-local docker build
+
+BIN=veridicaldb
+VERSION?=v0.0.0-beta
+
+all: build
+
+build:
+	go build -o build/$(BIN) ./cmd/veridicaldb
+
+release-local:
+	@echo "Running local release script (cross-compile)..."
+	./scripts/release.sh $(VERSION)
+
+docker:
+	@echo "Building Docker image"
+	docker build -t veridicaldb:$(VERSION) .
 # VeridicalDB Makefile
 # Build, test, and manage the database
 
