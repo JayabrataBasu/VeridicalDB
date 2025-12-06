@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -13,6 +14,7 @@ type Session struct {
 	mtm      *catalog.MVCCTableManager
 	executor *MVCCExecutor
 	txnMgr   *txn.Manager
+	lockMgr  *lock.Manager // Optional, can be nil for single-threaded mode
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -27,8 +29,25 @@ func NewSession(mtm *catalog.MVCCTableManager) *Session {
 		mtm:        mtm,
 		executor:   NewMVCCExecutor(mtm),
 		txnMgr:     mtm.TxnManager(),
-		autocommit: true, // Default to autocommit mode
+		lockMgr:    nil, // No locking by default
+		autocommit: true,
 	}
+}
+
+// NewSessionWithLocks creates a new database session with lock support.
+func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *Session {
+	return &Session{
+		mtm:        mtm,
+		executor:   NewMVCCExecutor(mtm),
+		txnMgr:     mtm.TxnManager(),
+		lockMgr:    lockMgr,
+		autocommit: true,
+	}
+}
+
+// SetLockManager sets the lock manager for concurrent access control.
+func (s *Session) SetLockManager(lockMgr *lock.Manager) {
+	s.lockMgr = lockMgr
 }
 
 // ExecuteSQL parses and executes a SQL string.
@@ -69,14 +88,22 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 	if err != nil {
 		// If autocommit and error, abort the transaction
 		if shouldCommit {
+			// Release locks
+			if s.lockMgr != nil {
+				s.lockMgr.ReleaseAll(tx.ID)
+			}
 			_ = s.txnMgr.Abort(tx.ID)
 			s.currentTx = nil
 		}
 		return nil, err
 	}
 
-	// If autocommit, commit the transaction
+	// If autocommit, commit the transaction and release locks
 	if shouldCommit {
+		// Release locks
+		if s.lockMgr != nil {
+			s.lockMgr.ReleaseAll(tx.ID)
+		}
 		if err := s.txnMgr.Commit(tx.ID); err != nil {
 			return nil, fmt.Errorf("autocommit failed: %w", err)
 		}
@@ -125,6 +152,12 @@ func (s *Session) handleCommit() (*Result, error) {
 	}
 
 	txid := s.currentTx.ID
+
+	// Release all locks held by this transaction
+	if s.lockMgr != nil {
+		s.lockMgr.ReleaseAll(txid)
+	}
+
 	if err := s.txnMgr.Commit(txid); err != nil {
 		return nil, err
 	}
@@ -144,6 +177,12 @@ func (s *Session) handleRollback() (*Result, error) {
 	}
 
 	txid := s.currentTx.ID
+
+	// Release all locks held by this transaction
+	if s.lockMgr != nil {
+		s.lockMgr.ReleaseAll(txid)
+	}
+
 	if err := s.txnMgr.Abort(txid); err != nil {
 		return nil, err
 	}
@@ -172,7 +211,12 @@ func (s *Session) CurrentTxID() txn.TxID {
 // Close cleans up the session, aborting any open transaction.
 func (s *Session) Close() {
 	if s.currentTx != nil {
-		_ = s.txnMgr.Abort(s.currentTx.ID)
+		txid := s.currentTx.ID
+		// Release all locks
+		if s.lockMgr != nil {
+			s.lockMgr.ReleaseAll(txid)
+		}
+		_ = s.txnMgr.Abort(txid)
 		s.currentTx = nil
 	}
 }

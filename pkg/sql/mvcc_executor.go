@@ -159,9 +159,9 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
-		for _, col := range meta.Columns {
+		for i, col := range meta.Columns {
 			outCols = append(outCols, col.Name)
-			colIndices = append(colIndices, col.ID)
+			colIndices = append(colIndices, i) // Use slice index, not col.ID
 		}
 	} else {
 		for _, sc := range stmt.Columns {

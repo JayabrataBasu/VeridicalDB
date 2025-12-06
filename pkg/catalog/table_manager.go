@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
@@ -12,6 +13,7 @@ type TableManager struct {
 	storage  *storage.Storage
 	dataDir  string
 	pageSize int
+	mu       sync.RWMutex // Protects all operations
 }
 
 // NewTableManager creates a TableManager.
@@ -36,6 +38,9 @@ func (tm *TableManager) Catalog() *Catalog {
 
 // CreateTable creates a new table with the given schema.
 func (tm *TableManager) CreateTable(name string, cols []Column) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
 	// Register in catalog
 	_, err := tm.catalog.CreateTable(name, cols, "row")
 	if err != nil {
@@ -52,6 +57,9 @@ func (tm *TableManager) CreateTable(name string, cols []Column) error {
 
 // Insert inserts a row into a table, returning the RID.
 func (tm *TableManager) Insert(tableName string, values []Value) (storage.RID, error) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
 	meta, err := tm.catalog.GetTable(tableName)
 	if err != nil {
 		return storage.RID{}, err
@@ -73,6 +81,9 @@ func (tm *TableManager) Insert(tableName string, values []Value) (storage.RID, e
 
 // Fetch retrieves a row by RID and decodes it.
 func (tm *TableManager) Fetch(tableName string, rid storage.RID) ([]Value, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
 	meta, err := tm.catalog.GetTable(tableName)
 	if err != nil {
 		return nil, err
@@ -88,11 +99,16 @@ func (tm *TableManager) Fetch(tableName string, rid storage.RID) ([]Value, error
 
 // ListTables returns all table names.
 func (tm *TableManager) ListTables() []string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
 	return tm.catalog.ListTables()
 }
 
 // DescribeTable returns column information for a table.
 func (tm *TableManager) DescribeTable(name string) ([]Column, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
 	meta, err := tm.catalog.GetTable(name)
 	if err != nil {
 		return nil, err
@@ -102,5 +118,7 @@ func (tm *TableManager) DescribeTable(name string) ([]Column, error) {
 
 // Delete removes a row by RID.
 func (tm *TableManager) Delete(rid storage.RID) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	return tm.storage.Delete(rid)
 }
