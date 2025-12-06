@@ -36,7 +36,13 @@ for t in "${targets[@]}"; do
   pushd "$OUT_DIR" >/dev/null
   PKG_NAME="veridicaldb-${VERSION}-${GOOS}-${GOARCH}"
   mkdir -p "$PKG_NAME"
-  cp "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}" "$PKG_NAME/"
+  # Standardize binary name inside package for user convenience
+  if [ "$GOOS" = "windows" ]; then
+    pkgbin="veridicaldb.exe"
+  else
+    pkgbin="veridicaldb"
+  fi
+  cp "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}" "$PKG_NAME/$pkgbin"
   # include README and sample config if available
   if [ -f "$ROOT_DIR/README.BETA.md" ]; then
     cp "$ROOT_DIR/README.BETA.md" "$PKG_NAME/"
@@ -52,6 +58,9 @@ for t in "${targets[@]}"; do
     tar czf "${PKG_NAME}.tar.gz" "$PKG_NAME"
     rm -rf "$PKG_NAME"
   fi
+
+  # remove the intermediate raw binary to avoid confusion (we keep the packaged archives)
+  rm -f "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}"
   popd >/dev/null
 done
 
