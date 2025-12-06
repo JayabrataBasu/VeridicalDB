@@ -17,11 +17,21 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.23'
+
+      - name: Debug: show workspace
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          pwd
+          echo "Top-level files:"; ls -la
+          echo "cmd directory listing:"; ls -la cmd || true
+          echo "cmd/veridicaldb listing:"; ls -la cmd/veridicaldb || true
 
       - name: Build
         env:
@@ -30,6 +40,10 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           echo "Building $GOOS/$GOARCH"
+          if [ ! -d "./cmd/veridicaldb" ]; then
+            echo "ERROR: ./cmd/veridicaldb not found in workspace. Listing current directory:"; ls -la
+            exit 2
+          fi
           BINARY_NAME=veridicaldb
           SUFFIX=""
           if [ "$GOOS" = "windows" ]; then SUFFIX=".exe"; fi
@@ -78,12 +92,20 @@ jobs:
           prerelease: true
 
       - name: Upload release assets
-        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/release
-          asset_name: |
-            $(basename build/release/*)
-          asset_content_type: application/octet-stream
+          UPLOAD_URL: ${{ steps.create_release.outputs.upload_url }}
+        run: |
+          set -euo pipefail
+          echo "Uploading all files in build/release to the GitHub release"
+          for f in build/release/*; do
+            if [ -d "$f" ]; then
+              continue
+            fi
+            filename=$(basename "$f")
+            echo "Uploading $filename"
+            curl -sS -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"$f" "${UPLOAD_URL}?name=${filename}"
+          done
