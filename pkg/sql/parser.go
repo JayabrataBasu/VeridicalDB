@@ -292,9 +292,24 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	return stmt, nil
 }
 
-// parseCreate parses: CREATE TABLE name (columns)
-func (p *Parser) parseCreate() (*CreateTableStmt, error) {
+// parseCreate parses: CREATE TABLE name (columns) or CREATE [UNIQUE] INDEX name ON table (columns)
+func (p *Parser) parseCreate() (Statement, error) {
 	p.nextToken() // consume CREATE
+
+	// Check for UNIQUE (for CREATE UNIQUE INDEX)
+	isUnique := false
+	if p.curTokenIs(TOKEN_UNIQUE) {
+		isUnique = true
+		p.nextToken()
+	}
+
+	if p.curTokenIs(TOKEN_INDEX) {
+		return p.parseCreateIndex(isUnique)
+	}
+
+	if isUnique {
+		return nil, fmt.Errorf("UNIQUE keyword only valid for CREATE INDEX")
+	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
 		return nil, err
@@ -384,9 +399,63 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 	return col, nil
 }
 
-// parseDrop parses: DROP TABLE name
-func (p *Parser) parseDrop() (*DropTableStmt, error) {
+// parseCreateIndex parses: INDEX name ON table (columns)
+func (p *Parser) parseCreateIndex(unique bool) (*CreateIndexStmt, error) {
+	p.nextToken() // consume INDEX
+
+	stmt := &CreateIndexStmt{Unique: unique}
+
+	// Index name
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected index name, got %v", p.cur.Type)
+	}
+	stmt.IndexName = p.cur.Literal
+	p.nextToken()
+
+	// ON
+	if err := p.expect(TOKEN_ON); err != nil {
+		return nil, err
+	}
+
+	// Table name
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
+	}
+	stmt.TableName = p.cur.Literal
+	p.nextToken()
+
+	// (columns)
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, err
+	}
+
+	for {
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
+		}
+		stmt.Columns = append(stmt.Columns, p.cur.Literal)
+		p.nextToken()
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken()
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	return stmt, nil
+}
+
+// parseDrop parses: DROP TABLE name or DROP INDEX name
+func (p *Parser) parseDrop() (Statement, error) {
 	p.nextToken() // consume DROP
+
+	if p.curTokenIs(TOKEN_INDEX) {
+		return p.parseDropIndex()
+	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
 		return nil, err
@@ -398,6 +467,21 @@ func (p *Parser) parseDrop() (*DropTableStmt, error) {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
 	stmt.TableName = p.cur.Literal
+	p.nextToken()
+
+	return stmt, nil
+}
+
+// parseDropIndex parses: INDEX name
+func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
+	p.nextToken() // consume INDEX
+
+	stmt := &DropIndexStmt{}
+
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected index name, got %v", p.cur.Type)
+	}
+	stmt.IndexName = p.cur.Literal
 	p.nextToken()
 
 	return stmt, nil

@@ -6,7 +6,7 @@ A modern, embeddable database engine built from scratch in Go.
 
 VeridicalDB supports both row-based (heap) and columnar storage, MVCC transactions, SQL queries, and is designed for both embedded and client-server use cases.
 
-## Current Status: Stage 0 - Foundation ✅
+## Current Status: Stage 6 - B+ Trees ✅
 
 The project is being built incrementally. See [Roadmap.md](Roadmap.md) for the full development plan.
 
@@ -152,10 +152,10 @@ VeridicalDB/
 | 1 | Heap Storage Engine | ✅ Complete |
 | 2 | Catalog & Schema | ✅ Complete |
 | 3 | SQL Parser & Executor | ✅ Complete |
-| 4 | MVCC Transactions | 🔜 Next |
-| 5 | Concurrency & Locking | ⏳ Planned |
-| 6 | B+ Tree Indexes | ⏳ Planned |
-| 7 | WAL & Recovery | ⏳ Planned |
+| 4 | MVCC Transactions | ✅ Complete |
+| 5 | Concurrency & Locking | ✅ Complete |
+| 6 | B+ Tree Indexes | ✅ Complete |
+| 7 | WAL & Recovery | 🔜 Next|
 | 8 | Columnar Storage | ⏳ Planned |
 | 9 | Sharding | ⏳ Planned |
 | 10 | Polish & Observability | ⏳ Planned |

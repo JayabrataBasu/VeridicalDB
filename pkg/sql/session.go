@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
@@ -14,7 +15,8 @@ type Session struct {
 	mtm      *catalog.MVCCTableManager
 	executor *MVCCExecutor
 	txnMgr   *txn.Manager
-	lockMgr  *lock.Manager // Optional, can be nil for single-threaded mode
+	lockMgr  *lock.Manager       // Optional, can be nil for single-threaded mode
+	idxMgr   *btree.IndexManager // Optional, can be nil if indexes not used
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -30,6 +32,7 @@ func NewSession(mtm *catalog.MVCCTableManager) *Session {
 		executor:   NewMVCCExecutor(mtm),
 		txnMgr:     mtm.TxnManager(),
 		lockMgr:    nil, // No locking by default
+		idxMgr:     nil, // No indexes by default
 		autocommit: true,
 	}
 }
@@ -41,6 +44,7 @@ func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *
 		executor:   NewMVCCExecutor(mtm),
 		txnMgr:     mtm.TxnManager(),
 		lockMgr:    lockMgr,
+		idxMgr:     nil, // No indexes by default
 		autocommit: true,
 	}
 }
@@ -48,6 +52,13 @@ func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *
 // SetLockManager sets the lock manager for concurrent access control.
 func (s *Session) SetLockManager(lockMgr *lock.Manager) {
 	s.lockMgr = lockMgr
+}
+
+// SetIndexManager sets the index manager for index operations.
+func (s *Session) SetIndexManager(idxMgr *btree.IndexManager) {
+	s.idxMgr = idxMgr
+	// Also set on executor for DML index maintenance
+	s.executor.SetIndexManager(idxMgr)
 }
 
 // ExecuteSQL parses and executes a SQL string.
@@ -76,6 +87,10 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 	switch stmt.(type) {
 	case *CreateTableStmt, *DropTableStmt:
 		return s.executor.Execute(stmt, nil)
+	case *CreateIndexStmt:
+		return s.handleCreateIndex(stmt.(*CreateIndexStmt))
+	case *DropIndexStmt:
+		return s.handleDropIndex(stmt.(*DropIndexStmt))
 	}
 
 	// For DML statements, we need a transaction
@@ -219,4 +234,132 @@ func (s *Session) Close() {
 		_ = s.txnMgr.Abort(txid)
 		s.currentTx = nil
 	}
+}
+
+// handleCreateIndex creates a new index.
+func (s *Session) handleCreateIndex(stmt *CreateIndexStmt) (*Result, error) {
+	if s.idxMgr == nil {
+		return nil, fmt.Errorf("index manager not configured")
+	}
+
+	// Get table metadata
+	cat := s.mtm.Catalog()
+	meta, err := cat.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' not found", stmt.TableName)
+	}
+
+	// Validate columns exist
+	for _, colName := range stmt.Columns {
+		col, _ := meta.Schema.ColumnByName(colName)
+		if col == nil {
+			return nil, fmt.Errorf("column '%s' not found in table '%s'", colName, stmt.TableName)
+		}
+	}
+
+	// Create the index
+	err = s.idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      stmt.IndexName,
+		TableName: stmt.TableName,
+		Columns:   stmt.Columns,
+		Unique:    stmt.Unique,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create index: %w", err)
+	}
+
+	// Populate the index with existing data
+	// Use a read-only transaction to scan all visible rows
+	tempTx := s.txnMgr.Begin()
+	defer s.txnMgr.Commit(tempTx.ID)
+
+	rowCount := 0
+	err = s.mtm.Scan(stmt.TableName, tempTx, func(row *catalog.MVCCRow) (bool, error) {
+		// Build index key
+		key, err := s.buildIndexKeyForRow(stmt.Columns, row.Values, meta.Schema)
+		if err != nil {
+			return false, err
+		}
+
+		// Insert into index
+		if err := s.idxMgr.Insert(stmt.IndexName, key, row.RID); err != nil {
+			// For unique indexes, this would fail on duplicates
+			return false, fmt.Errorf("index insert: %w", err)
+		}
+		rowCount++
+		return true, nil
+	})
+	if err != nil {
+		// Clean up the index if population failed
+		s.idxMgr.DropIndex(stmt.IndexName)
+		return nil, fmt.Errorf("populate index: %w", err)
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Index '%s' created on table '%s'.", stmt.IndexName, stmt.TableName),
+	}, nil
+}
+
+// buildIndexKeyForRow builds an index key from row values.
+func (s *Session) buildIndexKeyForRow(columns []string, values []catalog.Value, schema *catalog.Schema) ([]byte, error) {
+	if len(columns) == 1 {
+		col, idx := schema.ColumnByName(columns[0])
+		if col == nil {
+			return nil, fmt.Errorf("unknown column: %s", columns[0])
+		}
+		return encodeValueForIndex(values[idx])
+	}
+
+	// Composite index
+	var parts [][]byte
+	for _, colName := range columns {
+		col, idx := schema.ColumnByName(colName)
+		if col == nil {
+			return nil, fmt.Errorf("unknown column: %s", colName)
+		}
+		part, err := encodeValueForIndex(values[idx])
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	return btree.EncodeCompositeKey(parts...), nil
+}
+
+// encodeValueForIndex encodes a catalog.Value for use as an index key.
+func encodeValueForIndex(v catalog.Value) ([]byte, error) {
+	if v.IsNull {
+		return []byte{0x00}, nil
+	}
+
+	switch v.Type {
+	case catalog.TypeInt32:
+		return btree.EncodeIntKey(int64(v.Int32)), nil
+	case catalog.TypeInt64:
+		return btree.EncodeIntKey(v.Int64), nil
+	case catalog.TypeBool:
+		if v.Bool {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+	case catalog.TypeText:
+		return append([]byte{0x01}, []byte(v.Text)...), nil
+	default:
+		return nil, fmt.Errorf("unsupported type for index: %v", v.Type)
+	}
+}
+
+// handleDropIndex removes an index.
+func (s *Session) handleDropIndex(stmt *DropIndexStmt) (*Result, error) {
+	if s.idxMgr == nil {
+		return nil, fmt.Errorf("index manager not configured")
+	}
+
+	if err := s.idxMgr.DropIndex(stmt.IndexName); err != nil {
+		return nil, fmt.Errorf("drop index: %w", err)
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Index '%s' dropped.", stmt.IndexName),
+	}, nil
 }

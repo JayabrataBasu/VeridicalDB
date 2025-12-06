@@ -89,6 +89,10 @@ func TestParser(t *testing.T) {
 		{name: "delete", input: "DELETE FROM users WHERE id = 1;", wantErr: false},
 		{name: "delete all", input: "DELETE FROM users;", wantErr: false},
 		{name: "complex where", input: "SELECT * FROM users WHERE age > 18 AND name = 'alice';", wantErr: false},
+		{name: "create index", input: "CREATE INDEX idx_users_email ON users (email);", wantErr: false},
+		{name: "create unique index", input: "CREATE UNIQUE INDEX idx_users_id ON users (id);", wantErr: false},
+		{name: "create composite index", input: "CREATE INDEX idx_users_name_email ON users (name, email);", wantErr: false},
+		{name: "drop index", input: "DROP INDEX idx_users_email;", wantErr: false},
 		{name: "invalid syntax", input: "SELEC * FROM users;", wantErr: true},
 		{name: "missing table", input: "SELECT * FROM;", wantErr: true},
 	}

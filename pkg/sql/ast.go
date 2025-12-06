@@ -37,6 +37,23 @@ type DropTableStmt struct {
 
 func (s *DropTableStmt) statementNode() {}
 
+// CreateIndexStmt represents CREATE [UNIQUE] INDEX statement.
+type CreateIndexStmt struct {
+	IndexName string
+	TableName string
+	Columns   []string
+	Unique    bool
+}
+
+func (s *CreateIndexStmt) statementNode() {}
+
+// DropIndexStmt represents DROP INDEX statement.
+type DropIndexStmt struct {
+	IndexName string
+}
+
+func (s *DropIndexStmt) statementNode() {}
+
 // InsertStmt represents INSERT INTO statement.
 type InsertStmt struct {
 	TableName string

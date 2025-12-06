@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
@@ -11,12 +12,18 @@ import (
 
 // MVCCExecutor executes SQL statements with MVCC transaction support.
 type MVCCExecutor struct {
-	mtm *catalog.MVCCTableManager
+	mtm      *catalog.MVCCTableManager
+	indexMgr *btree.IndexManager
 }
 
 // NewMVCCExecutor creates a new MVCC-aware executor.
 func NewMVCCExecutor(mtm *catalog.MVCCTableManager) *MVCCExecutor {
 	return &MVCCExecutor{mtm: mtm}
+}
+
+// SetIndexManager sets the index manager for index maintenance during DML operations.
+func (e *MVCCExecutor) SetIndexManager(mgr *btree.IndexManager) {
+	e.indexMgr = mgr
 }
 
 // Execute executes a SQL statement within a transaction context.
@@ -131,9 +138,14 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 	}
 
 	// Insert with MVCC
-	_, err = e.mtm.Insert(stmt.TableName, values, tx)
+	rid, err := e.mtm.Insert(stmt.TableName, values, tx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Update indexes for the new row
+	if err := e.updateIndexesOnInsert(stmt.TableName, rid, values, meta.Schema); err != nil {
+		return nil, fmt.Errorf("index update failed: %w", err)
 	}
 
 	return &Result{
@@ -147,6 +159,16 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
 
+	// Try to use an index scan first
+	result, used, err := e.executeSelectWithIndex(stmt, tx)
+	if err != nil {
+		return nil, err
+	}
+	if used {
+		return result, nil // Index scan succeeded
+	}
+
+	// Fall back to full table scan
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
@@ -222,6 +244,7 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 	// Collect rows to update
 	var toUpdate []struct {
 		rid    storage.RID
+		oldRow []catalog.Value
 		newRow []catalog.Value
 	}
 
@@ -236,6 +259,10 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 				return true, nil
 			}
 		}
+
+		// Keep old row for index cleanup
+		oldRow := make([]catalog.Value, len(row.Values))
+		copy(oldRow, row.Values)
 
 		// Build new row with updates
 		newRow := make([]catalog.Value, len(row.Values))
@@ -259,8 +286,9 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 
 		toUpdate = append(toUpdate, struct {
 			rid    storage.RID
+			oldRow []catalog.Value
 			newRow []catalog.Value
-		}{rid: row.RID, newRow: newRow})
+		}{rid: row.RID, oldRow: oldRow, newRow: newRow})
 
 		return true, nil
 	})
@@ -271,13 +299,25 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 
 	// Perform updates: mark old tuple deleted, insert new tuple
 	for _, u := range toUpdate {
+		// Remove old index entries
+		if err := e.updateIndexesOnDelete(stmt.TableName, u.rid, u.oldRow, meta.Schema); err != nil {
+			return nil, fmt.Errorf("update index remove failed: %w", err)
+		}
+
 		// Mark old tuple as deleted
 		if err := e.mtm.MarkDeleted(u.rid, tx); err != nil {
 			return nil, fmt.Errorf("update failed: %w", err)
 		}
+
 		// Insert new version
-		if _, err := e.mtm.Insert(stmt.TableName, u.newRow, tx); err != nil {
+		newRID, err := e.mtm.Insert(stmt.TableName, u.newRow, tx)
+		if err != nil {
 			return nil, fmt.Errorf("update insert failed: %w", err)
+		}
+
+		// Add new index entries
+		if err := e.updateIndexesOnInsert(stmt.TableName, newRID, u.newRow, meta.Schema); err != nil {
+			return nil, fmt.Errorf("update index insert failed: %w", err)
 		}
 	}
 
@@ -298,8 +338,11 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 		return nil, err
 	}
 
-	// Collect RIDs to delete
-	var toDelete []storage.RID
+	// Collect rows to delete (need values for index cleanup)
+	var toDelete []struct {
+		rid    storage.RID
+		values []catalog.Value
+	}
 
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
@@ -313,7 +356,13 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 			}
 		}
 
-		toDelete = append(toDelete, row.RID)
+		// Copy row values for index cleanup
+		values := make([]catalog.Value, len(row.Values))
+		copy(values, row.Values)
+		toDelete = append(toDelete, struct {
+			rid    storage.RID
+			values []catalog.Value
+		}{rid: row.RID, values: values})
 		return true, nil
 	})
 
@@ -321,9 +370,14 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 		return nil, err
 	}
 
-	// Mark tuples as deleted
-	for _, rid := range toDelete {
-		if err := e.mtm.MarkDeleted(rid, tx); err != nil {
+	// Mark tuples as deleted and clean up indexes
+	for _, d := range toDelete {
+		// Remove index entries
+		if err := e.updateIndexesOnDelete(stmt.TableName, d.rid, d.values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("delete index cleanup failed: %w", err)
+		}
+
+		if err := e.mtm.MarkDeleted(d.rid, tx); err != nil {
 			return nil, fmt.Errorf("delete failed: %w", err)
 		}
 	}
@@ -501,4 +555,289 @@ func coerceValueMVCC(v catalog.Value, targetType catalog.DataType) (catalog.Valu
 	}
 
 	return catalog.Value{}, fmt.Errorf("cannot coerce %v to %v", v.Type, targetType)
+}
+
+// updateIndexesOnInsert updates all indexes on a table after an INSERT.
+func (e *MVCCExecutor) updateIndexesOnInsert(tableName string, rid storage.RID, values []catalog.Value, schema *catalog.Schema) error {
+	if e.indexMgr == nil {
+		return nil // No index manager, nothing to do
+	}
+
+	indexes := e.indexMgr.ListIndexes(tableName)
+	for _, meta := range indexes {
+		// Build key from column values
+		key, err := e.buildIndexKey(meta.Columns, values, schema)
+		if err != nil {
+			return fmt.Errorf("build key for index %s: %w", meta.Name, err)
+		}
+
+		// Insert into index: key -> RID
+		if err := e.indexMgr.Insert(meta.Name, key, rid); err != nil {
+			return fmt.Errorf("insert into index %s: %w", meta.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// updateIndexesOnDelete updates all indexes on a table after a DELETE.
+// Note: For MVCC, we don't actually delete from indexes immediately.
+// The index will contain stale entries that are filtered during query.
+// A proper implementation would need garbage collection.
+func (e *MVCCExecutor) updateIndexesOnDelete(tableName string, rid storage.RID, values []catalog.Value, schema *catalog.Schema) error {
+	if e.indexMgr == nil {
+		return nil
+	}
+
+	indexes := e.indexMgr.ListIndexes(tableName)
+	for _, meta := range indexes {
+		// Build key from column values
+		key, err := e.buildIndexKey(meta.Columns, values, schema)
+		if err != nil {
+			return fmt.Errorf("build key for index %s: %w", meta.Name, err)
+		}
+
+		// Delete from index
+		if err := e.indexMgr.Delete(meta.Name, key); err != nil {
+			return fmt.Errorf("delete from index %s: %w", meta.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// buildIndexKey builds an index key from column values.
+func (e *MVCCExecutor) buildIndexKey(columns []string, values []catalog.Value, schema *catalog.Schema) ([]byte, error) {
+	if len(columns) == 1 {
+		// Single column index
+		col, idx := schema.ColumnByName(columns[0])
+		if col == nil {
+			return nil, fmt.Errorf("unknown column: %s", columns[0])
+		}
+		return encodeIndexValue(values[idx])
+	}
+
+	// Composite index - collect all parts and combine
+	var parts [][]byte
+	for _, colName := range columns {
+		col, idx := schema.ColumnByName(colName)
+		if col == nil {
+			return nil, fmt.Errorf("unknown column: %s", colName)
+		}
+		part, err := encodeIndexValue(values[idx])
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, part)
+	}
+	// Call EncodeCompositeKey with variadic expansion
+	return btree.EncodeCompositeKey(parts...), nil
+}
+
+// encodeIndexValue encodes a catalog.Value for use as an index key.
+func encodeIndexValue(v catalog.Value) ([]byte, error) {
+	if v.IsNull {
+		// NULL values get a special encoding (0x00 prefix)
+		return []byte{0x00}, nil
+	}
+
+	switch v.Type {
+	case catalog.TypeInt32:
+		return btree.EncodeIntKey(int64(v.Int32)), nil
+	case catalog.TypeInt64:
+		return btree.EncodeIntKey(v.Int64), nil
+	case catalog.TypeBool:
+		if v.Bool {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+	case catalog.TypeText:
+		// Prefix with 0x01 to distinguish from NULL
+		return append([]byte{0x01}, []byte(v.Text)...), nil
+	default:
+		return nil, fmt.Errorf("unsupported type for index: %v", v.Type)
+	}
+}
+
+// encodeRID encodes a RID as a value for index entries.
+func encodeRID(rid storage.RID) []byte {
+	// Encode as: [Page:4][Slot:2]
+	buf := make([]byte, 6)
+	buf[0] = byte(rid.Page >> 24)
+	buf[1] = byte(rid.Page >> 16)
+	buf[2] = byte(rid.Page >> 8)
+	buf[3] = byte(rid.Page)
+	buf[4] = byte(rid.Slot >> 8)
+	buf[5] = byte(rid.Slot)
+	return buf
+}
+
+// decodeRID decodes a RID from index entry value.
+func decodeRID(tableName string, data []byte) (storage.RID, error) {
+	if len(data) < 6 {
+		return storage.RID{}, fmt.Errorf("invalid RID data: too short")
+	}
+	page := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	slot := uint16(data[4])<<8 | uint16(data[5])
+	return storage.RID{Table: tableName, Page: page, Slot: slot}, nil
+}
+
+// IndexScanInfo holds information about an index scan that can be used.
+type IndexScanInfo struct {
+	IndexName string
+	Key       []byte
+	Op        TokenType // The comparison operator (=, <, >, <=, >=)
+	Column    string
+}
+
+// findUsableIndex checks if an index can be used for a WHERE clause.
+// Returns nil if no suitable index is found.
+func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schema *catalog.Schema) *IndexScanInfo {
+	if e.indexMgr == nil || where == nil {
+		return nil
+	}
+
+	// Look for simple equality conditions: column = literal
+	switch ex := where.(type) {
+	case *BinaryExpr:
+		// Only equality for now - range scans could be added later
+		if ex.Op == TOKEN_EQ {
+			// Check if left is column and right is literal (or vice versa)
+			var colName string
+			var literal *LiteralExpr
+
+			if col, ok := ex.Left.(*ColumnRef); ok {
+				if lit, ok := ex.Right.(*LiteralExpr); ok {
+					colName = col.Name
+					literal = lit
+				}
+			} else if col, ok := ex.Right.(*ColumnRef); ok {
+				if lit, ok := ex.Left.(*LiteralExpr); ok {
+					colName = col.Name
+					literal = lit
+				}
+			}
+
+			if colName != "" && literal != nil {
+				// Look for an index on this column
+				indexes := e.indexMgr.ListIndexes(tableName)
+				for _, meta := range indexes {
+					if len(meta.Columns) == 1 && strings.EqualFold(meta.Columns[0], colName) {
+						// Found a matching single-column index
+						key, err := encodeIndexValue(literal.Value)
+						if err == nil {
+							return &IndexScanInfo{
+								IndexName: meta.Name,
+								Key:       key,
+								Op:        TOKEN_EQ,
+								Column:    colName,
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// executeIndexScan performs an index scan using the given IndexScanInfo.
+func (e *MVCCExecutor) executeIndexScan(tableName string, scanInfo *IndexScanInfo, tx *txn.Transaction) ([]storage.RID, error) {
+	switch scanInfo.Op {
+	case TOKEN_EQ:
+		// For equality, use SearchAll to get all matching RIDs (handles non-unique indexes)
+		rids, err := e.indexMgr.SearchAll(scanInfo.IndexName, scanInfo.Key)
+		if err != nil {
+			if err == btree.ErrKeyNotFound {
+				return nil, nil // No matches
+			}
+			return nil, err
+		}
+		return rids, nil
+
+	// TODO: Range scans for <, >, <=, >=
+	default:
+		return nil, fmt.Errorf("unsupported index scan operator: %v", scanInfo.Op)
+	}
+}
+
+// executeSelectWithIndex performs a SELECT using an index scan when possible.
+func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transaction) (*Result, bool, error) {
+	cat := e.mtm.Catalog()
+	meta, err := cat.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Check if we can use an index
+	scanInfo := e.findUsableIndex(stmt.TableName, stmt.Where, meta.Schema)
+	if scanInfo == nil {
+		return nil, false, nil // No usable index, fall back to table scan
+	}
+
+	// Perform index scan
+	rids, err := e.executeIndexScan(stmt.TableName, scanInfo, tx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Determine output columns
+	var outCols []string
+	var colIndices []int
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		for i, col := range meta.Columns {
+			outCols = append(outCols, col.Name)
+			colIndices = append(colIndices, i)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			col, idx := meta.Schema.ColumnByName(sc.Name)
+			if col == nil {
+				return nil, false, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			outCols = append(outCols, sc.Name)
+			colIndices = append(colIndices, idx)
+		}
+	}
+
+	// Fetch and filter rows by RID
+	var rows [][]catalog.Value
+	for _, rid := range rids {
+		// Fetch the row using MVCC visibility
+		row, err := e.mtm.FetchWithMVCC(stmt.TableName, rid)
+		if err != nil {
+			continue // Row may have been deleted
+		}
+
+		// Check MVCC visibility
+		if !txn.IsVisible(row.Header, tx.Snapshot, e.mtm.TxnManager(), tx.ID) {
+			continue
+		}
+
+		// Apply any remaining WHERE conditions
+		// (the index only covers part of the WHERE clause potentially)
+		if stmt.Where != nil {
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			if err != nil {
+				return nil, false, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Project columns
+		outRow := make([]catalog.Value, len(colIndices))
+		for i, idx := range colIndices {
+			outRow[i] = row.Values[idx]
+		}
+		rows = append(rows, outRow)
+	}
+
+	return &Result{
+		Columns: outCols,
+		Rows:    rows,
+	}, true, nil
 }

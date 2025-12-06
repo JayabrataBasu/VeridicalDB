@@ -15,9 +15,9 @@ const (
 	TOKEN_ILLEGAL
 
 	// Literals
-	TOKEN_IDENT   // identifiers: table names, column names
-	TOKEN_INT     // integer literals
-	TOKEN_STRING  // string literals 'hello'
+	TOKEN_IDENT  // identifiers: table names, column names
+	TOKEN_INT    // integer literals
+	TOKEN_STRING // string literals 'hello'
 
 	// Operators and delimiters
 	TOKEN_COMMA     // ,
@@ -63,6 +63,11 @@ const (
 	TOKEN_BEGIN
 	TOKEN_COMMIT
 	TOKEN_ROLLBACK
+
+	// Index keywords
+	TOKEN_INDEX
+	TOKEN_UNIQUE
+	TOKEN_ON
 )
 
 var keywords = map[string]TokenType{
@@ -99,6 +104,9 @@ var keywords = map[string]TokenType{
 	"BEGIN":     TOKEN_BEGIN,
 	"COMMIT":    TOKEN_COMMIT,
 	"ROLLBACK":  TOKEN_ROLLBACK,
+	"INDEX":     TOKEN_INDEX,
+	"UNIQUE":    TOKEN_UNIQUE,
+	"ON":        TOKEN_ON,
 }
 
 // Token represents a lexical token.
