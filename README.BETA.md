@@ -16,7 +16,7 @@ Windows:
 ```powershell
 # unzip the release
 Expand-Archive veridicaldb-<version>-windows-amd64.zip
-.\veridicaldb-windows-amd64.exe --data-dir .\data
+.\veridicaldb-windows-amd64.exe --data-dir .\data 
 ```
 
 Docker:
