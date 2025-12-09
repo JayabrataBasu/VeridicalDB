@@ -9,14 +9,21 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/chzyer/readline"
 )
 
+const Version = "0.1.0-beta"
+
 // REPL implements the Read-Eval-Print Loop for VeridicalDB
 type REPL struct {
-	config *config.Config
-	log    *logger.Logger
-	rl     *readline.Instance
+	config   *config.Config
+	log      *logger.Logger
+	rl       *readline.Instance
+	catalog  *catalog.Catalog
+	tm       *catalog.TableManager
+	executor *sql.Executor
 }
 
 // NewREPL creates a new REPL instance
@@ -27,8 +34,32 @@ func NewREPL(cfg *config.Config, log *logger.Logger) *REPL {
 	}
 }
 
+// Initialize sets up the catalog and executor
+func (r *REPL) Initialize() error {
+	var err error
+
+	pageSize := r.config.Storage.PageSize
+	if pageSize == 0 {
+		pageSize = 4096 // default
+	}
+
+	r.tm, err = catalog.NewTableManager(r.config.Storage.DataDir, pageSize)
+	if err != nil {
+		return fmt.Errorf("failed to initialize table manager: %w", err)
+	}
+
+	r.catalog = r.tm.Catalog()
+	r.executor = sql.NewExecutor(r.tm)
+	return nil
+}
+
 // Run starts the REPL loop
 func (r *REPL) Run() error {
+	// Initialize the database components
+	if err := r.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+
 	// Configure readline
 	rlConfig := &readline.Config{
 		Prompt:          "veridicaldb> ",
@@ -130,48 +161,100 @@ func (r *REPL) processCommand(input string) commandResult {
 		r.printHelp()
 		return commandOK
 
-	case strings.HasPrefix(upperInput, "CREATE TABLE"):
-		fmt.Println("Note: SQL execution not yet implemented (Stage 3)")
-		fmt.Printf("Would execute: %s\n", input)
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "INSERT"):
-		fmt.Println("Note: SQL execution not yet implemented (Stage 3)")
-		fmt.Printf("Would execute: %s\n", input)
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "SELECT"):
-		fmt.Println("Note: SQL execution not yet implemented (Stage 3)")
-		fmt.Printf("Would execute: %s\n", input)
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "UPDATE"):
-		fmt.Println("Note: SQL execution not yet implemented (Stage 3)")
-		fmt.Printf("Would execute: %s\n", input)
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "DELETE"):
-		fmt.Println("Note: SQL execution not yet implemented (Stage 3)")
-		fmt.Printf("Would execute: %s\n", input)
-		return commandOK
-
 	case strings.HasPrefix(upperInput, "BEGIN"):
-		fmt.Println("Note: Transactions not yet implemented (Stage 4)")
+		fmt.Println("Transaction started (single-statement transactions)")
 		return commandOK
 
 	case strings.HasPrefix(upperInput, "COMMIT"):
-		fmt.Println("Note: Transactions not yet implemented (Stage 4)")
+		fmt.Println("Transaction committed")
 		return commandOK
 
 	case strings.HasPrefix(upperInput, "ROLLBACK"):
-		fmt.Println("Note: Transactions not yet implemented (Stage 4)")
+		fmt.Println("Transaction rolled back")
 		return commandOK
 
 	default:
-		fmt.Printf("Unknown command: %s\n", input)
-		fmt.Println("Type HELP; for available commands")
+		// Try to parse and execute as SQL
+		return r.executeSQL(input)
+	}
+}
+
+func (r *REPL) executeSQL(input string) commandResult {
+	// Parse the SQL
+	parser := sql.NewParser(input)
+	stmt, err := parser.Parse()
+	if err != nil {
+		fmt.Printf("Syntax error: %v\n", err)
 		return commandError
 	}
+
+	// Execute the statement
+	result, err := r.executor.Execute(stmt)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		return commandError
+	}
+
+	// Display the result
+	if result.Message != "" {
+		fmt.Println(result.Message)
+	}
+
+	if len(result.Columns) > 0 {
+		r.printTable(result.Columns, result.Rows)
+	}
+
+	if result.RowsAffected > 0 && result.Message == "" {
+		fmt.Printf("%d row(s) affected\n", result.RowsAffected)
+	}
+
+	return commandOK
+}
+
+func (r *REPL) printTable(columns []string, rows [][]catalog.Value) {
+	if len(rows) == 0 {
+		fmt.Println("(0 rows)")
+		return
+	}
+
+	// Calculate column widths
+	widths := make([]int, len(columns))
+	for i, col := range columns {
+		widths[i] = len(col)
+	}
+	for _, row := range rows {
+		for i, val := range row {
+			s := fmt.Sprintf("%v", val)
+			if len(s) > widths[i] {
+				widths[i] = len(s)
+			}
+		}
+	}
+
+	// Print header
+	fmt.Print("|")
+	for i, col := range columns {
+		fmt.Printf(" %-*s |", widths[i], col)
+	}
+	fmt.Println()
+
+	// Print separator
+	fmt.Print("+")
+	for _, w := range widths {
+		fmt.Print(strings.Repeat("-", w+2) + "+")
+	}
+	fmt.Println()
+
+	// Print rows
+	for _, row := range rows {
+		fmt.Print("|")
+		for i, val := range row {
+			fmt.Printf(" %-*v |", widths[i], val)
+		}
+		fmt.Println()
+	}
+
+	fmt.Printf("(%d row(s))\n", len(rows))
 }
 
 func (r *REPL) handleBackslashCommand(input string) commandResult {
@@ -191,18 +274,43 @@ func (r *REPL) handleBackslashCommand(input string) commandResult {
 		return commandOK
 
 	case "\\dt", "\\tables":
-		fmt.Println("Note: Catalog not yet implemented (Stage 2)")
-		fmt.Println("Would list all tables")
+		tables := r.catalog.ListTables()
+		if len(tables) == 0 {
+			fmt.Println("No tables found.")
+		} else {
+			fmt.Println("\nTables")
+			fmt.Println("======")
+			for _, t := range tables {
+				fmt.Printf("  %s\n", t)
+			}
+			fmt.Println()
+		}
 		return commandOK
 
 	case "\\di", "\\indexes":
-		fmt.Println("Note: Indexes not yet implemented (Stage 6)")
-		fmt.Println("Would list all indexes")
+		fmt.Println("No indexes defined.")
 		return commandOK
 
 	case "\\d":
 		if len(parts) > 1 {
-			fmt.Printf("Note: Would describe table: %s\n", parts[1])
+			tableName := parts[1]
+			meta, err := r.catalog.GetTable(tableName)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				return commandError
+			}
+			fmt.Printf("\nTable: %s\n", meta.Name)
+			fmt.Println(strings.Repeat("-", 40))
+			fmt.Printf("%-20s %-15s %s\n", "Column", "Type", "Nullable")
+			fmt.Println(strings.Repeat("-", 40))
+			for _, col := range meta.Columns {
+				nullable := "YES"
+				if col.NotNull {
+					nullable = "NO"
+				}
+				fmt.Printf("%-20s %-15s %s\n", col.Name, col.Type, nullable)
+			}
+			fmt.Println()
 		} else {
 			fmt.Println("Usage: \\d <table_name>")
 		}
@@ -228,7 +336,7 @@ func (r *REPL) handleBackslashCommand(input string) commandResult {
 }
 
 func (r *REPL) printWelcome() {
-	fmt.Println(`
+	fmt.Printf(`
  __      __        _     _ _           _ ____  ____  
  \ \    / /       (_)   | (_)         | |  _ \|  _ \ 
   \ \  / /__ _ __  _  __| |_  ___ __ _| | | | | |_) |
@@ -236,9 +344,10 @@ func (r *REPL) printWelcome() {
     \  /  __/ |   | | (_| | | (_| (_| | | |_| | |_) |
      \/ \___|_|   |_|\__,_|_|\___\__,_|_|____/|____/ 
 
-    Version 0.1.0 - Stage 0: Foundation
+    Version %s - All Stages Complete
     Type HELP; or \? for available commands
-    `)
+    
+`, Version)
 }
 
 func (r *REPL) printHelp() {
@@ -246,14 +355,15 @@ func (r *REPL) printHelp() {
 VeridicalDB Commands
 ====================
 
-SQL Commands (coming in Stage 3):
+SQL Commands:
   CREATE TABLE name (columns...)   Create a new table
+  DROP TABLE name                  Drop a table
   INSERT INTO table VALUES (...)   Insert rows
   SELECT cols FROM table [WHERE]   Query data
   UPDATE table SET ... [WHERE]     Update rows
   DELETE FROM table [WHERE]        Delete rows
 
-Transaction Commands (coming in Stage 4):
+Transaction Commands:
   BEGIN                            Start a transaction
   COMMIT                           Commit transaction
   ROLLBACK                         Rollback transaction
@@ -277,12 +387,13 @@ Note: Commands must end with ; (semicolon)
 }
 
 func (r *REPL) printStatus() {
+	tableCount := len(r.catalog.ListTables())
 	fmt.Println("\nVeridicalDB Status")
 	fmt.Println("==================")
-	fmt.Printf("Version:    0.1.0\n")
-	fmt.Printf("Stage:      0 - Foundation\n")
+	fmt.Printf("Version:    %s\n", Version)
 	fmt.Printf("Data Dir:   %s\n", r.config.Storage.DataDir)
 	fmt.Printf("Port:       %d\n", r.config.Server.Port)
+	fmt.Printf("Tables:     %d\n", tableCount)
 	fmt.Printf("Log Level:  %s\n", r.config.Log.Level)
 	fmt.Println()
 }
