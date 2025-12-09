@@ -1,73 +1,85 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Simple release script to cross-compile VeridicalDB for multiple platforms
-# Produces packaged artifacts in the build/release directory and a SHA256SUMS file.
+# Release script for VeridicalDB
+# Builds simplified, user-friendly packages for:
+#   - Linux (Mint, Ubuntu, etc.)
+#   - Windows (Intel)
+#   - macOS Apple Silicon (M1/M2/M3)
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT_DIR="$ROOT_DIR/build/release"
+rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-VERSION=${1:-v0.0.0-beta}
+VERSION=${1:-beta}
 
+# Target platforms: friendly-name:GOOS:GOARCH
 targets=(
-  "linux:amd64"
-  "linux:arm64"
-  "darwin:amd64"
-  "darwin:arm64"
-  "windows:amd64"
+  "linux:linux:amd64"
+  "windows:windows:amd64"
+  "mac-silicon:darwin:arm64"
 )
 
-echo "Building release $VERSION"
+echo "=== VeridicalDB Release Build ==="
+echo "Version: $VERSION"
+echo ""
 
 for t in "${targets[@]}"; do
-  IFS=":" read -r GOOS GOARCH <<< "$t"
-  echo "- target: $GOOS/$GOARCH"
-  BINARY_NAME=veridicaldb
+  IFS=":" read -r FRIENDLY GOOS GOARCH <<< "$t"
+  echo "Building: $FRIENDLY ($GOOS/$GOARCH)"
+  
   SUFFIX=""
   if [ "$GOOS" = "windows" ]; then
     SUFFIX=".exe"
   fi
-  OUT_BIN="$OUT_DIR/${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}"
 
-  env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "-s -w" -o "$OUT_BIN" ./cmd/veridicaldb
+  # Build to temp location
+  TEMP_BIN="$OUT_DIR/build-temp${SUFFIX}"
+  env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "-s -w" -o "$TEMP_BIN" ./cmd/veridicaldb
 
-  # package
-  pushd "$OUT_DIR" >/dev/null
-  PKG_NAME="veridicaldb-${VERSION}-${GOOS}-${GOARCH}"
-  mkdir -p "$PKG_NAME"
-  # Standardize binary name inside package for user convenience
+  # Create package directory
+  PKG_DIR="$OUT_DIR/pkg-temp"
+  rm -rf "$PKG_DIR"
+  mkdir -p "$PKG_DIR/veridicaldb"
+  
+  # Copy binary with simple name
   if [ "$GOOS" = "windows" ]; then
-    pkgbin="veridicaldb.exe"
+    mv "$TEMP_BIN" "$PKG_DIR/veridicaldb/veridicaldb.exe"
   else
-    pkgbin="veridicaldb"
+    mv "$TEMP_BIN" "$PKG_DIR/veridicaldb/veridicaldb"
   fi
-  cp "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}" "$PKG_NAME/$pkgbin"
-  # include README and sample config if available
-  if [ -f "$ROOT_DIR/README.BETA.md" ]; then
-    cp "$ROOT_DIR/README.BETA.md" "$PKG_NAME/"
-  fi
-  if [ -d "$ROOT_DIR/sample-config" ]; then
-    cp -r "$ROOT_DIR/sample-config" "$PKG_NAME/"
+  
+  # Copy usage guide
+  if [ -f "$ROOT_DIR/USAGE.md" ]; then
+    cp "$ROOT_DIR/USAGE.md" "$PKG_DIR/veridicaldb/"
   fi
 
+  # Package with simple name
+  pushd "$PKG_DIR" >/dev/null
   if [ "$GOOS" = "windows" ]; then
-    zip -r "${PKG_NAME}.zip" "$PKG_NAME" >/dev/null
-    rm -rf "$PKG_NAME"
+    ARCHIVE="veridicaldb-${FRIENDLY}.zip"
+    zip -rq "$ARCHIVE" veridicaldb
   else
-    tar czf "${PKG_NAME}.tar.gz" "$PKG_NAME"
-    rm -rf "$PKG_NAME"
+    ARCHIVE="veridicaldb-${FRIENDLY}.tar.gz"
+    tar czf "$ARCHIVE" veridicaldb
   fi
-
-  # remove the intermediate raw binary to avoid confusion (we keep the packaged archives)
-  rm -f "${BINARY_NAME}-${GOOS}-${GOARCH}${SUFFIX}"
+  mv "$ARCHIVE" "$OUT_DIR/"
   popd >/dev/null
+  rm -rf "$PKG_DIR"
+  echo "  -> $ARCHIVE"
 done
 
+# Generate checksums
 pushd "$OUT_DIR" >/dev/null
-echo "Generating checksums"
-sha256sum * > SHA256SUMS
+echo ""
+echo "Generating checksums..."
+sha256sum veridicaldb-* > SHA256SUMS
 popd >/dev/null
 
-echo "Release artifacts written to $OUT_DIR"
-echo "Done."
+echo ""
+echo "=== Build Complete ==="
+echo "Artifacts in: $OUT_DIR"
+ls -1 "$OUT_DIR"
+
+
