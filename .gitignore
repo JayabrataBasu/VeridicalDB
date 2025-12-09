@@ -24,7 +24,7 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
-veridicaldb
+/veridicaldb
 
 # Config files (user-specific)
 veridicaldb.yaml
