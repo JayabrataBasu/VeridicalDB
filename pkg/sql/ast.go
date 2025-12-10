@@ -94,10 +94,11 @@ type JoinClause struct {
 
 // SelectColumn represents a column in SELECT.
 type SelectColumn struct {
-	Star      bool           // true if *
-	Name      string         // column name if not star
-	Aggregate *AggregateFunc // aggregate function if present
-	Alias     string         // optional alias (AS name)
+	Star       bool           // true if *
+	Name       string         // column name if not star
+	Aggregate  *AggregateFunc // aggregate function if present
+	Expression Expression     // general expression (CASE, arithmetic, functions, etc.)
+	Alias      string         // optional alias (AS name)
 }
 
 // AggregateFunc represents an aggregate function call like COUNT(*), SUM(col).
@@ -255,3 +256,31 @@ type ExplainStmt struct {
 }
 
 func (s *ExplainStmt) statementNode() {}
+
+// CaseExpr represents a CASE WHEN expression.
+// Supports both simple CASE (CASE expr WHEN val1 THEN res1 ... END)
+// and searched CASE (CASE WHEN cond1 THEN res1 ... END).
+type CaseExpr struct {
+	// Operand is the expression after CASE (nil for searched CASE).
+	// For simple CASE: CASE operand WHEN val1 THEN res1 ...
+	Operand Expression
+
+	// Whens is the list of WHEN clauses.
+	Whens []WhenClause
+
+	// Else is the ELSE expression (nil if no ELSE clause).
+	Else Expression
+}
+
+func (e *CaseExpr) exprNode() {}
+
+// WhenClause represents a single WHEN ... THEN ... clause.
+type WhenClause struct {
+	// Condition is the WHEN expression.
+	// For simple CASE, this is compared with the operand.
+	// For searched CASE, this is evaluated as a boolean.
+	Condition Expression
+
+	// Result is the THEN expression.
+	Result Expression
+}

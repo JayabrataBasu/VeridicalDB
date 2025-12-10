@@ -196,26 +196,40 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	// Determine output columns
 	var outCols []string
 	var colIndices []int
+	var colExpressions []Expression // For expressions like CASE
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
 		for i, col := range meta.Columns {
 			outCols = append(outCols, col.Name)
 			colIndices = append(colIndices, i) // Use slice index, not col.ID
+			colExpressions = append(colExpressions, nil)
 		}
 	} else {
 		for _, sc := range stmt.Columns {
-			col, idx := meta.Schema.ColumnByName(sc.Name)
-			if col == nil {
-				return nil, fmt.Errorf("unknown column: %s", sc.Name)
-			}
-			// Use alias if specified, otherwise use column name
-			if sc.Alias != "" {
-				outCols = append(outCols, sc.Alias)
+			// Handle expressions (like CASE)
+			if sc.Expression != nil {
+				alias := sc.Alias
+				if alias == "" {
+					alias = "expr" // Default alias for expressions
+				}
+				outCols = append(outCols, alias)
+				colIndices = append(colIndices, -1) // -1 means this is an expression
+				colExpressions = append(colExpressions, sc.Expression)
 			} else {
-				outCols = append(outCols, sc.Name)
+				col, idx := meta.Schema.ColumnByName(sc.Name)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column: %s", sc.Name)
+				}
+				// Use alias if specified, otherwise use column name
+				if sc.Alias != "" {
+					outCols = append(outCols, sc.Alias)
+				} else {
+					outCols = append(outCols, sc.Name)
+				}
+				colIndices = append(colIndices, idx)
+				colExpressions = append(colExpressions, nil)
 			}
-			colIndices = append(colIndices, idx)
 		}
 	}
 
@@ -234,10 +248,20 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 			}
 		}
 
-		// Project columns
+		// Project columns (including expressions)
 		outRow := make([]catalog.Value, len(colIndices))
 		for i, idx := range colIndices {
-			outRow[i] = row.Values[idx]
+			if idx >= 0 {
+				// Regular column
+				outRow[i] = row.Values[idx]
+			} else {
+				// Expression (like CASE)
+				val, err := e.evalExpr(colExpressions[i], meta.Schema, row.Values)
+				if err != nil {
+					return false, fmt.Errorf("error evaluating expression: %w", err)
+				}
+				outRow[i] = val
+			}
 		}
 		rows = append(rows, outRow)
 		return true, nil
@@ -454,6 +478,9 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 			args[i] = val
 		}
 		return evalFunction(ex.Name, args)
+
+	case *CaseExpr:
+		return e.evalCaseExpr(ex, schema, row)
 
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
@@ -1207,4 +1234,55 @@ func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*
 		Columns: []string{"QUERY PLAN"},
 		Rows:    explanation,
 	}, nil
+}
+
+// evalCaseExpr evaluates a CASE WHEN expression.
+func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Simple CASE: CASE operand WHEN val1 THEN res1 ...
+	// Searched CASE: CASE WHEN cond1 THEN res1 ...
+
+	if caseExpr.Operand != nil {
+		// Simple CASE - compare operand with each WHEN value
+		operandVal, err := e.evalExpr(caseExpr.Operand, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+
+		for _, when := range caseExpr.Whens {
+			whenVal, err := e.evalExpr(when.Condition, schema, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			// Compare operand with WHEN value
+			equal, err := compareValuesMVCC(operandVal, whenVal, TOKEN_EQ)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			if equal {
+				return e.evalExpr(when.Result, schema, row)
+			}
+		}
+	} else {
+		// Searched CASE - evaluate each WHEN condition as boolean
+		for _, when := range caseExpr.Whens {
+			condResult, err := e.evalCondition(when.Condition, schema, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			if condResult {
+				return e.evalExpr(when.Result, schema, row)
+			}
+		}
+	}
+
+	// No WHEN matched, return ELSE or NULL
+	if caseExpr.Else != nil {
+		return e.evalExpr(caseExpr.Else, schema, row)
+	}
+
+	// No ELSE clause - return NULL
+	return catalog.Null(catalog.TypeUnknown), nil
 }

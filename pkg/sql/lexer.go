@@ -146,6 +146,13 @@ const (
 	// Query analysis
 	TOKEN_EXPLAIN
 	TOKEN_ANALYZE
+
+	// CASE WHEN
+	TOKEN_CASE
+	TOKEN_WHEN
+	TOKEN_THEN
+	TOKEN_ELSE
+	TOKEN_END
 )
 
 var keywords = map[string]TokenType{
@@ -233,6 +240,11 @@ var keywords = map[string]TokenType{
 	"EXISTS":         TOKEN_EXISTS,
 	"EXPLAIN":        TOKEN_EXPLAIN,
 	"ANALYZE":        TOKEN_ANALYZE,
+	"CASE":           TOKEN_CASE,
+	"WHEN":           TOKEN_WHEN,
+	"THEN":           TOKEN_THEN,
+	"ELSE":           TOKEN_ELSE,
+	"END":            TOKEN_END,
 }
 
 // Token represents a lexical token.

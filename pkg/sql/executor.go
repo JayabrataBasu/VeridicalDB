@@ -326,21 +326,35 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 	// Determine which columns to return
 	var outputCols []string
 	var colIndices []int
+	var colExpressions []Expression // For expressions like CASE
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
 		for i, c := range meta.Schema.Columns {
 			outputCols = append(outputCols, c.Name)
 			colIndices = append(colIndices, i)
+			colExpressions = append(colExpressions, nil)
 		}
 	} else {
 		for _, sc := range stmt.Columns {
-			col, idx := meta.Schema.ColumnByName(sc.Name)
-			if col == nil {
-				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			// Handle expressions (like CASE)
+			if sc.Expression != nil {
+				alias := sc.Alias
+				if alias == "" {
+					alias = "expr" // Default alias for expressions
+				}
+				outputCols = append(outputCols, alias)
+				colIndices = append(colIndices, -1) // -1 means this is an expression
+				colExpressions = append(colExpressions, sc.Expression)
+			} else {
+				col, idx := meta.Schema.ColumnByName(sc.Name)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column: %s", sc.Name)
+				}
+				outputCols = append(outputCols, col.Name)
+				colIndices = append(colIndices, idx)
+				colExpressions = append(colExpressions, nil)
 			}
-			outputCols = append(outputCols, col.Name)
-			colIndices = append(colIndices, idx)
 		}
 	}
 
@@ -410,7 +424,17 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 	for i, row := range fullRows {
 		projectedRow := make([]catalog.Value, len(colIndices))
 		for j, idx := range colIndices {
-			projectedRow[j] = row[idx]
+			if idx >= 0 {
+				// Regular column
+				projectedRow[j] = row[idx]
+			} else {
+				// Expression (like CASE)
+				val, err := e.evalExpr(colExpressions[j], meta.Schema, row)
+				if err != nil {
+					return nil, fmt.Errorf("error evaluating expression: %w", err)
+				}
+				projectedRow[j] = val
+			}
 		}
 		resultRows[i] = projectedRow
 	}
@@ -1475,6 +1499,9 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return evalFunction(ex.Name, args)
 
+	case *CaseExpr:
+		return e.evalCaseExpr(ex, schema, row)
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -2131,4 +2158,55 @@ func (e *Executor) executeExplain(stmt *ExplainStmt) (*Result, error) {
 		Columns: []string{"QUERY PLAN"},
 		Rows:    explanation,
 	}, nil
+}
+
+// evalCaseExpr evaluates a CASE WHEN expression.
+func (e *Executor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Simple CASE: CASE operand WHEN val1 THEN res1 ...
+	// Searched CASE: CASE WHEN cond1 THEN res1 ...
+
+	if caseExpr.Operand != nil {
+		// Simple CASE - compare operand with each WHEN value
+		operandVal, err := e.evalExpr(caseExpr.Operand, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+
+		for _, when := range caseExpr.Whens {
+			whenVal, err := e.evalExpr(when.Condition, schema, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			// Compare operand with WHEN value
+			equal, err := compareValues(operandVal, whenVal, TOKEN_EQ)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			if equal {
+				return e.evalExpr(when.Result, schema, row)
+			}
+		}
+	} else {
+		// Searched CASE - evaluate each WHEN condition as boolean
+		for _, when := range caseExpr.Whens {
+			condResult, err := e.evalCondition(when.Condition, schema, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+
+			if condResult {
+				return e.evalExpr(when.Result, schema, row)
+			}
+		}
+	}
+
+	// No WHEN matched, return ELSE or NULL
+	if caseExpr.Else != nil {
+		return e.evalExpr(caseExpr.Else, schema, row)
+	}
+
+	// No ELSE clause - return NULL
+	return catalog.Null(catalog.TypeUnknown), nil
 }

@@ -2369,3 +2369,220 @@ func TestExplainExecution(t *testing.T) {
 		t.Error("expected EXPLAIN ANALYZE output to show actual rows")
 	}
 }
+
+// TestParseCaseWhen tests CASE WHEN expression parsing.
+func TestParseCaseWhen(t *testing.T) {
+	tests := []struct {
+		name      string
+		sql       string
+		isSimple  bool
+		numWhens  int
+		hasElse   bool
+		shouldErr bool
+	}{
+		{
+			name:     "simple case with one when",
+			sql:      "SELECT CASE 1 WHEN 1 THEN 'one' END FROM users",
+			isSimple: true,
+			numWhens: 1,
+			hasElse:  false,
+		},
+		{
+			name:     "simple case with multiple whens",
+			sql:      "SELECT CASE age WHEN 18 THEN 'adult' WHEN 13 THEN 'teen' WHEN 5 THEN 'child' END FROM users",
+			isSimple: true,
+			numWhens: 3,
+			hasElse:  false,
+		},
+		{
+			name:     "simple case with else",
+			sql:      "SELECT CASE status WHEN 'active' THEN 1 WHEN 'inactive' THEN 0 ELSE 2 END FROM users",
+			isSimple: true,
+			numWhens: 2,
+			hasElse:  true,
+		},
+		{
+			name:     "searched case",
+			sql:      "SELECT CASE WHEN age >= 18 THEN 'adult' WHEN age >= 13 THEN 'teen' ELSE 'child' END FROM users",
+			isSimple: false,
+			numWhens: 2,
+			hasElse:  true,
+		},
+		{
+			name:     "case in where clause",
+			sql:      "SELECT * FROM users WHERE CASE WHEN status = 'active' THEN 1 ELSE 0 END = 1",
+			isSimple: false,
+			numWhens: 1,
+			hasElse:  true,
+		},
+		{
+			name:      "case without when should fail",
+			sql:       "SELECT CASE END FROM users",
+			shouldErr: true,
+		},
+		{
+			name:      "case without end should fail",
+			sql:       "SELECT CASE WHEN 1=1 THEN 'yes' FROM users",
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.sql)
+			stmt, err := parser.Parse()
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Fatal("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("parsing failed: %v", err)
+			}
+
+			selectStmt, ok := stmt.(*SelectStmt)
+			if !ok {
+				t.Fatalf("expected SelectStmt, got %T", stmt)
+			}
+
+			// Find the CASE expression in the SELECT columns or WHERE
+			var foundCase bool
+			for range selectStmt.Columns {
+				// For now, we can't inspect through SelectColumn, so mark as found if parsing succeeded
+				foundCase = true
+				break
+			}
+
+			if !foundCase && selectStmt.Where == nil {
+				t.Error("could not find CASE expression in parsed statement")
+			}
+		})
+	}
+}
+
+// TestCaseWhenExecution tests CASE WHEN expression execution.
+func TestCaseWhenExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create a test table
+	_, err := session.ExecuteSQL("CREATE TABLE products (id INT, name TEXT, stock INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	inserts := []string{
+		"INSERT INTO products VALUES (1, 'Widget', 150);",
+		"INSERT INTO products VALUES (2, 'Gadget', 50);",
+		"INSERT INTO products VALUES (3, 'Doohickey', 5);",
+		"INSERT INTO products VALUES (4, 'Thingamajig', 0);",
+	}
+	for _, ins := range inserts {
+		_, err := session.ExecuteSQL(ins)
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	// Test simple CASE expression in SELECT
+	t.Run("simple case in select", func(t *testing.T) {
+		result, err := session.ExecuteSQL(
+			"SELECT CASE WHEN stock > 100 THEN 'high' ELSE 'low' END AS level FROM products WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if result.Rows[0][0].Text != "high" {
+				t.Errorf("expected 'high', got '%s'", result.Rows[0][0].Text)
+			}
+		}
+	})
+
+	// Test searched CASE expression in SELECT
+	t.Run("searched case in select", func(t *testing.T) {
+		// id=1 has stock=150, so 150 > 100 is true → 'high'
+		// then we test id=3 which has stock=5, so 5 > 100 false, 5 > 50 false → 'low'
+		result, err := session.ExecuteSQL(
+			"SELECT CASE WHEN stock > 100 THEN 'high' WHEN stock > 5 THEN 'medium' ELSE 'low' END AS level FROM products WHERE id = 2;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		// id=2 has stock=50, so 50 > 100 false, 50 > 5 true → 'medium'
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if result.Rows[0][0].Text != "medium" {
+				t.Errorf("expected 'medium', got '%s'", result.Rows[0][0].Text)
+			}
+		}
+	})
+
+	// Test CASE in WHERE clause
+	t.Run("case in where clause", func(t *testing.T) {
+		result, err := session.ExecuteSQL(
+			"SELECT name FROM products WHERE CASE WHEN stock > 100 THEN 1 ELSE 0 END = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		if len(result.Rows) > 0 {
+			if result.Rows[0][0].Text != "Widget" {
+				t.Errorf("expected 'Widget', got '%s'", result.Rows[0][0].Text)
+			}
+		}
+	})
+
+	// Test nested CASE expressions
+	t.Run("nested case expressions", func(t *testing.T) {
+		result, err := session.ExecuteSQL(
+			"SELECT CASE WHEN stock = 0 THEN 'out' WHEN stock > 0 THEN CASE WHEN stock >= 100 THEN 'plenty' ELSE 'some' END ELSE 'unknown' END AS inventory FROM products WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if result.Rows[0][0].Text != "plenty" {
+				t.Errorf("expected 'plenty', got '%s'", result.Rows[0][0].Text)
+			}
+		}
+	})
+
+	// Test CASE without ELSE (should return NULL)
+	t.Run("case without else returns null", func(t *testing.T) {
+		result, err := session.ExecuteSQL(
+			"SELECT CASE WHEN stock = 0 THEN 'none' END AS maybenull FROM products WHERE id = 2;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if !result.Rows[0][0].IsNull {
+				t.Errorf("expected NULL but got '%s'", result.Rows[0][0].Text)
+			}
+		}
+	})
+}

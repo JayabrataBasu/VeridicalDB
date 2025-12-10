@@ -432,6 +432,30 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 			}
 
 			cols = append(cols, col)
+		} else if p.curTokenIs(TOKEN_CASE) {
+			// Parse CASE expression
+			expr, err := p.parseCaseExpression()
+			if err != nil {
+				return nil, err
+			}
+
+			col := SelectColumn{Expression: expr}
+
+			// Check for alias: AS name or just name
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken() // consume AS
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				// Implicit alias (without AS)
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, col)
 		} else if p.curTokenIs(TOKEN_IDENT) {
 			name := p.cur.Literal
 			p.nextToken()
@@ -1102,6 +1126,9 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	case TOKEN_COALESCE, TOKEN_NULLIF, TOKEN_UPPER, TOKEN_LOWER, TOKEN_LENGTH, TOKEN_CONCAT, TOKEN_SUBSTR, TOKEN_SUBSTRING:
 		return p.parseFunctionCall()
 
+	case TOKEN_CASE:
+		return p.parseCaseExpression()
+
 	case TOKEN_LPAREN:
 		p.nextToken()
 		expr, err := p.parseExpression()
@@ -1323,4 +1350,75 @@ func (p *Parser) parseExplain() (Statement, error) {
 		Statement: stmt,
 		Analyze:   analyze,
 	}, nil
+}
+
+// parseCaseExpression parses CASE WHEN expressions.
+// Supports both:
+//   - Simple CASE: CASE expr WHEN val1 THEN res1 [WHEN val2 THEN res2...] [ELSE default] END
+//   - Searched CASE: CASE WHEN cond1 THEN res1 [WHEN cond2 THEN res2...] [ELSE default] END
+func (p *Parser) parseCaseExpression() (Expression, error) {
+	p.nextToken() // consume CASE
+
+	caseExpr := &CaseExpr{}
+
+	// Check if this is a simple CASE (has an operand) or searched CASE (starts with WHEN)
+	if !p.curTokenIs(TOKEN_WHEN) {
+		// Simple CASE - parse the operand expression
+		operand, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing CASE operand: %w", err)
+		}
+		caseExpr.Operand = operand
+	}
+
+	// Parse WHEN clauses
+	for p.curTokenIs(TOKEN_WHEN) {
+		p.nextToken() // consume WHEN
+
+		// Parse the condition
+		condition, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing WHEN condition: %w", err)
+		}
+
+		// Expect THEN
+		if !p.curTokenIs(TOKEN_THEN) {
+			return nil, fmt.Errorf("expected THEN after WHEN condition, got %v", p.cur.Type)
+		}
+		p.nextToken() // consume THEN
+
+		// Parse the result expression
+		result, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing THEN result: %w", err)
+		}
+
+		caseExpr.Whens = append(caseExpr.Whens, WhenClause{
+			Condition: condition,
+			Result:    result,
+		})
+	}
+
+	// Must have at least one WHEN clause
+	if len(caseExpr.Whens) == 0 {
+		return nil, fmt.Errorf("CASE requires at least one WHEN clause")
+	}
+
+	// Parse optional ELSE clause
+	if p.curTokenIs(TOKEN_ELSE) {
+		p.nextToken() // consume ELSE
+		elseExpr, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing ELSE expression: %w", err)
+		}
+		caseExpr.Else = elseExpr
+	}
+
+	// Expect END
+	if !p.curTokenIs(TOKEN_END) {
+		return nil, fmt.Errorf("expected END to close CASE expression, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume END
+
+	return caseExpr, nil
 }
