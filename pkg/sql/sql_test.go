@@ -2875,3 +2875,390 @@ func TestDateFunctionExecution(t *testing.T) {
 		}
 	})
 }
+
+// TestIsNullExpressions tests IS NULL and IS NOT NULL functionality.
+func TestIsNullExpressions(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE nulltest (id INT PRIMARY KEY, name TEXT, age INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert data with NULLs
+	_, err = session.ExecuteSQL("INSERT INTO nulltest (id, name, age) VALUES (1, 'Alice', 30);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO nulltest (id, name, age) VALUES (2, NULL, 25);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO nulltest (id, name, age) VALUES (3, 'Bob', NULL);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test IS NULL
+	t.Run("IS NULL finds NULL values", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT id FROM nulltest WHERE name IS NULL;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Int32 != 2 {
+			t.Errorf("expected id=2, got %v", result.Rows[0][0].Int32)
+		}
+	})
+
+	// Test IS NOT NULL
+	t.Run("IS NOT NULL excludes NULL values", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT id FROM nulltest WHERE name IS NOT NULL ORDER BY id;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 2 {
+			t.Errorf("expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+
+	// Test IS NULL on age column
+	t.Run("IS NULL on age column", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT id FROM nulltest WHERE age IS NULL;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Int32 != 3 {
+			t.Errorf("expected id=3, got %v", result.Rows[0][0].Int32)
+		}
+	})
+}
+
+// TestMathFunctions tests ABS, MOD, POWER, and other math functions.
+func TestMathFunctions(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE numbers (id INT PRIMARY KEY, val INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = session.ExecuteSQL("INSERT INTO numbers (id, val) VALUES (1, -10);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO numbers (id, val) VALUES (2, 25);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected int64
+	}{
+		{"ABS of negative", "SELECT ABS(val) FROM numbers WHERE id = 1;", 10},
+		{"ABS of positive", "SELECT ABS(val) FROM numbers WHERE id = 2;", 25},
+		{"MOD operation", "SELECT MOD(val, 3) FROM numbers WHERE id = 2;", 1},
+		{"POWER operation", "SELECT POWER(2, 3) FROM numbers WHERE id = 1;", 8},
+		{"SQRT operation", "SELECT SQRT(val) FROM numbers WHERE id = 2;", 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := session.ExecuteSQL(tt.query)
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+			if len(result.Rows) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(result.Rows))
+			}
+			var got int64
+			if result.Rows[0][0].Type == catalog.TypeInt32 {
+				got = int64(result.Rows[0][0].Int32)
+			} else {
+				got = result.Rows[0][0].Int64
+			}
+			if got != tt.expected {
+				t.Errorf("expected %d, got %d", tt.expected, got)
+			}
+		})
+	}
+}
+
+// TestExtendedStringFunctions tests TRIM, REPLACE, REVERSE, and other string functions.
+func TestExtendedStringFunctions(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE strings (id INT PRIMARY KEY, val TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = session.ExecuteSQL("INSERT INTO strings (id, val) VALUES (1, '  hello  ');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO strings (id, val) VALUES (2, 'hello world');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{"TRIM removes spaces", "SELECT TRIM(val) FROM strings WHERE id = 1;", "hello"},
+		{"LTRIM removes left spaces", "SELECT LTRIM(val) FROM strings WHERE id = 1;", "hello  "},
+		{"RTRIM removes right spaces", "SELECT RTRIM(val) FROM strings WHERE id = 1;", "  hello"},
+		{"REPLACE substitutes", "SELECT REPLACE(val, 'world', 'universe') FROM strings WHERE id = 2;", "hello universe"},
+		{"REVERSE reverses string", "SELECT REVERSE(val) FROM strings WHERE id = 2;", "dlrow olleh"},
+		{"REPEAT repeats string", "SELECT REPEAT('ab', 3) FROM strings WHERE id = 1;", "ababab"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := session.ExecuteSQL(tt.query)
+			if err != nil {
+				t.Fatalf("query failed: %v", err)
+			}
+			if len(result.Rows) != 1 {
+				t.Fatalf("expected 1 row, got %d", len(result.Rows))
+			}
+			if result.Rows[0][0].Text != tt.expected {
+				t.Errorf("expected '%s', got '%s'", tt.expected, result.Rows[0][0].Text)
+			}
+		})
+	}
+}
+
+// TestCastExpression tests CAST type conversions.
+func TestCastExpression(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE casttest (id INT PRIMARY KEY, num INT, str TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO casttest (id, num, str) VALUES (1, 42, '123');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test INT to TEXT
+	t.Run("CAST INT to TEXT", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT CAST(num AS TEXT) FROM casttest WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Type != catalog.TypeText {
+			t.Errorf("expected TEXT type, got %v", result.Rows[0][0].Type)
+		}
+		if result.Rows[0][0].Text != "42" {
+			t.Errorf("expected '42', got '%s'", result.Rows[0][0].Text)
+		}
+	})
+
+	// Test TEXT to INT
+	t.Run("CAST TEXT to INT", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT CAST(str AS INT) FROM casttest WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Type != catalog.TypeInt32 {
+			t.Errorf("expected INT type, got %v", result.Rows[0][0].Type)
+		}
+		if result.Rows[0][0].Int32 != 123 {
+			t.Errorf("expected 123, got %d", result.Rows[0][0].Int32)
+		}
+	})
+}
+
+// TestExtractExpression tests EXTRACT(part FROM date) syntax.
+func TestExtractExpression(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table with timestamp
+	_, err := session.ExecuteSQL("CREATE TABLE extracttest (id INT PRIMARY KEY, ts TIMESTAMP);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO extracttest (id, ts) VALUES (1, NOW());")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	now := time.Now()
+
+	// Test EXTRACT YEAR
+	t.Run("EXTRACT YEAR", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT EXTRACT(YEAR FROM ts) FROM extracttest WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Int32 != int32(now.Year()) {
+			t.Errorf("expected year %d, got %d", now.Year(), result.Rows[0][0].Int32)
+		}
+	})
+
+	// Test EXTRACT MONTH
+	t.Run("EXTRACT MONTH", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT EXTRACT(MONTH FROM ts) FROM extracttest WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Int32 != int32(now.Month()) {
+			t.Errorf("expected month %d, got %d", now.Month(), result.Rows[0][0].Int32)
+		}
+	})
+}
+
+// TestUnionOperation tests UNION, UNION ALL, INTERSECT, EXCEPT operations.
+func TestUnionOperation(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create two tables
+	_, err := session.ExecuteSQL("CREATE TABLE t1 (id INT PRIMARY KEY, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE t1 failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("CREATE TABLE t2 (id INT PRIMARY KEY, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE t2 failed: %v", err)
+	}
+
+	// Insert data into t1
+	_, _ = session.ExecuteSQL("INSERT INTO t1 (id, name) VALUES (1, 'Alice');")
+	_, _ = session.ExecuteSQL("INSERT INTO t1 (id, name) VALUES (2, 'Bob');")
+	_, _ = session.ExecuteSQL("INSERT INTO t1 (id, name) VALUES (3, 'Charlie');")
+
+	// Insert data into t2
+	_, _ = session.ExecuteSQL("INSERT INTO t2 (id, name) VALUES (2, 'Bob');")
+	_, _ = session.ExecuteSQL("INSERT INTO t2 (id, name) VALUES (3, 'Charlie');")
+	_, _ = session.ExecuteSQL("INSERT INTO t2 (id, name) VALUES (4, 'Diana');")
+
+	// Test UNION (removes duplicates)
+	t.Run("UNION removes duplicates", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT name FROM t1 UNION SELECT name FROM t2 ORDER BY name;")
+		if err != nil {
+			t.Fatalf("UNION query failed: %v", err)
+		}
+		if len(result.Rows) != 4 {
+			t.Errorf("expected 4 unique rows, got %d", len(result.Rows))
+		}
+	})
+
+	// Test UNION ALL (keeps duplicates)
+	t.Run("UNION ALL keeps duplicates", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT name FROM t1 UNION ALL SELECT name FROM t2 ORDER BY name;")
+		if err != nil {
+			t.Fatalf("UNION ALL query failed: %v", err)
+		}
+		if len(result.Rows) != 6 {
+			t.Errorf("expected 6 rows, got %d", len(result.Rows))
+		}
+	})
+
+	// Test INTERSECT
+	t.Run("INTERSECT finds common rows", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT name FROM t1 INTERSECT SELECT name FROM t2 ORDER BY name;")
+		if err != nil {
+			t.Fatalf("INTERSECT query failed: %v", err)
+		}
+		if len(result.Rows) != 2 {
+			t.Errorf("expected 2 common rows (Bob, Charlie), got %d", len(result.Rows))
+		}
+	})
+
+	// Test EXCEPT
+	t.Run("EXCEPT finds unique rows", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT name FROM t1 EXCEPT SELECT name FROM t2;")
+		if err != nil {
+			t.Fatalf("EXCEPT query failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("expected 1 unique row (Alice), got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Text != "Alice" {
+			t.Errorf("expected 'Alice', got '%s'", result.Rows[0][0].Text)
+		}
+	})
+}
+
+// TestViewParsing tests CREATE VIEW and DROP VIEW parsing.
+func TestViewParsing(t *testing.T) {
+	// Test CREATE VIEW parsing
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "simple CREATE VIEW",
+			input:   "CREATE VIEW v AS SELECT * FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "CREATE OR REPLACE VIEW",
+			input:   "CREATE OR REPLACE VIEW v AS SELECT id, name FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "CREATE VIEW with columns",
+			input:   "CREATE VIEW v (a, b) AS SELECT id, name FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "DROP VIEW",
+			input:   "DROP VIEW myview;",
+			wantErr: false,
+		},
+		{
+			name:    "DROP VIEW IF EXISTS",
+			input:   "DROP VIEW IF EXISTS myview;",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

@@ -2,7 +2,10 @@ package sql
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
@@ -32,12 +35,18 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 	switch s := stmt.(type) {
 	case *CreateTableStmt:
 		return e.executeCreate(s)
+	case *CreateViewStmt:
+		return e.executeCreateView(s)
 	case *DropTableStmt:
 		return e.executeDrop(s)
+	case *DropViewStmt:
+		return e.executeDropView(s)
 	case *InsertStmt:
 		return e.executeInsert(s, tx)
 	case *SelectStmt:
 		return e.executeSelect(s, tx)
+	case *UnionStmt:
+		return e.executeUnion(s, tx)
 	case *UpdateStmt:
 		return e.executeUpdate(s, tx)
 	case *DeleteStmt:
@@ -511,6 +520,21 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 	case *CaseExpr:
 		return e.evalCaseExpr(ex, schema, row)
 
+	case *CastExpr:
+		return e.evalCastExpr(ex, schema, row)
+
+	case *IsNullExpr:
+		// IS NULL in value context returns boolean
+		val, err := e.evalExpr(ex.Expr, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		result := val.IsNull
+		if ex.Not {
+			return catalog.NewBool(!result), nil
+		}
+		return catalog.NewBool(result), nil
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -663,6 +687,18 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return !result, nil
 		}
 		return result, nil
+
+	case *IsNullExpr:
+		// Evaluate IS NULL / IS NOT NULL
+		val, err := e.evalExpr(ex.Expr, schema, row)
+		if err != nil {
+			return false, err
+		}
+		result := val.IsNull
+		if ex.Not {
+			return !result, nil // IS NOT NULL
+		}
+		return result, nil // IS NULL
 
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
@@ -1342,4 +1378,333 @@ func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values [
 	}
 
 	return nil
+}
+
+// evalCastExpr evaluates a CAST expression for MVCC executor.
+func (e *MVCCExecutor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	val, err := e.evalExpr(cast.Expr, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if val.IsNull {
+		return catalog.Null(cast.TargetType), nil
+	}
+
+	// Handle CAST type conversions
+	switch cast.TargetType {
+	case catalog.TypeInt32:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return val, nil
+		case catalog.TypeInt64:
+			if val.Int64 >= -2147483648 && val.Int64 <= 2147483647 {
+				return catalog.NewInt32(int32(val.Int64)), nil
+			}
+			return catalog.Value{}, fmt.Errorf("value %d out of range for INT", val.Int64)
+		case catalog.TypeText:
+			i, err := strconv.ParseInt(val.Text, 10, 32)
+			if err != nil {
+				return catalog.Value{}, fmt.Errorf("cannot cast '%s' to INT", val.Text)
+			}
+			return catalog.NewInt32(int32(i)), nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewInt32(1), nil
+			}
+			return catalog.NewInt32(0), nil
+		}
+
+	case catalog.TypeInt64:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewInt64(int64(val.Int32)), nil
+		case catalog.TypeInt64:
+			return val, nil
+		case catalog.TypeText:
+			i, err := strconv.ParseInt(val.Text, 10, 64)
+			if err != nil {
+				return catalog.Value{}, fmt.Errorf("cannot cast '%s' to BIGINT", val.Text)
+			}
+			return catalog.NewInt64(i), nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewInt64(1), nil
+			}
+			return catalog.NewInt64(0), nil
+		}
+
+	case catalog.TypeText:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewText(strconv.FormatInt(int64(val.Int32), 10)), nil
+		case catalog.TypeInt64:
+			return catalog.NewText(strconv.FormatInt(val.Int64, 10)), nil
+		case catalog.TypeText:
+			return val, nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewText("true"), nil
+			}
+			return catalog.NewText("false"), nil
+		case catalog.TypeTimestamp:
+			return catalog.NewText(val.Timestamp.Format(time.RFC3339)), nil
+		}
+
+	case catalog.TypeBool:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewBool(val.Int32 != 0), nil
+		case catalog.TypeInt64:
+			return catalog.NewBool(val.Int64 != 0), nil
+		case catalog.TypeText:
+			lower := strings.ToLower(val.Text)
+			if lower == "true" || lower == "1" || lower == "yes" {
+				return catalog.NewBool(true), nil
+			}
+			if lower == "false" || lower == "0" || lower == "no" {
+				return catalog.NewBool(false), nil
+			}
+			return catalog.Value{}, fmt.Errorf("cannot cast '%s' to BOOL", val.Text)
+		case catalog.TypeBool:
+			return val, nil
+		}
+
+	case catalog.TypeTimestamp:
+		switch val.Type {
+		case catalog.TypeText:
+			formats := []string{time.RFC3339, "2006-01-02 15:04:05", "2006-01-02"}
+			for _, format := range formats {
+				if t, err := time.Parse(format, val.Text); err == nil {
+					return catalog.NewTimestamp(t), nil
+				}
+			}
+			return catalog.Value{}, fmt.Errorf("cannot cast '%s' to TIMESTAMP", val.Text)
+		case catalog.TypeTimestamp:
+			return val, nil
+		}
+	}
+
+	return catalog.Value{}, fmt.Errorf("cannot cast %v to %v", val.Type, cast.TargetType)
+}
+
+// executeCreateView creates a new view (MVCC version).
+func (e *MVCCExecutor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
+	return nil, fmt.Errorf("CREATE VIEW is not yet fully implemented (view definition parsed successfully)")
+}
+
+// executeDropView drops a view (MVCC version).
+func (e *MVCCExecutor) executeDropView(stmt *DropViewStmt) (*Result, error) {
+	if stmt.IfExists {
+		return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
+	}
+	return nil, fmt.Errorf("DROP VIEW is not yet fully implemented")
+}
+
+// executeUnion executes a UNION/INTERSECT/EXCEPT operation (MVCC version).
+func (e *MVCCExecutor) executeUnion(stmt *UnionStmt, tx *txn.Transaction) (*Result, error) {
+	// Execute left SELECT
+	leftResult, err := e.executeSelect(stmt.Left, tx)
+	if err != nil {
+		return nil, fmt.Errorf("error executing left side of %s: %w", stmt.Op, err)
+	}
+
+	// Execute right SELECT
+	rightResult, err := e.executeSelect(stmt.Right, tx)
+	if err != nil {
+		return nil, fmt.Errorf("error executing right side of %s: %w", stmt.Op, err)
+	}
+
+	// Verify column counts match
+	if len(leftResult.Columns) != len(rightResult.Columns) {
+		return nil, fmt.Errorf("%s requires same number of columns on both sides (got %d and %d)",
+			stmt.Op, len(leftResult.Columns), len(rightResult.Columns))
+	}
+
+	// Use left side's column names
+	result := &Result{Columns: leftResult.Columns}
+
+	switch stmt.Op {
+	case "UNION":
+		if stmt.All {
+			// UNION ALL - just concatenate
+			result.Rows = append(leftResult.Rows, rightResult.Rows...)
+		} else {
+			// UNION - concatenate and remove duplicates
+			seen := make(map[string]bool)
+			for _, row := range leftResult.Rows {
+				key := rowKey(row)
+				if !seen[key] {
+					seen[key] = true
+					result.Rows = append(result.Rows, row)
+				}
+			}
+			for _, row := range rightResult.Rows {
+				key := rowKey(row)
+				if !seen[key] {
+					seen[key] = true
+					result.Rows = append(result.Rows, row)
+				}
+			}
+		}
+
+	case "INTERSECT":
+		// Find rows that appear in both
+		rightSet := make(map[string]bool)
+		for _, row := range rightResult.Rows {
+			rightSet[rowKey(row)] = true
+		}
+		seen := make(map[string]bool)
+		for _, row := range leftResult.Rows {
+			key := rowKey(row)
+			if rightSet[key] && (stmt.All || !seen[key]) {
+				seen[key] = true
+				result.Rows = append(result.Rows, row)
+			}
+		}
+
+	case "EXCEPT":
+		// Find rows in left that don't appear in right
+		rightSet := make(map[string]bool)
+		for _, row := range rightResult.Rows {
+			rightSet[rowKey(row)] = true
+		}
+		seen := make(map[string]bool)
+		for _, row := range leftResult.Rows {
+			key := rowKey(row)
+			if !rightSet[key] && (stmt.All || !seen[key]) {
+				seen[key] = true
+				result.Rows = append(result.Rows, row)
+			}
+		}
+	}
+
+	// Apply ORDER BY if specified
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			found := false
+			for j, colName := range result.Columns {
+				if strings.EqualFold(colName, ob.Column) {
+					orderByIndices[i] = j
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("ORDER BY column %s not found in result", ob.Column)
+			}
+		}
+		sortRowsMVCC(result.Rows, stmt.OrderBy, orderByIndices)
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		if int(*stmt.Offset) >= len(result.Rows) {
+			result.Rows = nil
+		} else {
+			result.Rows = result.Rows[*stmt.Offset:]
+		}
+	}
+	if stmt.Limit != nil {
+		if int(*stmt.Limit) < len(result.Rows) {
+			result.Rows = result.Rows[:*stmt.Limit]
+		}
+	}
+
+	return result, nil
+}
+
+// sortRowsMVCC sorts rows for MVCC executor based on ORDER BY clauses.
+func sortRowsMVCC(rows [][]catalog.Value, orderBy []OrderByClause, orderByIndices []int) {
+	if len(rows) <= 1 || len(orderBy) == 0 {
+		return
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		for k, ob := range orderBy {
+			idx := orderByIndices[k]
+			left := rows[i][idx]
+			right := rows[j][idx]
+
+			cmp := compareValuesForSortMVCC(left, right)
+			if cmp == 0 {
+				continue
+			}
+
+			if ob.Desc {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+		return false
+	})
+}
+
+// compareValuesForSortMVCC compares two values for sorting.
+func compareValuesForSortMVCC(left, right catalog.Value) int {
+	if left.IsNull && right.IsNull {
+		return 0
+	}
+	if left.IsNull {
+		return 1
+	}
+	if right.IsNull {
+		return -1
+	}
+
+	switch left.Type {
+	case catalog.TypeInt32:
+		if right.Type == catalog.TypeInt64 {
+			if int64(left.Int32) < right.Int64 {
+				return -1
+			} else if int64(left.Int32) > right.Int64 {
+				return 1
+			}
+			return 0
+		}
+		if left.Int32 < right.Int32 {
+			return -1
+		} else if left.Int32 > right.Int32 {
+			return 1
+		}
+		return 0
+
+	case catalog.TypeInt64:
+		if right.Type == catalog.TypeInt32 {
+			if left.Int64 < int64(right.Int32) {
+				return -1
+			} else if left.Int64 > int64(right.Int32) {
+				return 1
+			}
+			return 0
+		}
+		if left.Int64 < right.Int64 {
+			return -1
+		} else if left.Int64 > right.Int64 {
+			return 1
+		}
+		return 0
+
+	case catalog.TypeText:
+		return strings.Compare(left.Text, right.Text)
+
+	case catalog.TypeBool:
+		if left.Bool == right.Bool {
+			return 0
+		}
+		if !left.Bool {
+			return -1
+		}
+		return 1
+
+	case catalog.TypeTimestamp:
+		if left.Timestamp.Before(right.Timestamp) {
+			return -1
+		} else if left.Timestamp.After(right.Timestamp) {
+			return 1
+		}
+		return 0
+	}
+	return 0
 }

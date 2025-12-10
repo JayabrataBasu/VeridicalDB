@@ -170,6 +170,43 @@ const (
 	TOKEN_DATE_ADD
 	TOKEN_DATE_SUB
 	TOKEN_INTERVAL
+	TOKEN_EXTRACT
+
+	// IS NULL / IS NOT NULL
+	TOKEN_IS
+
+	// Type casting
+	TOKEN_CAST
+
+	// Set operations
+	TOKEN_UNION
+	TOKEN_INTERSECT
+	TOKEN_EXCEPT
+	TOKEN_ALL
+
+	// View
+	TOKEN_VIEW
+
+	// Math functions
+	TOKEN_ABS
+	TOKEN_ROUND
+	TOKEN_FLOOR
+	TOKEN_CEIL
+	TOKEN_CEILING
+	TOKEN_MOD
+	TOKEN_POWER
+	TOKEN_SQRT
+
+	// String functions
+	TOKEN_TRIM
+	TOKEN_LTRIM
+	TOKEN_RTRIM
+	TOKEN_REPLACE
+	TOKEN_POSITION
+	TOKEN_REVERSE
+	TOKEN_REPEAT
+	TOKEN_LPAD
+	TOKEN_RPAD
 )
 
 var keywords = map[string]TokenType{
@@ -275,6 +312,32 @@ var keywords = map[string]TokenType{
 	"DATE_ADD":          TOKEN_DATE_ADD,
 	"DATE_SUB":          TOKEN_DATE_SUB,
 	"INTERVAL":          TOKEN_INTERVAL,
+	"EXTRACT":           TOKEN_EXTRACT,
+	"IS":                TOKEN_IS,
+	"CAST":              TOKEN_CAST,
+	"UNION":             TOKEN_UNION,
+	"INTERSECT":         TOKEN_INTERSECT,
+	"EXCEPT":            TOKEN_EXCEPT,
+	"ALL":               TOKEN_ALL,
+	"VIEW":              TOKEN_VIEW,
+	"ABS":               TOKEN_ABS,
+	"ROUND":             TOKEN_ROUND,
+	"FLOOR":             TOKEN_FLOOR,
+	"CEIL":              TOKEN_CEIL,
+	"CEILING":           TOKEN_CEILING,
+	"MOD":               TOKEN_MOD,
+	"POWER":             TOKEN_POWER,
+	"POW":               TOKEN_POWER,
+	"SQRT":              TOKEN_SQRT,
+	"TRIM":              TOKEN_TRIM,
+	"LTRIM":             TOKEN_LTRIM,
+	"RTRIM":             TOKEN_RTRIM,
+	"REPLACE":           TOKEN_REPLACE,
+	"POSITION":          TOKEN_POSITION,
+	"REVERSE":           TOKEN_REVERSE,
+	"REPEAT":            TOKEN_REPEAT,
+	"LPAD":              TOKEN_LPAD,
+	"RPAD":              TOKEN_RPAD,
 }
 
 // Token represents a lexical token.

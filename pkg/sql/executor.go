@@ -40,12 +40,18 @@ func (e *Executor) Execute(stmt Statement) (*Result, error) {
 	switch s := stmt.(type) {
 	case *CreateTableStmt:
 		return e.executeCreate(s)
+	case *CreateViewStmt:
+		return e.executeCreateView(s)
 	case *DropTableStmt:
 		return e.executeDrop(s)
+	case *DropViewStmt:
+		return e.executeDropView(s)
 	case *InsertStmt:
 		return e.executeInsert(s)
 	case *SelectStmt:
 		return e.executeSelect(s)
+	case *UnionStmt:
+		return e.executeUnion(s)
 	case *UpdateStmt:
 		return e.executeUpdate(s)
 	case *DeleteStmt:
@@ -1519,6 +1525,21 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 	case *CaseExpr:
 		return e.evalCaseExpr(ex, schema, row)
 
+	case *CastExpr:
+		return e.evalCastExpr(ex, schema, row)
+
+	case *IsNullExpr:
+		// IS NULL in value context returns boolean
+		val, err := e.evalExpr(ex.Expr, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		result := val.IsNull
+		if ex.Not {
+			return catalog.NewBool(!result), nil
+		}
+		return catalog.NewBool(result), nil
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -1668,6 +1689,18 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return result, nil
 
+	case *IsNullExpr:
+		// Evaluate IS NULL / IS NOT NULL
+		val, err := e.evalExpr(ex.Expr, schema, row)
+		if err != nil {
+			return false, err
+		}
+		result := val.IsNull
+		if ex.Not {
+			return !result, nil // IS NOT NULL
+		}
+		return result, nil // IS NULL
+
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
@@ -1681,7 +1714,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 func compareValues(left, right catalog.Value, op TokenType) (bool, error) {
 	// Handle NULL comparisons
 	if left.IsNull || right.IsNull {
-		// NULL compared to anything is always false (except for IS NULL which we don't have yet)
+		// NULL compared to anything is always false (use IS NULL for null checks)
 		return false, nil
 	}
 
@@ -2268,9 +2301,485 @@ func evalFunction(name string, args []catalog.Value) (catalog.Value, error) {
 		}
 		return catalog.NewTimestamp(ts), nil
 
+	case "EXTRACT":
+		// EXTRACT(part, date) - part is a string like "YEAR", "MONTH", etc.
+		if len(args) != 2 {
+			return catalog.Value{}, fmt.Errorf("EXTRACT requires 2 arguments")
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("EXTRACT first argument must be text (part name)")
+		}
+		if args[1].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[1].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("EXTRACT second argument must be timestamp")
+		}
+		ts := args[1].Timestamp
+		switch strings.ToUpper(args[0].Text) {
+		case "YEAR":
+			return catalog.NewInt32(int32(ts.Year())), nil
+		case "MONTH":
+			return catalog.NewInt32(int32(ts.Month())), nil
+		case "DAY":
+			return catalog.NewInt32(int32(ts.Day())), nil
+		case "HOUR":
+			return catalog.NewInt32(int32(ts.Hour())), nil
+		case "MINUTE":
+			return catalog.NewInt32(int32(ts.Minute())), nil
+		case "SECOND":
+			return catalog.NewInt32(int32(ts.Second())), nil
+		default:
+			return catalog.Value{}, fmt.Errorf("EXTRACT unknown part: %s", args[0].Text)
+		}
+
+	// Math functions
+	case "ABS":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("ABS requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(args[0].Type), nil
+		}
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			v := args[0].Int32
+			if v < 0 {
+				v = -v
+			}
+			return catalog.NewInt32(v), nil
+		case catalog.TypeInt64:
+			v := args[0].Int64
+			if v < 0 {
+				v = -v
+			}
+			return catalog.NewInt64(v), nil
+		default:
+			return catalog.Value{}, fmt.Errorf("ABS requires numeric argument")
+		}
+
+	case "ROUND":
+		if len(args) < 1 || len(args) > 2 {
+			return catalog.Value{}, fmt.Errorf("ROUND requires 1 or 2 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(args[0].Type), nil
+		}
+		// For integers, ROUND just returns the value
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			return args[0], nil
+		case catalog.TypeInt64:
+			return args[0], nil
+		default:
+			return catalog.Value{}, fmt.Errorf("ROUND requires numeric argument")
+		}
+
+	case "FLOOR":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("FLOOR requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(args[0].Type), nil
+		}
+		// For integers, FLOOR just returns the value
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			return args[0], nil
+		case catalog.TypeInt64:
+			return args[0], nil
+		default:
+			return catalog.Value{}, fmt.Errorf("FLOOR requires numeric argument")
+		}
+
+	case "CEIL", "CEILING":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("CEIL requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(args[0].Type), nil
+		}
+		// For integers, CEIL just returns the value
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			return args[0], nil
+		case catalog.TypeInt64:
+			return args[0], nil
+		default:
+			return catalog.Value{}, fmt.Errorf("CEIL requires numeric argument")
+		}
+
+	case "MOD":
+		if len(args) != 2 {
+			return catalog.Value{}, fmt.Errorf("MOD requires exactly 2 arguments")
+		}
+		if args[0].IsNull || args[1].IsNull {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		var a, b int64
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			a = int64(args[0].Int32)
+		case catalog.TypeInt64:
+			a = args[0].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("MOD requires numeric arguments")
+		}
+		switch args[1].Type {
+		case catalog.TypeInt32:
+			b = int64(args[1].Int32)
+		case catalog.TypeInt64:
+			b = args[1].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("MOD requires numeric arguments")
+		}
+		if b == 0 {
+			return catalog.Value{}, fmt.Errorf("MOD division by zero")
+		}
+		return catalog.NewInt64(a % b), nil
+
+	case "POWER", "POW":
+		if len(args) != 2 {
+			return catalog.Value{}, fmt.Errorf("POWER requires exactly 2 arguments")
+		}
+		if args[0].IsNull || args[1].IsNull {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		var base, exp int64
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			base = int64(args[0].Int32)
+		case catalog.TypeInt64:
+			base = args[0].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("POWER requires numeric arguments")
+		}
+		switch args[1].Type {
+		case catalog.TypeInt32:
+			exp = int64(args[1].Int32)
+		case catalog.TypeInt64:
+			exp = args[1].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("POWER requires numeric arguments")
+		}
+		result := int64(1)
+		for i := int64(0); i < exp; i++ {
+			result *= base
+		}
+		return catalog.NewInt64(result), nil
+
+	case "SQRT":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("SQRT requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		var val int64
+		switch args[0].Type {
+		case catalog.TypeInt32:
+			val = int64(args[0].Int32)
+		case catalog.TypeInt64:
+			val = args[0].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("SQRT requires numeric argument")
+		}
+		if val < 0 {
+			return catalog.Value{}, fmt.Errorf("SQRT of negative number")
+		}
+		// Integer square root
+		result := int64(0)
+		for result*result <= val {
+			result++
+		}
+		return catalog.NewInt64(result - 1), nil
+
+	// String functions
+	case "TRIM":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("TRIM requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("TRIM requires text argument")
+		}
+		return catalog.NewText(strings.TrimSpace(args[0].Text)), nil
+
+	case "LTRIM":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("LTRIM requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("LTRIM requires text argument")
+		}
+		return catalog.NewText(strings.TrimLeft(args[0].Text, " \t\n\r")), nil
+
+	case "RTRIM":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("RTRIM requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("RTRIM requires text argument")
+		}
+		return catalog.NewText(strings.TrimRight(args[0].Text, " \t\n\r")), nil
+
+	case "REPLACE":
+		if len(args) != 3 {
+			return catalog.Value{}, fmt.Errorf("REPLACE requires exactly 3 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText || args[1].Type != catalog.TypeText || args[2].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("REPLACE requires text arguments")
+		}
+		return catalog.NewText(strings.ReplaceAll(args[0].Text, args[1].Text, args[2].Text)), nil
+
+	case "POSITION":
+		// POSITION(substr, str) returns 1-based position, 0 if not found
+		if len(args) != 2 {
+			return catalog.Value{}, fmt.Errorf("POSITION requires exactly 2 arguments")
+		}
+		if args[0].IsNull || args[1].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeText || args[1].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("POSITION requires text arguments")
+		}
+		idx := strings.Index(args[1].Text, args[0].Text)
+		if idx == -1 {
+			return catalog.NewInt32(0), nil
+		}
+		return catalog.NewInt32(int32(idx + 1)), nil
+
+	case "REVERSE":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("REVERSE requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("REVERSE requires text argument")
+		}
+		runes := []rune(args[0].Text)
+		for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+			runes[i], runes[j] = runes[j], runes[i]
+		}
+		return catalog.NewText(string(runes)), nil
+
+	case "REPEAT":
+		if len(args) != 2 {
+			return catalog.Value{}, fmt.Errorf("REPEAT requires exactly 2 arguments")
+		}
+		if args[0].IsNull || args[1].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("REPEAT first argument must be text")
+		}
+		var count int64
+		switch args[1].Type {
+		case catalog.TypeInt32:
+			count = int64(args[1].Int32)
+		case catalog.TypeInt64:
+			count = args[1].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("REPEAT second argument must be integer")
+		}
+		if count < 0 {
+			count = 0
+		}
+		return catalog.NewText(strings.Repeat(args[0].Text, int(count))), nil
+
+	case "LPAD":
+		if len(args) != 3 {
+			return catalog.Value{}, fmt.Errorf("LPAD requires exactly 3 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText || args[2].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("LPAD requires text arguments")
+		}
+		var length int64
+		switch args[1].Type {
+		case catalog.TypeInt32:
+			length = int64(args[1].Int32)
+		case catalog.TypeInt64:
+			length = args[1].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("LPAD length must be integer")
+		}
+		str := args[0].Text
+		pad := args[2].Text
+		if len(pad) == 0 {
+			return catalog.NewText(str), nil
+		}
+		for int64(len(str)) < length {
+			str = pad + str
+		}
+		if int64(len(str)) > length {
+			str = str[int64(len(str))-length:]
+		}
+		return catalog.NewText(str), nil
+
+	case "RPAD":
+		if len(args) != 3 {
+			return catalog.Value{}, fmt.Errorf("RPAD requires exactly 3 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeText), nil
+		}
+		if args[0].Type != catalog.TypeText || args[2].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("RPAD requires text arguments")
+		}
+		var length int64
+		switch args[1].Type {
+		case catalog.TypeInt32:
+			length = int64(args[1].Int32)
+		case catalog.TypeInt64:
+			length = args[1].Int64
+		default:
+			return catalog.Value{}, fmt.Errorf("RPAD length must be integer")
+		}
+		str := args[0].Text
+		pad := args[2].Text
+		if len(pad) == 0 {
+			return catalog.NewText(str), nil
+		}
+		for int64(len(str)) < length {
+			str = str + pad
+		}
+		if int64(len(str)) > length {
+			str = str[:length]
+		}
+		return catalog.NewText(str), nil
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unknown function: %s", name)
 	}
+}
+
+// evalCastExpr evaluates a CAST expression.
+func (e *Executor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	val, err := e.evalExpr(cast.Expr, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if val.IsNull {
+		return catalog.Null(cast.TargetType), nil
+	}
+
+	// Attempt to coerce to target type
+	switch cast.TargetType {
+	case catalog.TypeInt32:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return val, nil
+		case catalog.TypeInt64:
+			if val.Int64 >= -2147483648 && val.Int64 <= 2147483647 {
+				return catalog.NewInt32(int32(val.Int64)), nil
+			}
+			return catalog.Value{}, fmt.Errorf("value %d out of range for INT", val.Int64)
+		case catalog.TypeText:
+			i, err := strconv.ParseInt(val.Text, 10, 32)
+			if err != nil {
+				return catalog.Value{}, fmt.Errorf("cannot cast '%s' to INT", val.Text)
+			}
+			return catalog.NewInt32(int32(i)), nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewInt32(1), nil
+			}
+			return catalog.NewInt32(0), nil
+		}
+
+	case catalog.TypeInt64:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewInt64(int64(val.Int32)), nil
+		case catalog.TypeInt64:
+			return val, nil
+		case catalog.TypeText:
+			i, err := strconv.ParseInt(val.Text, 10, 64)
+			if err != nil {
+				return catalog.Value{}, fmt.Errorf("cannot cast '%s' to BIGINT", val.Text)
+			}
+			return catalog.NewInt64(i), nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewInt64(1), nil
+			}
+			return catalog.NewInt64(0), nil
+		}
+
+	case catalog.TypeText:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewText(strconv.FormatInt(int64(val.Int32), 10)), nil
+		case catalog.TypeInt64:
+			return catalog.NewText(strconv.FormatInt(val.Int64, 10)), nil
+		case catalog.TypeText:
+			return val, nil
+		case catalog.TypeBool:
+			if val.Bool {
+				return catalog.NewText("true"), nil
+			}
+			return catalog.NewText("false"), nil
+		case catalog.TypeTimestamp:
+			return catalog.NewText(val.Timestamp.Format(time.RFC3339)), nil
+		}
+
+	case catalog.TypeBool:
+		switch val.Type {
+		case catalog.TypeInt32:
+			return catalog.NewBool(val.Int32 != 0), nil
+		case catalog.TypeInt64:
+			return catalog.NewBool(val.Int64 != 0), nil
+		case catalog.TypeText:
+			lower := strings.ToLower(val.Text)
+			if lower == "true" || lower == "1" || lower == "yes" {
+				return catalog.NewBool(true), nil
+			}
+			if lower == "false" || lower == "0" || lower == "no" {
+				return catalog.NewBool(false), nil
+			}
+			return catalog.Value{}, fmt.Errorf("cannot cast '%s' to BOOL", val.Text)
+		case catalog.TypeBool:
+			return val, nil
+		}
+
+	case catalog.TypeTimestamp:
+		switch val.Type {
+		case catalog.TypeText:
+			// Try common formats
+			formats := []string{
+				time.RFC3339,
+				"2006-01-02 15:04:05",
+				"2006-01-02",
+			}
+			for _, f := range formats {
+				if t, err := time.Parse(f, val.Text); err == nil {
+					return catalog.NewTimestamp(t), nil
+				}
+			}
+			return catalog.Value{}, fmt.Errorf("cannot cast '%s' to TIMESTAMP", val.Text)
+		case catalog.TypeTimestamp:
+			return val, nil
+		}
+	}
+
+	return catalog.Value{}, fmt.Errorf("cannot cast %v to %v", val.Type, cast.TargetType)
 }
 
 // executeExplain executes an EXPLAIN statement
@@ -2556,4 +3065,166 @@ func (e *Executor) validateCheckConstraints(schema *catalog.Schema, values []cat
 	}
 
 	return nil
+}
+
+// executeCreateView creates a new view.
+// Note: This is a simplified implementation that stores view definitions in memory.
+// A production implementation would persist view metadata to the catalog.
+func (e *Executor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
+	// For now, views are not fully implemented - we return an error
+	// A real implementation would:
+	// 1. Validate the SELECT query
+	// 2. Store the view definition in the catalog
+	// 3. Allow SELECT from the view by expanding it
+	return nil, fmt.Errorf("CREATE VIEW is not yet fully implemented (view definition parsed successfully)")
+}
+
+// executeDropView drops a view.
+func (e *Executor) executeDropView(stmt *DropViewStmt) (*Result, error) {
+	// For now, views are not fully implemented
+	if stmt.IfExists {
+		return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
+	}
+	return nil, fmt.Errorf("DROP VIEW is not yet fully implemented")
+}
+
+// executeUnion executes a UNION/INTERSECT/EXCEPT operation.
+func (e *Executor) executeUnion(stmt *UnionStmt) (*Result, error) {
+	// Execute left SELECT
+	leftResult, err := e.executeSelect(stmt.Left)
+	if err != nil {
+		return nil, fmt.Errorf("error executing left side of %s: %w", stmt.Op, err)
+	}
+
+	// Execute right SELECT
+	rightResult, err := e.executeSelect(stmt.Right)
+	if err != nil {
+		return nil, fmt.Errorf("error executing right side of %s: %w", stmt.Op, err)
+	}
+
+	// Verify column counts match
+	if len(leftResult.Columns) != len(rightResult.Columns) {
+		return nil, fmt.Errorf("%s requires same number of columns on both sides (got %d and %d)",
+			stmt.Op, len(leftResult.Columns), len(rightResult.Columns))
+	}
+
+	// Use left side's column names
+	result := &Result{Columns: leftResult.Columns}
+
+	switch stmt.Op {
+	case "UNION":
+		if stmt.All {
+			// UNION ALL - just concatenate
+			result.Rows = append(leftResult.Rows, rightResult.Rows...)
+		} else {
+			// UNION - concatenate and remove duplicates
+			seen := make(map[string]bool)
+			for _, row := range leftResult.Rows {
+				key := rowKey(row)
+				if !seen[key] {
+					seen[key] = true
+					result.Rows = append(result.Rows, row)
+				}
+			}
+			for _, row := range rightResult.Rows {
+				key := rowKey(row)
+				if !seen[key] {
+					seen[key] = true
+					result.Rows = append(result.Rows, row)
+				}
+			}
+		}
+
+	case "INTERSECT":
+		// Find rows that appear in both
+		rightSet := make(map[string]bool)
+		for _, row := range rightResult.Rows {
+			rightSet[rowKey(row)] = true
+		}
+		seen := make(map[string]bool)
+		for _, row := range leftResult.Rows {
+			key := rowKey(row)
+			if rightSet[key] && (stmt.All || !seen[key]) {
+				seen[key] = true
+				result.Rows = append(result.Rows, row)
+			}
+		}
+
+	case "EXCEPT":
+		// Find rows in left that don't appear in right
+		rightSet := make(map[string]bool)
+		for _, row := range rightResult.Rows {
+			rightSet[rowKey(row)] = true
+		}
+		seen := make(map[string]bool)
+		for _, row := range leftResult.Rows {
+			key := rowKey(row)
+			if !rightSet[key] && (stmt.All || !seen[key]) {
+				seen[key] = true
+				result.Rows = append(result.Rows, row)
+			}
+		}
+	}
+
+	// Apply ORDER BY if specified
+	if len(stmt.OrderBy) > 0 {
+		// Build order by indices
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			found := false
+			for j, colName := range result.Columns {
+				if strings.EqualFold(colName, ob.Column) {
+					orderByIndices[i] = j
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("ORDER BY column %s not found in result", ob.Column)
+			}
+		}
+		e.sortRows(result.Rows, stmt.OrderBy, orderByIndices)
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		if int(*stmt.Offset) >= len(result.Rows) {
+			result.Rows = nil
+		} else {
+			result.Rows = result.Rows[*stmt.Offset:]
+		}
+	}
+	if stmt.Limit != nil {
+		if int(*stmt.Limit) < len(result.Rows) {
+			result.Rows = result.Rows[:*stmt.Limit]
+		}
+	}
+
+	return result, nil
+}
+
+// rowKey creates a unique string key for a row (used for duplicate detection in UNION)
+func rowKey(row []catalog.Value) string {
+	var parts []string
+	for _, v := range row {
+		if v.IsNull {
+			parts = append(parts, "NULL")
+		} else {
+			switch v.Type {
+			case catalog.TypeInt32:
+				parts = append(parts, fmt.Sprintf("%d", v.Int32))
+			case catalog.TypeInt64:
+				parts = append(parts, fmt.Sprintf("%d", v.Int64))
+			case catalog.TypeText:
+				parts = append(parts, v.Text)
+			case catalog.TypeBool:
+				parts = append(parts, fmt.Sprintf("%t", v.Bool))
+			case catalog.TypeTimestamp:
+				parts = append(parts, v.Timestamp.String())
+			default:
+				parts = append(parts, "?")
+			}
+		}
+	}
+	return strings.Join(parts, "|")
 }

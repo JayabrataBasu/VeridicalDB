@@ -286,3 +286,50 @@ type WhenClause struct {
 	// Result is the THEN expression.
 	Result Expression
 }
+
+// IsNullExpr represents IS NULL or IS NOT NULL expression.
+type IsNullExpr struct {
+	Expr Expression
+	Not  bool // true for IS NOT NULL
+}
+
+func (e *IsNullExpr) exprNode() {}
+
+// CastExpr represents CAST(expr AS type) expression.
+type CastExpr struct {
+	Expr       Expression
+	TargetType catalog.DataType
+}
+
+func (e *CastExpr) exprNode() {}
+
+// UnionStmt represents UNION/INTERSECT/EXCEPT operations.
+type UnionStmt struct {
+	Left    *SelectStmt // left SELECT
+	Right   *SelectStmt // right SELECT
+	Op      string      // "UNION", "INTERSECT", "EXCEPT"
+	All     bool        // true for UNION ALL, etc.
+	OrderBy []OrderByClause
+	Limit   *int64
+	Offset  *int64
+}
+
+func (s *UnionStmt) statementNode() {}
+
+// CreateViewStmt represents CREATE VIEW statement.
+type CreateViewStmt struct {
+	ViewName  string
+	Columns   []string    // optional column aliases
+	Query     *SelectStmt // the SELECT that defines the view
+	OrReplace bool        // CREATE OR REPLACE VIEW
+}
+
+func (s *CreateViewStmt) statementNode() {}
+
+// DropViewStmt represents DROP VIEW statement.
+type DropViewStmt struct {
+	ViewName string
+	IfExists bool
+}
+
+func (s *DropViewStmt) statementNode() {}
