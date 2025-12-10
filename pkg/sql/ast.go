@@ -16,10 +16,13 @@ type Expression interface {
 
 // ColumnDef represents a column definition in CREATE TABLE.
 type ColumnDef struct {
-	Name       string
-	Type       catalog.DataType
-	NotNull    bool
-	PrimaryKey bool
+	Name          string
+	Type          catalog.DataType
+	NotNull       bool
+	PrimaryKey    bool
+	HasDefault    bool
+	Default       Expression // literal value or NULL
+	AutoIncrement bool
 }
 
 // CreateTableStmt represents CREATE TABLE statement.
@@ -66,17 +69,45 @@ func (s *InsertStmt) statementNode() {}
 
 // SelectStmt represents SELECT statement.
 type SelectStmt struct {
+	Distinct  bool // SELECT DISTINCT
 	Columns   []SelectColumn
 	TableName string
+	Joins     []JoinClause // JOIN clauses
 	Where     Expression
+	GroupBy   []string   // column names for GROUP BY
+	Having    Expression // HAVING condition
+	OrderBy   []OrderByClause
+	Limit     *int64 // nil means no limit
+	Offset    *int64 // nil means no offset
 }
 
 func (s *SelectStmt) statementNode() {}
 
+// JoinClause represents a JOIN clause in SELECT.
+type JoinClause struct {
+	JoinType  string     // "INNER", "LEFT", "RIGHT"
+	TableName string     // table to join
+	Condition Expression // ON condition
+}
+
 // SelectColumn represents a column in SELECT.
 type SelectColumn struct {
-	Star bool   // true if *
-	Name string // column name if not star
+	Star      bool           // true if *
+	Name      string         // column name if not star
+	Aggregate *AggregateFunc // aggregate function if present
+	Alias     string         // optional alias (AS name)
+}
+
+// AggregateFunc represents an aggregate function call like COUNT(*), SUM(col).
+type AggregateFunc struct {
+	Function string // COUNT, SUM, AVG, MIN, MAX
+	Arg      string // column name or "*" for COUNT(*)
+}
+
+// OrderByClause represents an ORDER BY column with direction.
+type OrderByClause struct {
+	Column string
+	Desc   bool // true for DESC, false for ASC (default)
 }
 
 // UpdateStmt represents UPDATE statement.

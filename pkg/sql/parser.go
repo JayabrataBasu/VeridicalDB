@@ -79,11 +79,17 @@ func (p *Parser) Parse() (Statement, error) {
 	}
 }
 
-// parseSelect parses: SELECT columns FROM table [WHERE expr]
+// parseSelect parses: SELECT [DISTINCT] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
 func (p *Parser) parseSelect() (*SelectStmt, error) {
 	stmt := &SelectStmt{}
 
 	p.nextToken() // consume SELECT
+
+	// Optional DISTINCT
+	if p.curTokenIs(TOKEN_DISTINCT) {
+		stmt.Distinct = true
+		p.nextToken()
+	}
 
 	// Parse column list
 	cols, err := p.parseSelectColumns()
@@ -104,6 +110,15 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 	stmt.TableName = p.cur.Literal
 	p.nextToken()
 
+	// Optional JOIN clauses
+	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) {
+		join, err := p.parseJoinClause()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Joins = append(stmt.Joins, join)
+	}
+
 	// Optional WHERE
 	if p.curTokenIs(TOKEN_WHERE) {
 		p.nextToken()
@@ -114,7 +129,205 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 		stmt.Where = expr
 	}
 
+	// Optional GROUP BY
+	if p.curTokenIs(TOKEN_GROUP) {
+		p.nextToken() // consume GROUP
+		if err := p.expect(TOKEN_BY); err != nil {
+			return nil, err
+		}
+		groupBy, err := p.parseGroupByList()
+		if err != nil {
+			return nil, err
+		}
+		stmt.GroupBy = groupBy
+	}
+
+	// Optional HAVING (only valid with GROUP BY)
+	if p.curTokenIs(TOKEN_HAVING) {
+		if len(stmt.GroupBy) == 0 {
+			return nil, fmt.Errorf("HAVING requires GROUP BY clause")
+		}
+		p.nextToken() // consume HAVING
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Having = expr
+	}
+
+	// Optional ORDER BY
+	if p.curTokenIs(TOKEN_ORDER) {
+		p.nextToken() // consume ORDER
+		if err := p.expect(TOKEN_BY); err != nil {
+			return nil, err
+		}
+		orderBy, err := p.parseOrderByList()
+		if err != nil {
+			return nil, err
+		}
+		stmt.OrderBy = orderBy
+	}
+
+	// Optional LIMIT
+	if p.curTokenIs(TOKEN_LIMIT) {
+		p.nextToken() // consume LIMIT
+		if !p.curTokenIs(TOKEN_INT) {
+			return nil, fmt.Errorf("expected integer after LIMIT, got %v", p.cur.Type)
+		}
+		limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
+		}
+		if limit < 0 {
+			return nil, fmt.Errorf("LIMIT must be non-negative, got %d", limit)
+		}
+		stmt.Limit = &limit
+		p.nextToken()
+	}
+
+	// Optional OFFSET
+	if p.curTokenIs(TOKEN_OFFSET) {
+		p.nextToken() // consume OFFSET
+		if !p.curTokenIs(TOKEN_INT) {
+			return nil, fmt.Errorf("expected integer after OFFSET, got %v", p.cur.Type)
+		}
+		offset, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OFFSET value: %s", p.cur.Literal)
+		}
+		if offset < 0 {
+			return nil, fmt.Errorf("OFFSET must be non-negative, got %d", offset)
+		}
+		stmt.Offset = &offset
+		p.nextToken()
+	}
+
 	return stmt, nil
+}
+
+// parseOrderByList parses: column [ASC|DESC] [, column [ASC|DESC] ...]
+func (p *Parser) parseOrderByList() ([]OrderByClause, error) {
+	var orderBy []OrderByClause
+
+	for {
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
+		}
+		clause := OrderByClause{Column: p.cur.Literal}
+		p.nextToken()
+
+		// Optional ASC/DESC
+		if p.curTokenIs(TOKEN_ASC) {
+			clause.Desc = false
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_DESC) {
+			clause.Desc = true
+			p.nextToken()
+		}
+
+		orderBy = append(orderBy, clause)
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+
+	return orderBy, nil
+}
+
+// parseGroupByList parses: column [, column ...]
+func (p *Parser) parseGroupByList() ([]string, error) {
+	var groupBy []string
+
+	for {
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected column name in GROUP BY, got %v", p.cur.Type)
+		}
+		groupBy = append(groupBy, p.cur.Literal)
+		p.nextToken()
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+
+	return groupBy, nil
+}
+
+// parseJoinClause parses: [INNER|LEFT|RIGHT] JOIN table ON condition
+func (p *Parser) parseJoinClause() (JoinClause, error) {
+	join := JoinClause{JoinType: "INNER"} // default
+
+	// Parse optional join type
+	if p.curTokenIs(TOKEN_INNER) {
+		p.nextToken()
+	} else if p.curTokenIs(TOKEN_LEFT) {
+		join.JoinType = "LEFT"
+		p.nextToken()
+		if p.curTokenIs(TOKEN_OUTER) {
+			p.nextToken() // optional OUTER
+		}
+	} else if p.curTokenIs(TOKEN_RIGHT) {
+		join.JoinType = "RIGHT"
+		p.nextToken()
+		if p.curTokenIs(TOKEN_OUTER) {
+			p.nextToken() // optional OUTER
+		}
+	}
+
+	// Expect JOIN keyword
+	if err := p.expect(TOKEN_JOIN); err != nil {
+		return join, err
+	}
+
+	// Table name
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return join, fmt.Errorf("expected table name after JOIN, got %v", p.cur.Type)
+	}
+	join.TableName = p.cur.Literal
+	p.nextToken()
+
+	// ON keyword
+	if err := p.expect(TOKEN_ON); err != nil {
+		return join, err
+	}
+
+	// Join condition
+	condition, err := p.parseExpression()
+	if err != nil {
+		return join, fmt.Errorf("expected join condition: %w", err)
+	}
+	join.Condition = condition
+
+	return join, nil
+}
+
+// isAggregateToken returns true if the token is an aggregate function keyword.
+func (p *Parser) isAggregateToken() bool {
+	switch p.cur.Type {
+	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
+		return true
+	}
+	return false
+}
+
+// aggregateName returns the name of the current aggregate function token.
+func (p *Parser) aggregateName() string {
+	switch p.cur.Type {
+	case TOKEN_COUNT:
+		return "COUNT"
+	case TOKEN_SUM:
+		return "SUM"
+	case TOKEN_AVG:
+		return "AVG"
+	case TOKEN_MIN:
+		return "MIN"
+	case TOKEN_MAX:
+		return "MAX"
+	}
+	return ""
 }
 
 func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
@@ -124,9 +337,49 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 		if p.curTokenIs(TOKEN_STAR) {
 			cols = append(cols, SelectColumn{Star: true})
 			p.nextToken()
+		} else if p.isAggregateToken() {
+			// Parse aggregate function: COUNT(*), SUM(col), etc.
+			funcName := p.aggregateName()
+			p.nextToken() // consume function name
+
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, fmt.Errorf("expected ( after %s", funcName)
+			}
+
+			var arg string
+			if p.curTokenIs(TOKEN_STAR) {
+				arg = "*"
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) {
+				arg = p.cur.Literal
+				p.nextToken()
+			} else {
+				return nil, fmt.Errorf("expected column name or * in %s(), got %v", funcName, p.cur.Type)
+			}
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, err
+			}
+
+			col := SelectColumn{
+				Aggregate: &AggregateFunc{Function: funcName, Arg: arg},
+			}
+			cols = append(cols, col)
 		} else if p.curTokenIs(TOKEN_IDENT) {
-			cols = append(cols, SelectColumn{Name: p.cur.Literal})
+			name := p.cur.Literal
 			p.nextToken()
+
+			// Check for qualified name (table.column)
+			if p.cur.Literal == "." {
+				p.nextToken() // consume .
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected column name after '.', got %v", p.cur.Type)
+				}
+				name = name + "." + p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, SelectColumn{Name: name})
 		} else {
 			return nil, fmt.Errorf("expected column name or *, got %v", p.cur.Type)
 		}
@@ -392,7 +645,7 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 	}
 	p.nextToken()
 
-	// Optional NOT NULL and PRIMARY KEY
+	// Optional NOT NULL, PRIMARY KEY, and DEFAULT
 	for {
 		if p.curTokenIs(TOKEN_NOT) {
 			p.nextToken()
@@ -407,6 +660,19 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			}
 			col.PrimaryKey = true
 			col.NotNull = true // primary keys are implicitly not null
+		} else if p.curTokenIs(TOKEN_DEFAULT) {
+			p.nextToken()
+			// Parse default value (literal expression)
+			expr, err := p.parsePrimaryExpression()
+			if err != nil {
+				return col, fmt.Errorf("expected default value: %w", err)
+			}
+			col.HasDefault = true
+			col.Default = expr
+		} else if p.curTokenIs(TOKEN_AUTO_INCREMENT) {
+			p.nextToken()
+			col.AutoIncrement = true
+			col.NotNull = true // auto-increment columns are implicitly not null
 		} else {
 			break
 		}
@@ -613,6 +879,17 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	case TOKEN_IDENT:
 		name := p.cur.Literal
 		p.nextToken()
+
+		// Check for qualified name (table.column)
+		if p.cur.Literal == "." {
+			p.nextToken() // consume .
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected column name after '.', got %v", p.cur.Type)
+			}
+			name = name + "." + p.cur.Literal
+			p.nextToken()
+		}
+
 		return &ColumnRef{Name: name}, nil
 
 	case TOKEN_LPAREN:

@@ -72,47 +72,103 @@ const (
 	// Storage keywords
 	TOKEN_USING
 	TOKEN_COLUMN
+
+	// ORDER BY and LIMIT keywords
+	TOKEN_ORDER
+	TOKEN_BY
+	TOKEN_ASC
+	TOKEN_DESC
+	TOKEN_LIMIT
+	TOKEN_OFFSET
+
+	// Aggregate function keywords
+	TOKEN_COUNT
+	TOKEN_SUM
+	TOKEN_AVG
+	TOKEN_MIN
+	TOKEN_MAX
+
+	// GROUP BY and HAVING keywords
+	TOKEN_GROUP
+	TOKEN_HAVING
+
+	// DISTINCT keyword
+	TOKEN_DISTINCT
+
+	// DEFAULT keyword
+	TOKEN_DEFAULT
+
+	// AUTO_INCREMENT keyword
+	TOKEN_AUTO_INCREMENT
+
+	// JOIN keywords
+	TOKEN_JOIN
+	TOKEN_INNER
+	TOKEN_LEFT
+	TOKEN_RIGHT
+	TOKEN_OUTER
 )
 
 var keywords = map[string]TokenType{
-	"SELECT":    TOKEN_SELECT,
-	"FROM":      TOKEN_FROM,
-	"WHERE":     TOKEN_WHERE,
-	"INSERT":    TOKEN_INSERT,
-	"INTO":      TOKEN_INTO,
-	"VALUES":    TOKEN_VALUES,
-	"UPDATE":    TOKEN_UPDATE,
-	"SET":       TOKEN_SET,
-	"DELETE":    TOKEN_DELETE,
-	"CREATE":    TOKEN_CREATE,
-	"TABLE":     TOKEN_TABLE,
-	"DROP":      TOKEN_DROP,
-	"AND":       TOKEN_AND,
-	"OR":        TOKEN_OR,
-	"NOT":       TOKEN_NOT,
-	"NULL":      TOKEN_NULL,
-	"TRUE":      TOKEN_TRUE,
-	"FALSE":     TOKEN_FALSE,
-	"PRIMARY":   TOKEN_PRIMARY,
-	"KEY":       TOKEN_KEY,
-	"INT":       TOKEN_INT_TYPE,
-	"INTEGER":   TOKEN_INT_TYPE,
-	"BIGINT":    TOKEN_BIGINT,
-	"TEXT":      TOKEN_TEXT,
-	"VARCHAR":   TOKEN_TEXT,
-	"STRING":    TOKEN_TEXT,
-	"BOOL":      TOKEN_BOOL,
-	"BOOLEAN":   TOKEN_BOOL,
-	"TIMESTAMP": TOKEN_TIMESTAMP,
-	"DATETIME":  TOKEN_TIMESTAMP,
-	"BEGIN":     TOKEN_BEGIN,
-	"COMMIT":    TOKEN_COMMIT,
-	"ROLLBACK":  TOKEN_ROLLBACK,
-	"INDEX":     TOKEN_INDEX,
-	"UNIQUE":    TOKEN_UNIQUE,
-	"ON":        TOKEN_ON,
-	"USING":     TOKEN_USING,
-	"COLUMN":    TOKEN_COLUMN,
+	"SELECT":         TOKEN_SELECT,
+	"FROM":           TOKEN_FROM,
+	"WHERE":          TOKEN_WHERE,
+	"INSERT":         TOKEN_INSERT,
+	"INTO":           TOKEN_INTO,
+	"VALUES":         TOKEN_VALUES,
+	"UPDATE":         TOKEN_UPDATE,
+	"SET":            TOKEN_SET,
+	"DELETE":         TOKEN_DELETE,
+	"CREATE":         TOKEN_CREATE,
+	"TABLE":          TOKEN_TABLE,
+	"DROP":           TOKEN_DROP,
+	"AND":            TOKEN_AND,
+	"OR":             TOKEN_OR,
+	"NOT":            TOKEN_NOT,
+	"NULL":           TOKEN_NULL,
+	"TRUE":           TOKEN_TRUE,
+	"FALSE":          TOKEN_FALSE,
+	"PRIMARY":        TOKEN_PRIMARY,
+	"KEY":            TOKEN_KEY,
+	"INT":            TOKEN_INT_TYPE,
+	"INTEGER":        TOKEN_INT_TYPE,
+	"BIGINT":         TOKEN_BIGINT,
+	"TEXT":           TOKEN_TEXT,
+	"VARCHAR":        TOKEN_TEXT,
+	"STRING":         TOKEN_TEXT,
+	"BOOL":           TOKEN_BOOL,
+	"BOOLEAN":        TOKEN_BOOL,
+	"TIMESTAMP":      TOKEN_TIMESTAMP,
+	"DATETIME":       TOKEN_TIMESTAMP,
+	"BEGIN":          TOKEN_BEGIN,
+	"COMMIT":         TOKEN_COMMIT,
+	"ROLLBACK":       TOKEN_ROLLBACK,
+	"INDEX":          TOKEN_INDEX,
+	"UNIQUE":         TOKEN_UNIQUE,
+	"ON":             TOKEN_ON,
+	"USING":          TOKEN_USING,
+	"COLUMN":         TOKEN_COLUMN,
+	"ORDER":          TOKEN_ORDER,
+	"BY":             TOKEN_BY,
+	"ASC":            TOKEN_ASC,
+	"DESC":           TOKEN_DESC,
+	"LIMIT":          TOKEN_LIMIT,
+	"OFFSET":         TOKEN_OFFSET,
+	"COUNT":          TOKEN_COUNT,
+	"SUM":            TOKEN_SUM,
+	"AVG":            TOKEN_AVG,
+	"MIN":            TOKEN_MIN,
+	"MAX":            TOKEN_MAX,
+	"GROUP":          TOKEN_GROUP,
+	"HAVING":         TOKEN_HAVING,
+	"DISTINCT":       TOKEN_DISTINCT,
+	"DEFAULT":        TOKEN_DEFAULT,
+	"AUTO_INCREMENT": TOKEN_AUTO_INCREMENT,
+	"JOIN":           TOKEN_JOIN,
+	"INNER":          TOKEN_INNER,
+	"LEFT":           TOKEN_LEFT,
+	"RIGHT":          TOKEN_RIGHT,
+	"OUTER":          TOKEN_OUTER,
 }
 
 // Token represents a lexical token.

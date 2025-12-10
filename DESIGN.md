@@ -553,3 +553,214 @@ tm, _ := catalog.NewTableManager(dir, 4096)
 ---
 
 *This document should be updated as features are added or architecture changes.*
+
+## Multi-Database Support (Namespaces)
+
+### Goals
+
+- Provide first-class support for multiple logical databases (namespaces) within a VeridicalDB instance.
+- Allow users to `CREATE DATABASE`, `DROP DATABASE`, and `USE <name>` to switch the current working database.
+- Ensure tables, indexes, WAL segments and catalog metadata are scoped by database.
+- Keep cross-database operations explicit and safe (no implicit cross-db FK references).
+
+### High-level concepts
+
+- Database (namespace): a logical container for tables, indexes, and other schema objects. Each database has independent schema and storage files.
+- System catalog: adds a `pg_database`-like table recording known databases and metadata (owner, encoding, creation time, location).
+- Current database (session-level): each `Session` tracks the active database used to resolve unqualified table names.
+- Qualified names: allow `db.schema.table` or `db.table` notation in SQL (initially `db.table`).
+
+### File and storage layout
+
+Use a simple directory-per-database layout under the engine's `data` directory (configurable):
+
+- `data/` (engine root)
+   - `pg_catalog/` (system catalog files shared across instance)
+   - `db1/` (database `db1` data directory)
+      - `tables/` (table data files)
+      - `indexes/` (index files)
+      - `wal/` (per-database WAL segments or instance-wide WAL with DB-scoped records)
+      - `meta.json` (database metadata)
+   - `db2/`
+
+Notes:
+- Using directory-per-db keeps backups and file-per-table simple.
+- WAL can be per-database (simpler) or instance-wide with a DB field in records. Start with per-database WAL for simplicity.
+
+### System catalog additions
+
+Add a database-level system catalog table, e.g., `pg_database`, stored under `pg_catalog/`:
+
+Columns:
+- `datname` (TEXT) — database name (unique)
+- `datdba` (TEXT) — owner
+- `datpath` (TEXT) — filesystem path (relative to data root)
+- `datencoding` (TEXT) — encoding (UTF-8 default)
+- `datcreated` (TIMESTAMP)
+- `datconfig` (JSON) — optional DB-level config
+
+`pg_database` is read at engine start to populate known databases and to validate `CREATE/DROP` operations.
+
+### Parser & grammar
+
+Add statements to the SQL grammar and parser:
+
+- `CREATE DATABASE name [WITH OWNER = ident]` — create a new database directory and register in `pg_database`.
+- `DROP DATABASE name` — remove an empty database (or require `IF EXISTS` and an explicit `FORCE` flag later).
+- `USE name` — change session current database (alternative: `SET DATABASE = name`).
+
+Parser AST nodes:
+
+```go
+type CreateDatabaseStmt struct {
+      Name  string
+      Owner string // optional
+}
+
+type DropDatabaseStmt struct {
+      Name string
+      IfExists bool
+}
+
+type UseDatabaseStmt struct {
+      Name string
+}
+```
+
+Add parse methods in `pkg/sql/parser.go` and hook into the main Parse() dispatch.
+
+### Executor semantics
+
+- `CREATE DATABASE`:
+   - Validate name and that a directory with that name does not already exist.
+   - Create a new directory `data/<name>/` with the required subfolders (`tables`, `indexes`, `wal`) and write `meta.json`.
+   - Insert a row into `pg_catalog.pg_database` (persisted to `pg_catalog/` storage).
+   - Return success.
+
+- `DROP DATABASE`:
+   - Ensure database is not the current database for any active session (reject if in use).
+   - Optionally require directory to be empty or `FORCE` to remove files — start by refusing to drop non-empty DBs.
+   - Remove entry from `pg_database` and optionally delete files (configurable safety).
+
+- `USE` / `SET DATABASE`:
+   - Validate the database exists in `pg_database`.
+   - Update `Session.CurrentDatabase` to the target.
+   - Future unqualified table lookups resolve against `Session.CurrentDatabase`.
+
+Name resolution rules:
+- Unqualified name `table` resolves to `current_db.table`.
+- Qualified name `db.table` resolves to the named database regardless of session.
+
+Cross-database operations & constraints:
+- Do not allow foreign keys that reference tables in another database in the first implementation.
+- Disallow `CREATE INDEX` or DDL that mixes databases unless fully qualified and explicitly supported later.
+
+### Catalog API changes (suggested)
+
+Extend `pkg/catalog` with database-aware APIs. Example additions:
+
+```go
+// Catalog is the instance-level catalog for the engine
+type Catalog struct {
+      RootPath string // data root
+      SysPath  string // pg_catalog path
+      // ... existing fields
+}
+
+// DatabaseInfo describes a database
+type DatabaseInfo struct {
+      Name     string
+      Owner    string
+      Path     string
+      Encoding string
+      Created  time.Time
+}
+
+func (c *Catalog) CreateDatabase(ctx context.Context, name, owner string) (*DatabaseInfo, error)
+func (c *Catalog) DropDatabase(ctx context.Context, name string, force bool) error
+func (c *Catalog) ListDatabases(ctx context.Context) ([]DatabaseInfo, error)
+func (c *Catalog) GetDatabase(ctx context.Context, name string) (*DatabaseInfo, error)
+```
+
+Table managers remain per-database: `catalog.NewTableManager(dbPath)` so the session will create/use table managers for `Session.CurrentDatabase`.
+
+### Session changes
+
+Extend `pkg/sql/session.go`:
+
+- Add `CurrentDatabase string` to `Session` struct (persisted only in-memory).
+- When a session is created, set `CurrentDatabase` to a configured default (e.g., `default` or `postgres`), or `""` meaning no DB selected — REPL should call `CREATE DATABASE`/`USE` as needed.
+- Table resolution in executor should use `session.ResolveTable(name)` that returns the appropriate `TableManager` for the session's current DB.
+
+### REPL & CLI UX
+
+- Add backslash and SQL commands:
+   - SQL: `CREATE DATABASE testdb;` `USE testdb;` `DROP DATABASE testdb;`
+   - REPL: `\c testdb` as alias for `USE testdb`
+- Display current database in REPL prompt, e.g., `veridicaldb(testdb)=>`
+
+### WAL & MVCC considerations
+
+- Start with per-database WAL directories to avoid adding DB field to existing WAL record format.
+- Each database's WAL is replayed when that DB is opened.
+- Ensure `CreateDatabase` initializes WAL and any checkpoint files.
+
+### Concurrency & safety
+
+- Ensure `CreateDatabase` and `DropDatabase` take an instance-wide catalog lock (serialize catalog changes).
+- Prevent dropping a database while sessions are connected to it.
+
+### Backups & restore
+
+- With directory-per-db, backups can simply copy `data/<db>/` for a physical backup.
+- Document recommended steps to snapshot a DB safely (flush WAL, checkpoint, copy files).
+
+### Testing
+
+- Unit tests for parser: `TestParseCreateDatabase`, `TestParseUseDatabase`, `TestParseDropDatabase`.
+- Integration tests:
+   - `TestCreateUseDropDatabaseLifecycle` — create DB, use it, create table, insert rows, drop DB (fail while in use), drop after closing sessions.
+   - `TestNamespaceIsolation` — create same table name in two DBs and ensure they don't interfere.
+
+### Security / Privileges (future)
+
+- Database ownership and privileges: record owner in `pg_database` and check `CREATE/DROP` privileges as future work.
+
+### Migration & backward compatibility
+
+- Existing single-data-directory setups should be migrated to the new layout on first engine start: move existing tables into `data/default/` and register `default` in `pg_database`.
+- Provide a migration utility or automatic one-time migration step guarded by a flag.
+
+### Example SQL
+
+```sql
+CREATE DATABASE demo WITH OWNER = 'alice';
+USE demo;
+CREATE TABLE users (id INT PRIMARY KEY, name TEXT);
+INSERT INTO users VALUES (1, 'alice');
+SELECT * FROM users;
+\c otherdb  -- REPL alias to switch
+```
+
+### Implementation plan & estimate
+
+1. **Design & docs** (this section) — done (1-2 hours to review).  
+2. **Parser & AST** — add statements and tests (2-4 hours).  
+3. **Catalog API & syscatalog** — implement `pg_database`, filesystem layout, migration (4-8 hours).  
+4. **Executor support** — implement handlers for `CREATE/DROP/USE` (2-4 hours).  
+5. **Session & TableManager wiring** — ensure per-session table resolution (3-6 hours).  
+6. **REPL UX** — prompt and `\c` support (1-2 hours).  
+7. **Tests & integration** — add unit and integration tests (3-6 hours).  
+8. **Migration tests & docs** — manual/automated migration steps (2-4 hours).
+
+Total rough estimate: 2–4 days of focused work to implement and test a solid per-database namespace feature.
+
+### Open questions / choices (for you to decide)
+
+- WAL strategy: per-database WAL (simpler) vs instance-wide WAL with DB-scoped records (more complex but centralizes recovery). Recommendation: start per-database.
+- Default database name: create `default` or `postgres` automatically during migration/startup. Recommendation: create `default` to minimize surprises.
+- Force drop: implement a `DROP DATABASE name FORCE` later to remove files forcibly; initially refuse to drop non-empty DBs.
+
+---
+
+*End of multi-database design additions.*

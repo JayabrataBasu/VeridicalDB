@@ -82,12 +82,12 @@ func (t DataType) FixedWidth() int {
 
 // Value represents a typed value that can be stored in a column.
 type Value struct {
-	Type    DataType
-	IsNull  bool
-	Int32   int32
-	Int64   int64
-	Text    string
-	Bool    bool
+	Type      DataType
+	IsNull    bool
+	Int32     int32
+	Int64     int64
+	Text      string
+	Bool      bool
 	Timestamp time.Time
 }
 
@@ -147,10 +147,14 @@ func (v Value) String() string {
 
 // Column defines a column in a table schema.
 type Column struct {
-	ID      int
-	Name    string
-	Type    DataType
-	NotNull bool
+	ID            int
+	Name          string
+	Type          DataType
+	NotNull       bool
+	PrimaryKey    bool
+	HasDefault    bool
+	DefaultValue  *Value // pointer to allow nil for no default
+	AutoIncrement bool
 }
 
 // Schema represents the structure of a table.
