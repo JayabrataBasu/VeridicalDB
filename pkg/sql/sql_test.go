@@ -2246,3 +2246,126 @@ func TestShowExecution(t *testing.T) {
 		}
 	}
 }
+
+// TestParseExplain tests EXPLAIN statement parsing.
+func TestParseExplain(t *testing.T) {
+	tests := []struct {
+		name    string
+		sql     string
+		analyze bool
+	}{
+		{
+			name:    "simple explain",
+			sql:     "EXPLAIN SELECT * FROM users",
+			analyze: false,
+		},
+		{
+			name:    "explain analyze",
+			sql:     "EXPLAIN ANALYZE SELECT * FROM users",
+			analyze: true,
+		},
+		{
+			name:    "explain with where",
+			sql:     "EXPLAIN SELECT id, name FROM users WHERE id = 1",
+			analyze: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.sql)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+			explainStmt, ok := stmt.(*ExplainStmt)
+			if !ok {
+				t.Fatalf("expected *ExplainStmt, got %T", stmt)
+			}
+			if explainStmt.Analyze != tt.analyze {
+				t.Errorf("expected Analyze=%v, got %v", tt.analyze, explainStmt.Analyze)
+			}
+			if explainStmt.Statement == nil {
+				t.Error("expected Statement to be set")
+			}
+			if _, ok := explainStmt.Statement.(*SelectStmt); !ok {
+				t.Errorf("expected Statement to be *SelectStmt, got %T", explainStmt.Statement)
+			}
+		})
+	}
+}
+
+// TestExplainExecution tests EXPLAIN statement execution.
+func TestExplainExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE explain_test (id INT, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert some data
+	_, err = session.ExecuteSQL("INSERT INTO explain_test VALUES (1, 'Alice');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO explain_test VALUES (2, 'Bob');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test EXPLAIN
+	result, err := session.ExecuteSQL("EXPLAIN SELECT * FROM explain_test;")
+	if err != nil {
+		t.Fatalf("EXPLAIN failed: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Error("expected at least one row in EXPLAIN output")
+	}
+	if len(result.Columns) != 1 || result.Columns[0] != "QUERY PLAN" {
+		t.Errorf("expected column 'QUERY PLAN', got %v", result.Columns)
+	}
+	// Check that first row contains plan info
+	if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+		plan := result.Rows[0][0].Text
+		if !strings.Contains(plan, "TableScan") && !strings.Contains(plan, "IndexScan") {
+			t.Errorf("expected plan to mention TableScan or IndexScan, got: %s", plan)
+		}
+	}
+
+	// Test EXPLAIN with WHERE
+	result, err = session.ExecuteSQL("EXPLAIN SELECT * FROM explain_test WHERE id = 1;")
+	if err != nil {
+		t.Fatalf("EXPLAIN with WHERE failed: %v", err)
+	}
+	// Should have Filter info
+	foundFilter := false
+	for _, row := range result.Rows {
+		if len(row) > 0 && strings.Contains(row[0].Text, "Filter") {
+			foundFilter = true
+			break
+		}
+	}
+	if !foundFilter {
+		t.Error("expected EXPLAIN output to mention Filter for WHERE clause")
+	}
+
+	// Test EXPLAIN ANALYZE
+	result, err = session.ExecuteSQL("EXPLAIN ANALYZE SELECT * FROM explain_test;")
+	if err != nil {
+		t.Fatalf("EXPLAIN ANALYZE failed: %v", err)
+	}
+	// Should have actual rows info
+	foundActualRows := false
+	for _, row := range result.Rows {
+		if len(row) > 0 && strings.Contains(row[0].Text, "Actual rows") {
+			foundActualRows = true
+			break
+		}
+	}
+	if !foundActualRows {
+		t.Error("expected EXPLAIN ANALYZE output to show actual rows")
+	}
+}

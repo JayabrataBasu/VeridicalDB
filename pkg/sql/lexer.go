@@ -142,6 +142,10 @@ const (
 	TOKEN_TABLES
 	TOKEN_IF
 	TOKEN_EXISTS
+
+	// Query analysis
+	TOKEN_EXPLAIN
+	TOKEN_ANALYZE
 )
 
 var keywords = map[string]TokenType{
@@ -227,6 +231,8 @@ var keywords = map[string]TokenType{
 	"TABLES":         TOKEN_TABLES,
 	"IF":             TOKEN_IF,
 	"EXISTS":         TOKEN_EXISTS,
+	"EXPLAIN":        TOKEN_EXPLAIN,
+	"ANALYZE":        TOKEN_ANALYZE,
 }
 
 // Token represents a lexical token.

@@ -84,6 +84,8 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseTruncate()
 	case TOKEN_SHOW:
 		return p.parseShow()
+	case TOKEN_EXPLAIN:
+		return p.parseExplain()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -1295,4 +1297,30 @@ func (p *Parser) parseShow() (*ShowStmt, error) {
 	}
 
 	return nil, fmt.Errorf("expected TABLES or CREATE after SHOW, got %v", p.cur.Type)
+}
+
+// parseExplain parses EXPLAIN [ANALYZE] SELECT ...
+func (p *Parser) parseExplain() (Statement, error) {
+	p.nextToken() // consume EXPLAIN
+
+	analyze := false
+	if p.curTokenIs(TOKEN_ANALYZE) {
+		analyze = true
+		p.nextToken() // consume ANALYZE
+	}
+
+	// Only SELECT statements can be explained
+	if !p.curTokenIs(TOKEN_SELECT) {
+		return nil, fmt.Errorf("expected SELECT after EXPLAIN, got %v", p.cur.Type)
+	}
+
+	stmt, err := p.parseSelect()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing EXPLAIN SELECT: %w", err)
+	}
+
+	return &ExplainStmt{
+		Statement: stmt,
+		Analyze:   analyze,
+	}, nil
 }

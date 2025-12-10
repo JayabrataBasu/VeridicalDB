@@ -48,6 +48,8 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 		return e.executeTruncate(s)
 	case *ShowStmt:
 		return e.executeShow(s)
+	case *ExplainStmt:
+		return e.executeExplain(s, tx)
 	case *BeginStmt, *CommitStmt, *RollbackStmt:
 		// These are handled by the session, not the executor
 		return nil, fmt.Errorf("transaction statements should be handled by session")
@@ -1144,4 +1146,65 @@ func (e *MVCCExecutor) executeShow(stmt *ShowStmt) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("unsupported SHOW type: %s", stmt.ShowType)
 	}
+}
+
+// executeExplain executes an EXPLAIN statement
+func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*Result, error) {
+	selectStmt, ok := stmt.Statement.(*SelectStmt)
+	if !ok {
+		return nil, fmt.Errorf("EXPLAIN only supports SELECT statements")
+	}
+
+	// Get table metadata to validate the table exists
+	meta, err := e.mtm.GetTableMeta(selectStmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a planner and generate the plan
+	planner := NewPlanner(e.indexMgr)
+	plan := planner.Plan(selectStmt, meta)
+
+	// Build the explanation
+	var details []string
+
+	// Basic plan type
+	planExplain := plan.Explain()
+	details = append(details, planExplain)
+
+	if plan.Type == PlanIndexScan {
+		details = append(details, "  Using index: "+plan.IndexName)
+	}
+
+	if plan.RemainingWhere != nil {
+		details = append(details, "  Filter: <where clause>")
+	}
+
+	if selectStmt.OrderBy != nil {
+		details = append(details, "  Sort: ORDER BY clause")
+	}
+
+	if selectStmt.Limit != nil {
+		details = append(details, "  Limit: LIMIT clause")
+	}
+
+	// If ANALYZE is specified, also run the query and show row count
+	if stmt.Analyze {
+		result, err := e.executeSelect(selectStmt, tx)
+		if err != nil {
+			return nil, fmt.Errorf("EXPLAIN ANALYZE failed: %w", err)
+		}
+		details = append(details, fmt.Sprintf("  Actual rows: %d", len(result.Rows)))
+	}
+
+	// Build result rows
+	var explanation [][]catalog.Value
+	for _, detail := range details {
+		explanation = append(explanation, []catalog.Value{catalog.NewText(detail)})
+	}
+
+	return &Result{
+		Columns: []string{"QUERY PLAN"},
+		Rows:    explanation,
+	}, nil
 }

@@ -247,3 +247,11 @@ type ShowStmt struct {
 }
 
 func (s *ShowStmt) statementNode() {}
+
+// ExplainStmt represents EXPLAIN statement for query plan visualization.
+type ExplainStmt struct {
+	Analyze   bool      // EXPLAIN ANALYZE runs the query and shows actual stats
+	Statement Statement // The statement to explain (usually SELECT)
+}
+
+func (s *ExplainStmt) statementNode() {}
