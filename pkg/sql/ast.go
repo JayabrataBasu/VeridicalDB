@@ -187,6 +187,24 @@ type BetweenExpr struct {
 
 func (e *BetweenExpr) exprNode() {}
 
+// LikeExpr represents a LIKE/ILIKE expression (e.g., name LIKE 'A%').
+type LikeExpr struct {
+	Expr            Expression // expression being tested
+	Pattern         Expression // pattern to match against
+	CaseInsensitive bool       // true for ILIKE
+	Not             bool       // true for NOT LIKE
+}
+
+func (e *LikeExpr) exprNode() {}
+
+// FunctionExpr represents a function call (e.g., COALESCE(a, b), UPPER(name)).
+type FunctionExpr struct {
+	Name string       // function name (COALESCE, NULLIF, UPPER, etc.)
+	Args []Expression // function arguments
+}
+
+func (e *FunctionExpr) exprNode() {}
+
 // Transaction statements
 
 // BeginStmt represents BEGIN statement.
@@ -203,3 +221,29 @@ func (s *CommitStmt) statementNode() {}
 type RollbackStmt struct{}
 
 func (s *RollbackStmt) statementNode() {}
+
+// AlterTableStmt represents ALTER TABLE statement.
+type AlterTableStmt struct {
+	TableName  string
+	Action     string     // "ADD COLUMN", "DROP COLUMN", "RENAME TO", "RENAME COLUMN"
+	ColumnDef  *ColumnDef // for ADD COLUMN
+	ColumnName string     // for DROP COLUMN or RENAME COLUMN (old name)
+	NewName    string     // for RENAME TO or RENAME COLUMN (new name)
+}
+
+func (s *AlterTableStmt) statementNode() {}
+
+// TruncateTableStmt represents TRUNCATE TABLE statement.
+type TruncateTableStmt struct {
+	TableName string
+}
+
+func (s *TruncateTableStmt) statementNode() {}
+
+// ShowStmt represents SHOW statements (SHOW TABLES, SHOW CREATE TABLE).
+type ShowStmt struct {
+	ShowType  string // "TABLES", "CREATE TABLE"
+	TableName string // for SHOW CREATE TABLE
+}
+
+func (s *ShowStmt) statementNode() {}

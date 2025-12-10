@@ -154,5 +154,41 @@ func (c *Catalog) ListTables() []string {
 	return names
 }
 
+// UpdateTable updates table metadata.
+func (c *Catalog) UpdateTable(meta *TableMeta) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.tables[meta.Name]; !exists {
+		return fmt.Errorf("table %q does not exist", meta.Name)
+	}
+
+	// Update schema from columns
+	meta.Schema = NewSchema(meta.Columns)
+	c.tables[meta.Name] = meta
+	return c.save()
+}
+
+// RenameTable renames a table in the catalog.
+func (c *Catalog) RenameTable(oldName, newName string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	meta, exists := c.tables[oldName]
+	if !exists {
+		return fmt.Errorf("table %q does not exist", oldName)
+	}
+
+	if _, exists := c.tables[newName]; exists {
+		return fmt.Errorf("table %q already exists", newName)
+	}
+
+	// Update the metadata
+	meta.Name = newName
+	delete(c.tables, oldName)
+	c.tables[newName] = meta
+	return c.save()
+}
+
 // ErrTableNotFound is returned when a table doesn't exist.
 var ErrTableNotFound = errors.New("table not found")

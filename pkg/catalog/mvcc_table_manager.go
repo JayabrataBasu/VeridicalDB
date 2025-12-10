@@ -253,3 +253,23 @@ func (m *MVCCTableManager) DescribeTable(name string) ([]Column, error) {
 func (m *MVCCTableManager) Catalog() *Catalog {
 	return m.tm.Catalog()
 }
+
+// GetTableMeta returns the full table metadata.
+func (m *MVCCTableManager) GetTableMeta(name string) (*TableMeta, error) {
+	return m.tm.GetTableMeta(name)
+}
+
+// UpdateTableMeta updates table metadata (for ALTER TABLE operations).
+func (m *MVCCTableManager) UpdateTableMeta(meta *TableMeta) error {
+	return m.tm.UpdateTableMeta(meta)
+}
+
+// RenameTable renames a table.
+func (m *MVCCTableManager) RenameTable(oldName, newName string) error {
+	return m.tm.RenameTable(oldName, newName)
+}
+
+// TruncateTable removes all rows from a table.
+func (m *MVCCTableManager) TruncateTable(tableName string) (int, error) {
+	return m.tm.TruncateTable(tableName)
+}

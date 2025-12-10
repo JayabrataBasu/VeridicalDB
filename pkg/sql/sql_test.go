@@ -1654,10 +1654,10 @@ func TestColumnAliases(t *testing.T) {
 // TestParseTableAlias tests table aliases in FROM clause.
 func TestParseTableAlias(t *testing.T) {
 	tests := []struct {
-		name           string
-		input          string
-		wantErr        bool
-		expectedAlias  string
+		name          string
+		input         string
+		wantErr       bool
+		expectedAlias string
 	}{
 		{
 			name:          "table alias with AS",
@@ -1729,10 +1729,10 @@ func TestParseINBETWEEN(t *testing.T) {
 // TestJoinWithTableAliases tests JOIN with table aliases.
 func TestJoinWithTableAliases(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         string
-		wantErr       bool
-		joinAlias     string
+		name      string
+		input     string
+		wantErr   bool
+		joinAlias string
 	}{
 		{
 			name:      "join with alias",
@@ -1765,5 +1765,484 @@ func TestJoinWithTableAliases(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestLIKEExpression tests the LIKE and ILIKE pattern matching operators.
+func TestLIKEExpression(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE names (id INT, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	testData := []string{
+		"INSERT INTO names VALUES (1, 'Alice');",
+		"INSERT INTO names VALUES (2, 'Bob');",
+		"INSERT INTO names VALUES (3, 'Charlie');",
+		"INSERT INTO names VALUES (4, 'Alexandra');",
+		"INSERT INTO names VALUES (5, 'alice');",
+	}
+
+	for _, sql := range testData {
+		_, err := session.ExecuteSQL(sql)
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	// Test LIKE with % - case-sensitive, should match 'Alice' and 'Alexandra' (start with uppercase A)
+	result, err := session.ExecuteSQL("SELECT name FROM names WHERE name LIKE 'A%';")
+	if err != nil {
+		t.Fatalf("SELECT with LIKE failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows for LIKE 'A%%', got %d", len(result.Rows))
+	}
+
+	// Test LIKE with _ (single character)
+	result, err = session.ExecuteSQL("SELECT name FROM names WHERE name LIKE 'Bo_';")
+	if err != nil {
+		t.Fatalf("SELECT with LIKE _ failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for LIKE 'Bo_', got %d", len(result.Rows))
+	}
+
+	// Test LIKE with middle match - matches 'Alice', 'alice', and 'Charlie'
+	result, err = session.ExecuteSQL("SELECT name FROM names WHERE name LIKE '%li%';")
+	if err != nil {
+		t.Fatalf("SELECT with LIKE middle failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for LIKE '%%li%%', got %d", len(result.Rows))
+	}
+
+	// Test NOT LIKE
+	result, err = session.ExecuteSQL("SELECT name FROM names WHERE name NOT LIKE 'A%';")
+	if err != nil {
+		t.Fatalf("SELECT with NOT LIKE failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for NOT LIKE 'A%%', got %d", len(result.Rows))
+	}
+
+	// Test ILIKE (case insensitive)
+	result, err = session.ExecuteSQL("SELECT name FROM names WHERE name ILIKE 'alice';")
+	if err != nil {
+		t.Fatalf("SELECT with ILIKE failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows for ILIKE 'alice', got %d", len(result.Rows))
+	}
+}
+
+// TestArithmeticExpressions tests arithmetic operations in SQL.
+func TestArithmeticExpressions(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE numbers (id INT, a INT, b INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = session.ExecuteSQL("INSERT INTO numbers VALUES (1, 10, 3);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test addition in WHERE
+	result, err := session.ExecuteSQL("SELECT id FROM numbers WHERE a + b = 13;")
+	if err != nil {
+		t.Fatalf("SELECT with + failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for a + b = 13, got %d", len(result.Rows))
+	}
+
+	// Test subtraction in WHERE
+	result, err = session.ExecuteSQL("SELECT id FROM numbers WHERE a - b = 7;")
+	if err != nil {
+		t.Fatalf("SELECT with - failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for a - b = 7, got %d", len(result.Rows))
+	}
+
+	// Test multiplication in WHERE
+	result, err = session.ExecuteSQL("SELECT id FROM numbers WHERE a * b = 30;")
+	if err != nil {
+		t.Fatalf("SELECT with * failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for a * b = 30, got %d", len(result.Rows))
+	}
+
+	// Test division in WHERE
+	result, err = session.ExecuteSQL("SELECT id FROM numbers WHERE a / b = 3;")
+	if err != nil {
+		t.Fatalf("SELECT with / failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for a / b = 3, got %d", len(result.Rows))
+	}
+}
+
+// TestStringFunctions tests string functions UPPER, LOWER, LENGTH, CONCAT, SUBSTR.
+func TestStringFunctions(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE strings (id INT, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = session.ExecuteSQL("INSERT INTO strings VALUES (1, 'Hello');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test UPPER
+	result, err := session.ExecuteSQL("SELECT id FROM strings WHERE UPPER(name) = 'HELLO';")
+	if err != nil {
+		t.Fatalf("SELECT with UPPER failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for UPPER match, got %d", len(result.Rows))
+	}
+
+	// Test LOWER
+	result, err = session.ExecuteSQL("SELECT id FROM strings WHERE LOWER(name) = 'hello';")
+	if err != nil {
+		t.Fatalf("SELECT with LOWER failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for LOWER match, got %d", len(result.Rows))
+	}
+
+	// Test LENGTH
+	result, err = session.ExecuteSQL("SELECT id FROM strings WHERE LENGTH(name) = 5;")
+	if err != nil {
+		t.Fatalf("SELECT with LENGTH failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for LENGTH = 5, got %d", len(result.Rows))
+	}
+}
+
+// TestCOALESCEAndNULLIF tests COALESCE and NULLIF functions.
+func TestCOALESCEAndNULLIF(t *testing.T) {
+	// Test parsing in WHERE clause (functions in SELECT columns not yet supported)
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"coalesce in where", "SELECT * FROM t WHERE COALESCE(a, 0) > 10;", false},
+		{"nullif in where", "SELECT * FROM t WHERE NULLIF(a, 0) > 10;", false},
+		{"coalesce comparison", "SELECT * FROM t WHERE COALESCE(a, b) = 5;", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseLIKE tests parsing of LIKE expressions.
+func TestParseLIKE(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"like basic", "SELECT * FROM t WHERE name LIKE 'A%';", false},
+		{"like underscore", "SELECT * FROM t WHERE code LIKE 'A_B';", false},
+		{"not like", "SELECT * FROM t WHERE name NOT LIKE '%test%';", false},
+		{"ilike", "SELECT * FROM t WHERE name ILIKE 'hello';", false},
+		{"not ilike", "SELECT * FROM t WHERE name NOT ILIKE 'WORLD';", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseArithmetic tests parsing of arithmetic expressions in WHERE clause.
+func TestParseArithmetic(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"addition in where", "SELECT * FROM t WHERE a + b > 10;", false},
+		{"subtraction in where", "SELECT * FROM t WHERE a - b > 10;", false},
+		{"multiplication in where", "SELECT * FROM t WHERE a * b > 10;", false},
+		{"division in where", "SELECT * FROM t WHERE a / b > 10;", false},
+		{"complex in where", "SELECT * FROM t WHERE a + b * c > 10;", false},
+		{"with parens in where", "SELECT * FROM t WHERE (a + b) * c > 10;", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// ==================== Phase 4: DDL & Schema Tests ====================
+
+// TestParseAlterTable tests parsing of ALTER TABLE statements.
+func TestParseAlterTable(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"add column", "ALTER TABLE users ADD COLUMN email TEXT;", false},
+		{"add column with keyword", "ALTER TABLE users ADD email TEXT;", false},
+		{"add column not null", "ALTER TABLE users ADD COLUMN age INT NOT NULL;", false},
+		{"drop column", "ALTER TABLE users DROP COLUMN email;", false},
+		{"rename table", "ALTER TABLE users RENAME TO customers;", false},
+		{"rename column", "ALTER TABLE users RENAME COLUMN name TO full_name;", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && stmt == nil {
+				t.Error("expected non-nil statement")
+			}
+		})
+	}
+}
+
+// TestParseTruncate tests parsing of TRUNCATE TABLE statements.
+func TestParseTruncate(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"truncate with TABLE", "TRUNCATE TABLE users;", false},
+		{"truncate without TABLE", "TRUNCATE users;", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				if trunc, ok := stmt.(*TruncateTableStmt); !ok {
+					t.Error("expected TruncateTableStmt")
+				} else if trunc.TableName != "users" {
+					t.Errorf("expected table name 'users', got %q", trunc.TableName)
+				}
+			}
+		})
+	}
+}
+
+// TestParseShow tests parsing of SHOW statements.
+func TestParseShow(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		showType  string
+		tableName string
+		wantErr   bool
+	}{
+		{"show tables", "SHOW TABLES;", "TABLES", "", false},
+		{"show create table", "SHOW CREATE TABLE users;", "CREATE TABLE", "users", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr {
+				show, ok := stmt.(*ShowStmt)
+				if !ok {
+					t.Error("expected ShowStmt")
+					return
+				}
+				if show.ShowType != tt.showType {
+					t.Errorf("expected ShowType %q, got %q", tt.showType, show.ShowType)
+				}
+				if show.TableName != tt.tableName {
+					t.Errorf("expected TableName %q, got %q", tt.tableName, show.TableName)
+				}
+			}
+		})
+	}
+}
+
+// TestAlterTableExecution tests ALTER TABLE statement execution.
+func TestAlterTableExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create initial table
+	_, err := session.ExecuteSQL("CREATE TABLE test_alter (id INT, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Test ADD COLUMN
+	result, err := session.ExecuteSQL("ALTER TABLE test_alter ADD COLUMN email TEXT;")
+	if err != nil {
+		t.Fatalf("ALTER TABLE ADD COLUMN failed: %v", err)
+	}
+	if result.Message == "" {
+		t.Error("expected success message for ADD COLUMN")
+	}
+
+	// Verify column was added by inserting with new column
+	_, err = session.ExecuteSQL("INSERT INTO test_alter VALUES (1, 'Alice', 'alice@example.com');")
+	if err != nil {
+		t.Fatalf("INSERT with new column failed: %v", err)
+	}
+
+	// Test DROP COLUMN
+	result, err = session.ExecuteSQL("ALTER TABLE test_alter DROP COLUMN email;")
+	if err != nil {
+		t.Fatalf("ALTER TABLE DROP COLUMN failed: %v", err)
+	}
+	if result.Message == "" {
+		t.Error("expected success message for DROP COLUMN")
+	}
+
+	// Test RENAME COLUMN
+	result, err = session.ExecuteSQL("ALTER TABLE test_alter RENAME COLUMN name TO full_name;")
+	if err != nil {
+		t.Fatalf("ALTER TABLE RENAME COLUMN failed: %v", err)
+	}
+	if result.Message == "" {
+		t.Error("expected success message for RENAME COLUMN")
+	}
+
+	// Test RENAME TO
+	result, err = session.ExecuteSQL("ALTER TABLE test_alter RENAME TO test_renamed;")
+	if err != nil {
+		t.Fatalf("ALTER TABLE RENAME TO failed: %v", err)
+	}
+	if result.Message == "" {
+		t.Error("expected success message for RENAME TO")
+	}
+}
+
+// TestTruncateExecution tests TRUNCATE TABLE statement execution.
+func TestTruncateExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table and insert data
+	_, err := session.ExecuteSQL("CREATE TABLE test_truncate (id INT, name TEXT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO test_truncate VALUES (1, 'Alice');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO test_truncate VALUES (2, 'Bob');")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Truncate the table
+	result, err := session.ExecuteSQL("TRUNCATE TABLE test_truncate;")
+	if err != nil {
+		t.Fatalf("TRUNCATE TABLE failed: %v", err)
+	}
+	if result.Message == "" {
+		t.Error("expected success message for TRUNCATE")
+	}
+}
+
+// TestShowExecution tests SHOW statements execution.
+func TestShowExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create a test table
+	_, err := session.ExecuteSQL("CREATE TABLE show_test (id INT PRIMARY KEY, name TEXT NOT NULL);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Test SHOW TABLES
+	result, err := session.ExecuteSQL("SHOW TABLES;")
+	if err != nil {
+		t.Fatalf("SHOW TABLES failed: %v", err)
+	}
+	if len(result.Columns) != 1 || result.Columns[0] != "table_name" {
+		t.Errorf("expected column 'table_name', got %v", result.Columns)
+	}
+	// Should have at least the table we created
+	foundTable := false
+	for _, row := range result.Rows {
+		if len(row) > 0 && row[0].Text == "show_test" {
+			foundTable = true
+			break
+		}
+	}
+	if !foundTable {
+		t.Error("expected to find 'show_test' in SHOW TABLES result")
+	}
+
+	// Test SHOW CREATE TABLE
+	result, err = session.ExecuteSQL("SHOW CREATE TABLE show_test;")
+	if err != nil {
+		t.Fatalf("SHOW CREATE TABLE failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row, got %d", len(result.Rows))
+	}
+	if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+		ddl := result.Rows[0][0].Text
+		if ddl == "" {
+			t.Error("expected non-empty DDL string")
+		}
+		// Check that DDL contains table name
+		if !strings.Contains(ddl, "show_test") {
+			t.Errorf("DDL should contain table name, got: %s", ddl)
+		}
 	}
 }

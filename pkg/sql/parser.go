@@ -78,6 +78,12 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseCommit()
 	case TOKEN_ROLLBACK:
 		return p.parseRollback()
+	case TOKEN_ALTER:
+		return p.parseAlter()
+	case TOKEN_TRUNCATE:
+		return p.parseTruncate()
+	case TOKEN_SHOW:
+		return p.parseShow()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -910,7 +916,7 @@ func (p *Parser) parseNotExpr() (Expression, error) {
 }
 
 func (p *Parser) parseComparisonExpr() (Expression, error) {
-	left, err := p.parsePrimaryExpression()
+	left, err := p.parseAddExpr()
 	if err != nil {
 		return nil, err
 	}
@@ -972,20 +978,73 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 		return &BetweenExpr{Expr: left, Low: low, High: high, Not: isNot}, nil
 	}
 
-	// If we saw NOT but it wasn't IN/BETWEEN, that's an error
+	// Handle LIKE/ILIKE expression
+	if p.curTokenIs(TOKEN_LIKE) || p.curTokenIs(TOKEN_ILIKE) {
+		caseInsensitive := p.curTokenIs(TOKEN_ILIKE)
+		p.nextToken() // consume LIKE/ILIKE
+
+		pattern, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+
+		return &LikeExpr{Expr: left, Pattern: pattern, CaseInsensitive: caseInsensitive, Not: isNot}, nil
+	}
+
+	// If we saw NOT but it wasn't IN/BETWEEN/LIKE, that's an error
 	if isNot {
-		return nil, fmt.Errorf("expected IN or BETWEEN after NOT in comparison")
+		return nil, fmt.Errorf("expected IN, BETWEEN, or LIKE after NOT in comparison")
 	}
 
 	switch p.cur.Type {
 	case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
 		op := p.cur.Type
 		p.nextToken()
-		right, err := p.parsePrimaryExpression()
+		right, err := p.parseAddExpr()
 		if err != nil {
 			return nil, err
 		}
 		return &BinaryExpr{Left: left, Op: op, Right: right}, nil
+	}
+
+	return left, nil
+}
+
+// parseAddExpr parses addition and subtraction expressions.
+func (p *Parser) parseAddExpr() (Expression, error) {
+	left, err := p.parseMulExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.curTokenIs(TOKEN_PLUS) || p.curTokenIs(TOKEN_MINUS) {
+		op := p.cur.Type
+		p.nextToken()
+		right, err := p.parseMulExpr()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Left: left, Op: op, Right: right}
+	}
+
+	return left, nil
+}
+
+// parseMulExpr parses multiplication and division expressions.
+func (p *Parser) parseMulExpr() (Expression, error) {
+	left, err := p.parsePrimaryExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	for p.curTokenIs(TOKEN_STAR) || p.curTokenIs(TOKEN_SLASH) {
+		op := p.cur.Type
+		p.nextToken()
+		right, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+		left = &BinaryExpr{Left: left, Op: op, Right: right}
 	}
 
 	return left, nil
@@ -1038,6 +1097,9 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 
 		return &ColumnRef{Name: name}, nil
 
+	case TOKEN_COALESCE, TOKEN_NULLIF, TOKEN_UPPER, TOKEN_LOWER, TOKEN_LENGTH, TOKEN_CONCAT, TOKEN_SUBSTR, TOKEN_SUBSTRING:
+		return p.parseFunctionCall()
+
 	case TOKEN_LPAREN:
 		p.nextToken()
 		expr, err := p.parseExpression()
@@ -1070,4 +1132,167 @@ func (p *Parser) parseCommit() (*CommitStmt, error) {
 func (p *Parser) parseRollback() (*RollbackStmt, error) {
 	p.nextToken() // consume ROLLBACK
 	return &RollbackStmt{}, nil
+}
+
+// parseFunctionCall parses function calls like COALESCE(a, b) or NULLIF(a, b).
+func (p *Parser) parseFunctionCall() (Expression, error) {
+	funcName := p.cur.Literal
+	p.nextToken() // consume function name
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after %s", funcName)
+	}
+
+	var args []Expression
+	for !p.curTokenIs(TOKEN_RPAREN) && !p.curTokenIs(TOKEN_EOF) {
+		arg, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &FunctionExpr{Name: funcName, Args: args}, nil
+}
+
+// parseAlter parses: ALTER TABLE table_name action
+// Actions: ADD [COLUMN] col_def, DROP COLUMN col_name, RENAME TO new_name, RENAME COLUMN old TO new
+func (p *Parser) parseAlter() (*AlterTableStmt, error) {
+	p.nextToken() // consume ALTER
+
+	// Expect TABLE
+	if err := p.expect(TOKEN_TABLE); err != nil {
+		return nil, err
+	}
+
+	// Table name
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
+	}
+	tableName := p.cur.Literal
+	p.nextToken()
+
+	stmt := &AlterTableStmt{TableName: tableName}
+
+	// Parse action
+	switch {
+	case p.curTokenIs(TOKEN_ADD):
+		p.nextToken() // consume ADD
+		// Optional COLUMN keyword
+		if p.curTokenIs(TOKEN_COLUMN) {
+			p.nextToken()
+		}
+		// Parse column definition
+		colDef, err := p.parseColumnDef()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Action = "ADD COLUMN"
+		stmt.ColumnDef = &colDef
+
+	case p.curTokenIs(TOKEN_DROP):
+		p.nextToken() // consume DROP
+		// Expect COLUMN
+		if err := p.expect(TOKEN_COLUMN); err != nil {
+			return nil, fmt.Errorf("expected COLUMN after DROP in ALTER TABLE")
+		}
+		// Column name
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected column name after DROP COLUMN")
+		}
+		stmt.Action = "DROP COLUMN"
+		stmt.ColumnName = p.cur.Literal
+		p.nextToken()
+
+	case p.curTokenIs(TOKEN_RENAME):
+		p.nextToken() // consume RENAME
+		if p.curTokenIs(TOKEN_TO) {
+			// RENAME TO new_table_name
+			p.nextToken() // consume TO
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected new table name after RENAME TO")
+			}
+			stmt.Action = "RENAME TO"
+			stmt.NewName = p.cur.Literal
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_COLUMN) {
+			// RENAME COLUMN old_name TO new_name
+			p.nextToken() // consume COLUMN
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected column name after RENAME COLUMN")
+			}
+			stmt.ColumnName = p.cur.Literal
+			p.nextToken()
+			if err := p.expect(TOKEN_TO); err != nil {
+				return nil, fmt.Errorf("expected TO after column name in RENAME COLUMN")
+			}
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected new column name after TO")
+			}
+			stmt.Action = "RENAME COLUMN"
+			stmt.NewName = p.cur.Literal
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected TO or COLUMN after RENAME")
+		}
+
+	default:
+		return nil, fmt.Errorf("expected ADD, DROP, or RENAME in ALTER TABLE, got %v", p.cur.Type)
+	}
+
+	return stmt, nil
+}
+
+// parseTruncate parses: TRUNCATE [TABLE] table_name
+func (p *Parser) parseTruncate() (*TruncateTableStmt, error) {
+	p.nextToken() // consume TRUNCATE
+
+	// Optional TABLE keyword
+	if p.curTokenIs(TOKEN_TABLE) {
+		p.nextToken()
+	}
+
+	// Table name
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
+	}
+	tableName := p.cur.Literal
+	p.nextToken()
+
+	return &TruncateTableStmt{TableName: tableName}, nil
+}
+
+// parseShow parses: SHOW TABLES or SHOW CREATE TABLE table_name
+func (p *Parser) parseShow() (*ShowStmt, error) {
+	p.nextToken() // consume SHOW
+
+	if p.curTokenIs(TOKEN_TABLES) {
+		p.nextToken() // consume TABLES
+		return &ShowStmt{ShowType: "TABLES"}, nil
+	}
+
+	if p.curTokenIs(TOKEN_CREATE) {
+		p.nextToken() // consume CREATE
+		if err := p.expect(TOKEN_TABLE); err != nil {
+			return nil, fmt.Errorf("expected TABLE after SHOW CREATE")
+		}
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected table name after SHOW CREATE TABLE")
+		}
+		tableName := p.cur.Literal
+		p.nextToken()
+		return &ShowStmt{ShowType: "CREATE TABLE", TableName: tableName}, nil
+	}
+
+	return nil, fmt.Errorf("expected TABLES or CREATE after SHOW, got %v", p.cur.Type)
 }

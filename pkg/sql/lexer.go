@@ -25,6 +25,9 @@ const (
 	TOKEN_LPAREN    // (
 	TOKEN_RPAREN    // )
 	TOKEN_STAR      // *
+	TOKEN_PLUS      // +
+	TOKEN_MINUS     // -
+	TOKEN_SLASH     // /
 	TOKEN_EQ        // =
 	TOKEN_NE        // != or <>
 	TOKEN_LT        // <
@@ -112,6 +115,33 @@ const (
 	TOKEN_IN
 	TOKEN_BETWEEN
 	TOKEN_AS
+
+	// LIKE keyword
+	TOKEN_LIKE
+	TOKEN_ILIKE
+
+	// NULL handling functions
+	TOKEN_COALESCE
+	TOKEN_NULLIF
+
+	// String functions
+	TOKEN_UPPER
+	TOKEN_LOWER
+	TOKEN_LENGTH
+	TOKEN_CONCAT
+	TOKEN_SUBSTR
+	TOKEN_SUBSTRING
+
+	// DDL keywords
+	TOKEN_ALTER
+	TOKEN_ADD
+	TOKEN_RENAME
+	TOKEN_TO
+	TOKEN_TRUNCATE
+	TOKEN_SHOW
+	TOKEN_TABLES
+	TOKEN_IF
+	TOKEN_EXISTS
 )
 
 var keywords = map[string]TokenType{
@@ -177,6 +207,26 @@ var keywords = map[string]TokenType{
 	"IN":             TOKEN_IN,
 	"BETWEEN":        TOKEN_BETWEEN,
 	"AS":             TOKEN_AS,
+	"LIKE":           TOKEN_LIKE,
+	"ILIKE":          TOKEN_ILIKE,
+	"COALESCE":       TOKEN_COALESCE,
+	"NULLIF":         TOKEN_NULLIF,
+	"UPPER":          TOKEN_UPPER,
+	"LOWER":          TOKEN_LOWER,
+	"LENGTH":         TOKEN_LENGTH,
+	"LEN":            TOKEN_LENGTH,
+	"CONCAT":         TOKEN_CONCAT,
+	"SUBSTR":         TOKEN_SUBSTR,
+	"SUBSTRING":      TOKEN_SUBSTRING,
+	"ALTER":          TOKEN_ALTER,
+	"ADD":            TOKEN_ADD,
+	"RENAME":         TOKEN_RENAME,
+	"TO":             TOKEN_TO,
+	"TRUNCATE":       TOKEN_TRUNCATE,
+	"SHOW":           TOKEN_SHOW,
+	"TABLES":         TOKEN_TABLES,
+	"IF":             TOKEN_IF,
+	"EXISTS":         TOKEN_EXISTS,
 }
 
 // Token represents a lexical token.
@@ -249,6 +299,15 @@ func (l *Lexer) NextToken() Token {
 		l.readChar()
 	case '*':
 		tok = Token{Type: TOKEN_STAR, Literal: "*", Pos: l.pos}
+		l.readChar()
+	case '+':
+		tok = Token{Type: TOKEN_PLUS, Literal: "+", Pos: l.pos}
+		l.readChar()
+	case '-':
+		tok = Token{Type: TOKEN_MINUS, Literal: "-", Pos: l.pos}
+		l.readChar()
+	case '/':
+		tok = Token{Type: TOKEN_SLASH, Literal: "/", Pos: l.pos}
 		l.readChar()
 	case '=':
 		tok = Token{Type: TOKEN_EQ, Literal: "=", Pos: l.pos}
