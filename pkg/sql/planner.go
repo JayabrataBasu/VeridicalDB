@@ -105,7 +105,7 @@ func (p *Planner) findIndexForCondition(tableName string, where Expression, sche
 }
 
 // matchEqualityToIndex tries to match column = literal to an index.
-func (p *Planner) matchEqualityToIndex(tableName string, expr *BinaryExpr, schema *catalog.Schema) *IndexInfo {
+func (p *Planner) matchEqualityToIndex(tableName string, expr *BinaryExpr, _ *catalog.Schema) *IndexInfo {
 	var colName string
 	var literal *LiteralExpr
 

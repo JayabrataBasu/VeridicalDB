@@ -33,6 +33,9 @@ func (p *Parser) curTokenIs(t TokenType) bool {
 	return p.cur.Type == t
 }
 
+// Note: peekTokenIs and expectPeek are reserved for future parser extensions.
+// They are commented out to avoid unused function warnings.
+/*
 func (p *Parser) peekTokenIs(t TokenType) bool {
 	return p.peek.Type == t
 }
@@ -44,6 +47,7 @@ func (p *Parser) expectPeek(t TokenType) error {
 	}
 	return fmt.Errorf("expected %v, got %v at position %d", t, p.peek.Type, p.peek.Pos)
 }
+*/
 
 func (p *Parser) expect(t TokenType) error {
 	if p.curTokenIs(t) {

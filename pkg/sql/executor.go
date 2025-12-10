@@ -629,7 +629,7 @@ func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, ro
 }
 
 // evalJoinExpr evaluates an expression in the context of a joined row.
-func (e *Executor) evalJoinExpr(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *Executor) evalJoinExpr(expr Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
 	case *LiteralExpr:
 		return ex.Value, nil
@@ -1044,7 +1044,7 @@ func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns
 }
 
 // evalHavingExpr evaluates an expression in HAVING context (can reference aggregates).
-func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []SelectColumn, schema *catalog.Schema) (catalog.Value, error) {
+func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
 	switch ex := expr.(type) {
 	case *LiteralExpr:
 		return ex.Value, nil
@@ -1177,7 +1177,7 @@ func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 
 // scanTable scans all rows in a table and calls fn for each.
 // This is a simple sequential scan implementation.
-func (e *Executor) scanTable(tableName string, schema *catalog.Schema, fn func(rid storage.RID, row []catalog.Value) (bool, error)) error {
+func (e *Executor) scanTable(tableName string, _ *catalog.Schema, fn func(rid storage.RID, row []catalog.Value) (bool, error)) error {
 	// We need to scan through pages. For now, use a simple approach:
 	// Try fetching RIDs starting from page 0, slot 0.
 	// This is inefficient but works for small datasets.

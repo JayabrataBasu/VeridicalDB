@@ -594,7 +594,7 @@ func (e *MVCCExecutor) updateIndexesOnInsert(tableName string, rid storage.RID, 
 // Note: For MVCC, we don't actually delete from indexes immediately.
 // The index will contain stale entries that are filtered during query.
 // A proper implementation would need garbage collection.
-func (e *MVCCExecutor) updateIndexesOnDelete(tableName string, rid storage.RID, values []catalog.Value, schema *catalog.Schema) error {
+func (e *MVCCExecutor) updateIndexesOnDelete(tableName string, _ storage.RID, values []catalog.Value, schema *catalog.Schema) error {
 	if e.indexMgr == nil {
 		return nil
 	}
@@ -669,6 +669,10 @@ func encodeIndexValue(v catalog.Value) ([]byte, error) {
 	}
 }
 
+// Note: encodeRID and decodeRID are reserved for future use when implementing
+// proper index-based RID encoding/decoding for garbage collection.
+// They are commented out to avoid unused function warnings.
+/*
 // encodeRID encodes a RID as a value for index entries.
 func encodeRID(rid storage.RID) []byte {
 	// Encode as: [Page:4][Slot:2]
@@ -691,6 +695,7 @@ func decodeRID(tableName string, data []byte) (storage.RID, error) {
 	slot := uint16(data[4])<<8 | uint16(data[5])
 	return storage.RID{Table: tableName, Page: page, Slot: slot}, nil
 }
+*/
 
 // IndexScanInfo holds information about an index scan that can be used.
 type IndexScanInfo struct {
@@ -702,7 +707,7 @@ type IndexScanInfo struct {
 
 // findUsableIndex checks if an index can be used for a WHERE clause.
 // Returns nil if no suitable index is found.
-func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schema *catalog.Schema) *IndexScanInfo {
+func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, _ *catalog.Schema) *IndexScanInfo {
 	if e.indexMgr == nil || where == nil {
 		return nil
 	}
@@ -753,7 +758,7 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schem
 }
 
 // executeIndexScan performs an index scan using the given IndexScanInfo.
-func (e *MVCCExecutor) executeIndexScan(tableName string, scanInfo *IndexScanInfo, tx *txn.Transaction) ([]storage.RID, error) {
+func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *txn.Transaction) ([]storage.RID, error) {
 	switch scanInfo.Op {
 	case TOKEN_EQ:
 		// For equality, use SearchAll to get all matching RIDs (handles non-unique indexes)

@@ -84,13 +84,13 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 	}
 
 	// For DDL statements (CREATE/DROP), we don't need a transaction
-	switch stmt.(type) {
+	switch typedStmt := stmt.(type) {
 	case *CreateTableStmt, *DropTableStmt:
 		return s.executor.Execute(stmt, nil)
 	case *CreateIndexStmt:
-		return s.handleCreateIndex(stmt.(*CreateIndexStmt))
+		return s.handleCreateIndex(typedStmt)
 	case *DropIndexStmt:
-		return s.handleDropIndex(stmt.(*DropIndexStmt))
+		return s.handleDropIndex(typedStmt)
 	}
 
 	// For DML statements, we need a transaction

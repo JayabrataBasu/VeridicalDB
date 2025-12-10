@@ -857,9 +857,10 @@ func TestGroupBy(t *testing.T) {
 	appleCount := int64(0)
 	bananaCount := int64(0)
 	for _, row := range result.Rows {
-		if row[0].Text == "apple" {
+		switch row[0].Text {
+		case "apple":
 			appleCount = row[1].Int64
-		} else if row[0].Text == "banana" {
+		case "banana":
 			bananaCount = row[1].Int64
 		}
 	}
@@ -875,9 +876,10 @@ func TestGroupBy(t *testing.T) {
 	appleSum := int64(0)
 	bananaSum := int64(0)
 	for _, row := range result.Rows {
-		if row[0].Text == "apple" {
+		switch row[0].Text {
+		case "apple":
 			appleSum = row[1].Int64
-		} else if row[0].Text == "banana" {
+		case "banana":
 			bananaSum = row[1].Int64
 		}
 	}
@@ -913,9 +915,10 @@ func TestGroupByWithWhere(t *testing.T) {
 	electronicsSum := int64(0)
 	clothingSum := int64(0)
 	for _, row := range result.Rows {
-		if row[0].Text == "electronics" {
+		switch row[0].Text {
+		case "electronics":
 			electronicsSum = row[1].Int64
-		} else if row[0].Text == "clothing" {
+		case "clothing":
 			clothingSum = row[1].Int64
 		}
 	}
