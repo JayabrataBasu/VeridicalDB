@@ -69,25 +69,27 @@ func (s *InsertStmt) statementNode() {}
 
 // SelectStmt represents SELECT statement.
 type SelectStmt struct {
-	Distinct  bool // SELECT DISTINCT
-	Columns   []SelectColumn
-	TableName string
-	Joins     []JoinClause // JOIN clauses
-	Where     Expression
-	GroupBy   []string   // column names for GROUP BY
-	Having    Expression // HAVING condition
-	OrderBy   []OrderByClause
-	Limit     *int64 // nil means no limit
-	Offset    *int64 // nil means no offset
+	Distinct   bool // SELECT DISTINCT
+	Columns    []SelectColumn
+	TableName  string
+	TableAlias string       // optional table alias (FROM table AS t)
+	Joins      []JoinClause // JOIN clauses
+	Where      Expression
+	GroupBy    []string   // column names for GROUP BY
+	Having     Expression // HAVING condition
+	OrderBy    []OrderByClause
+	Limit      *int64 // nil means no limit
+	Offset     *int64 // nil means no offset
 }
 
 func (s *SelectStmt) statementNode() {}
 
 // JoinClause represents a JOIN clause in SELECT.
 type JoinClause struct {
-	JoinType  string     // "INNER", "LEFT", "RIGHT"
-	TableName string     // table to join
-	Condition Expression // ON condition
+	JoinType   string     // "INNER", "LEFT", "RIGHT"
+	TableName  string     // table to join
+	TableAlias string     // optional table alias
+	Condition  Expression // ON condition
 }
 
 // SelectColumn represents a column in SELECT.
@@ -165,6 +167,25 @@ type UnaryExpr struct {
 }
 
 func (e *UnaryExpr) exprNode() {}
+
+// InExpr represents an IN expression (e.g., col IN (1, 2, 3)).
+type InExpr struct {
+	Left   Expression   // column or expression being tested
+	Values []Expression // list of values to check against
+	Not    bool         // true for NOT IN
+}
+
+func (e *InExpr) exprNode() {}
+
+// BetweenExpr represents a BETWEEN expression (e.g., col BETWEEN 1 AND 10).
+type BetweenExpr struct {
+	Expr Expression // expression being tested
+	Low  Expression // lower bound
+	High Expression // upper bound
+	Not  bool       // true for NOT BETWEEN
+}
+
+func (e *BetweenExpr) exprNode() {}
 
 // Transaction statements
 

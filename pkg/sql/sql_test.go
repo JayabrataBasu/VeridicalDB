@@ -2,12 +2,40 @@ package sql
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
+
+// setupMVCCTestSession creates a temporary directory and returns a Session for testing.
+func setupMVCCTestSession(t *testing.T) (*Session, func()) {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "sql_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	tm, err := catalog.NewTableManager(dir, 8192)
+	if err != nil {
+		os.RemoveAll(dir)
+		t.Fatalf("failed to create table manager: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	session := NewSession(mtm)
+
+	cleanup := func() {
+		os.RemoveAll(dir)
+	}
+
+	return session, cleanup
+}
 
 // TestLexer verifies the tokenizer works correctly.
 func TestLexer(t *testing.T) {
@@ -1463,6 +1491,277 @@ func TestParseJoin(t *testing.T) {
 					t.Error("expected SelectStmt")
 				} else if len(selectStmt.Joins) != 1 {
 					t.Errorf("expected 1 join, got %d", len(selectStmt.Joins))
+				}
+			}
+		})
+	}
+}
+
+// TestINExpression tests the IN and NOT IN operators.
+func TestINExpression(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE products (id INT, category TEXT, price INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	testData := []string{
+		"INSERT INTO products VALUES (1, 'electronics', 100);",
+		"INSERT INTO products VALUES (2, 'clothing', 50);",
+		"INSERT INTO products VALUES (3, 'electronics', 200);",
+		"INSERT INTO products VALUES (4, 'food', 25);",
+		"INSERT INTO products VALUES (5, 'clothing', 75);",
+	}
+
+	for _, sql := range testData {
+		_, err := session.ExecuteSQL(sql)
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	// Test IN with integers
+	result, err := session.ExecuteSQL("SELECT id, category FROM products WHERE id IN (1, 3, 5);")
+	if err != nil {
+		t.Fatalf("SELECT with IN failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for IN (1,3,5), got %d", len(result.Rows))
+	}
+
+	// Test IN with strings
+	result, err = session.ExecuteSQL("SELECT id, category FROM products WHERE category IN ('electronics', 'food');")
+	if err != nil {
+		t.Fatalf("SELECT with IN (strings) failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for IN ('electronics', 'food'), got %d", len(result.Rows))
+	}
+
+	// Test NOT IN
+	result, err = session.ExecuteSQL("SELECT id, category FROM products WHERE category NOT IN ('electronics');")
+	if err != nil {
+		t.Fatalf("SELECT with NOT IN failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for NOT IN ('electronics'), got %d", len(result.Rows))
+	}
+
+	// Test IN with single value
+	result, err = session.ExecuteSQL("SELECT id FROM products WHERE id IN (1);")
+	if err != nil {
+		t.Fatalf("SELECT with IN (single) failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("expected 1 row for IN (1), got %d", len(result.Rows))
+	}
+}
+
+// TestBETWEENExpression tests the BETWEEN and NOT BETWEEN operators.
+func TestBETWEENExpression(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE scores (id INT, name TEXT, score INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	testData := []string{
+		"INSERT INTO scores VALUES (1, 'Alice', 85);",
+		"INSERT INTO scores VALUES (2, 'Bob', 72);",
+		"INSERT INTO scores VALUES (3, 'Charlie', 90);",
+		"INSERT INTO scores VALUES (4, 'Diana', 65);",
+		"INSERT INTO scores VALUES (5, 'Eve', 78);",
+	}
+
+	for _, sql := range testData {
+		_, err := session.ExecuteSQL(sql)
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	// Test BETWEEN (inclusive)
+	result, err := session.ExecuteSQL("SELECT name, score FROM scores WHERE score BETWEEN 70 AND 85;")
+	if err != nil {
+		t.Fatalf("SELECT with BETWEEN failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 rows for BETWEEN 70 AND 85, got %d", len(result.Rows))
+	}
+
+	// Test BETWEEN with boundary values
+	result, err = session.ExecuteSQL("SELECT name FROM scores WHERE score BETWEEN 85 AND 90;")
+	if err != nil {
+		t.Fatalf("SELECT with BETWEEN (boundaries) failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows for BETWEEN 85 AND 90, got %d", len(result.Rows))
+	}
+
+	// Test NOT BETWEEN
+	result, err = session.ExecuteSQL("SELECT name FROM scores WHERE score NOT BETWEEN 70 AND 85;")
+	if err != nil {
+		t.Fatalf("SELECT with NOT BETWEEN failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("expected 2 rows for NOT BETWEEN 70 AND 85, got %d", len(result.Rows))
+	}
+}
+
+// TestColumnAliases tests column aliases using AS keyword.
+func TestColumnAliases(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create table
+	_, err := session.ExecuteSQL("CREATE TABLE employees (id INT, full_name TEXT, salary INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert test data
+	_, err = session.ExecuteSQL("INSERT INTO employees VALUES (1, 'John Smith', 50000);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test column alias with AS
+	result, err := session.ExecuteSQL("SELECT id AS employee_id, full_name AS name FROM employees;")
+	if err != nil {
+		t.Fatalf("SELECT with AS failed: %v", err)
+	}
+
+	if len(result.Columns) != 2 {
+		t.Fatalf("expected 2 columns, got %d", len(result.Columns))
+	}
+
+	if result.Columns[0] != "employee_id" {
+		t.Errorf("expected first column 'employee_id', got '%s'", result.Columns[0])
+	}
+	if result.Columns[1] != "name" {
+		t.Errorf("expected second column 'name', got '%s'", result.Columns[1])
+	}
+}
+
+// TestParseTableAlias tests table aliases in FROM clause.
+func TestParseTableAlias(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		wantErr        bool
+		expectedAlias  string
+	}{
+		{
+			name:          "table alias with AS",
+			input:         "SELECT e.id FROM employees AS e;",
+			wantErr:       false,
+			expectedAlias: "e",
+		},
+		{
+			name:          "table alias without AS",
+			input:         "SELECT emp.id FROM employees emp;",
+			wantErr:       false,
+			expectedAlias: "emp",
+		},
+		{
+			name:          "no alias",
+			input:         "SELECT id FROM employees;",
+			wantErr:       false,
+			expectedAlias: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				selectStmt, ok := stmt.(*SelectStmt)
+				if !ok {
+					t.Error("expected SelectStmt")
+				} else if selectStmt.TableAlias != tt.expectedAlias {
+					t.Errorf("expected alias '%s', got '%s'", tt.expectedAlias, selectStmt.TableAlias)
+				}
+			}
+		})
+	}
+}
+
+// TestParseINBETWEEN tests parsing of IN and BETWEEN expressions.
+func TestParseINBETWEEN(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{"in with numbers", "SELECT * FROM t WHERE x IN (1, 2, 3);", false},
+		{"in with strings", "SELECT * FROM t WHERE name IN ('a', 'b');", false},
+		{"not in", "SELECT * FROM t WHERE x NOT IN (1, 2);", false},
+		{"between", "SELECT * FROM t WHERE x BETWEEN 1 AND 10;", false},
+		{"not between", "SELECT * FROM t WHERE x NOT BETWEEN 5 AND 15;", false},
+		{"in combined with and", "SELECT * FROM t WHERE x IN (1, 2) AND y > 0;", false},
+		{"between combined with or", "SELECT * FROM t WHERE x BETWEEN 1 AND 10 OR y = 0;", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestJoinWithTableAliases tests JOIN with table aliases.
+func TestJoinWithTableAliases(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		wantErr       bool
+		joinAlias     string
+	}{
+		{
+			name:      "join with alias",
+			input:     "SELECT * FROM orders AS o JOIN customers AS c ON o.cust_id = c.id;",
+			wantErr:   false,
+			joinAlias: "c",
+		},
+		{
+			name:      "join without alias",
+			input:     "SELECT * FROM orders JOIN customers ON orders.cust_id = customers.id;",
+			wantErr:   false,
+			joinAlias: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if err == nil {
+				selectStmt, ok := stmt.(*SelectStmt)
+				if !ok {
+					t.Error("expected SelectStmt")
+				} else if len(selectStmt.Joins) > 0 && selectStmt.Joins[0].TableAlias != tt.joinAlias {
+					t.Errorf("expected join alias '%s', got '%s'", tt.joinAlias, selectStmt.Joins[0].TableAlias)
 				}
 			}
 		})

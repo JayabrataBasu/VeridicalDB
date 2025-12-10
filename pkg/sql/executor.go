@@ -1289,6 +1289,75 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			return !val, nil
 		}
 
+	case *InExpr:
+		// Evaluate IN expression
+		leftVal, err := e.evalExpr(ex.Left, schema, row)
+		if err != nil {
+			return false, err
+		}
+		if leftVal.IsNull {
+			return false, nil // NULL IN (...) is always false
+		}
+
+		found := false
+		for _, valExpr := range ex.Values {
+			rightVal, err := e.evalExpr(valExpr, schema, row)
+			if err != nil {
+				return false, err
+			}
+			if rightVal.IsNull {
+				continue // Skip NULL values in the list
+			}
+			eq, err := compareValues(leftVal, rightVal, TOKEN_EQ)
+			if err != nil {
+				return false, err
+			}
+			if eq {
+				found = true
+				break
+			}
+		}
+
+		if ex.Not {
+			return !found, nil
+		}
+		return found, nil
+
+	case *BetweenExpr:
+		// Evaluate BETWEEN expression
+		val, err := e.evalExpr(ex.Expr, schema, row)
+		if err != nil {
+			return false, err
+		}
+		if val.IsNull {
+			return false, nil // NULL BETWEEN ... is always false
+		}
+
+		lowVal, err := e.evalExpr(ex.Low, schema, row)
+		if err != nil {
+			return false, err
+		}
+		highVal, err := e.evalExpr(ex.High, schema, row)
+		if err != nil {
+			return false, err
+		}
+
+		// val >= low AND val <= high
+		geLow, err := compareValues(val, lowVal, TOKEN_GE)
+		if err != nil {
+			return false, err
+		}
+		leHigh, err := compareValues(val, highVal, TOKEN_LE)
+		if err != nil {
+			return false, err
+		}
+
+		result := geLow && leHigh
+		if ex.Not {
+			return !result, nil
+		}
+		return result, nil
+
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil

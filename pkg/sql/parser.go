@@ -114,6 +114,20 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 	stmt.TableName = p.cur.Literal
 	p.nextToken()
 
+	// Optional table alias: AS alias or just alias
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return nil, fmt.Errorf("expected alias after AS")
+		}
+		stmt.TableAlias = p.cur.Literal
+		p.nextToken()
+	} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+		// Implicit alias without AS
+		stmt.TableAlias = p.cur.Literal
+		p.nextToken()
+	}
+
 	// Optional JOIN clauses
 	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) {
 		join, err := p.parseJoinClause()
@@ -293,6 +307,20 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 	join.TableName = p.cur.Literal
 	p.nextToken()
 
+	// Optional table alias: AS alias or just alias (before ON)
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return join, fmt.Errorf("expected alias after AS")
+		}
+		join.TableAlias = p.cur.Literal
+		p.nextToken()
+	} else if p.curTokenIs(TOKEN_IDENT) && !p.curTokenIs(TOKEN_ON) && !p.isKeyword() {
+		// Implicit alias without AS
+		join.TableAlias = p.cur.Literal
+		p.nextToken()
+	}
+
 	// ON keyword
 	if err := p.expect(TOKEN_ON); err != nil {
 		return join, err
@@ -312,6 +340,18 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 func (p *Parser) isAggregateToken() bool {
 	switch p.cur.Type {
 	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
+		return true
+	}
+	return false
+}
+
+// isKeyword returns true if the current token is a SQL keyword (not suitable for implicit alias).
+func (p *Parser) isKeyword() bool {
+	switch p.cur.Type {
+	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
+		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
+		TOKEN_RIGHT, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
+		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON:
 		return true
 	}
 	return false
@@ -368,6 +408,21 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 			col := SelectColumn{
 				Aggregate: &AggregateFunc{Function: funcName, Arg: arg},
 			}
+
+			// Check for alias: AS name or just name
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken() // consume AS
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				// Implicit alias (without AS)
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
 			cols = append(cols, col)
 		} else if p.curTokenIs(TOKEN_IDENT) {
 			name := p.cur.Literal
@@ -383,7 +438,23 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				p.nextToken()
 			}
 
-			cols = append(cols, SelectColumn{Name: name})
+			col := SelectColumn{Name: name}
+
+			// Check for alias: AS name or just name
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken() // consume AS
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				// Implicit alias (without AS)
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, col)
 		} else {
 			return nil, fmt.Errorf("expected column name or *, got %v", p.cur.Type)
 		}
@@ -820,6 +891,15 @@ func (p *Parser) parseAndExpr() (Expression, error) {
 func (p *Parser) parseNotExpr() (Expression, error) {
 	if p.curTokenIs(TOKEN_NOT) {
 		p.nextToken()
+		// Check for NOT IN or NOT BETWEEN
+		if p.curTokenIs(TOKEN_IN) || p.curTokenIs(TOKEN_BETWEEN) {
+			// This is a standalone NOT, parse the rest and negate
+			expr, err := p.parseNotExpr()
+			if err != nil {
+				return nil, err
+			}
+			return &UnaryExpr{Op: TOKEN_NOT, Expr: expr}, nil
+		}
 		expr, err := p.parseNotExpr()
 		if err != nil {
 			return nil, err
@@ -833,6 +913,68 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 	left, err := p.parsePrimaryExpression()
 	if err != nil {
 		return nil, err
+	}
+
+	// Check for NOT IN or NOT BETWEEN first
+	isNot := false
+	if p.curTokenIs(TOKEN_NOT) {
+		p.nextToken()
+		isNot = true
+	}
+
+	// Handle IN expression
+	if p.curTokenIs(TOKEN_IN) {
+		p.nextToken() // consume IN
+		if err := p.expect(TOKEN_LPAREN); err != nil {
+			return nil, fmt.Errorf("expected '(' after IN")
+		}
+
+		var values []Expression
+		for {
+			val, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, val)
+
+			if p.curTokenIs(TOKEN_COMMA) {
+				p.nextToken() // consume comma
+			} else {
+				break
+			}
+		}
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after IN list")
+		}
+
+		return &InExpr{Left: left, Values: values, Not: isNot}, nil
+	}
+
+	// Handle BETWEEN expression
+	if p.curTokenIs(TOKEN_BETWEEN) {
+		p.nextToken() // consume BETWEEN
+		low, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+
+		if !p.curTokenIs(TOKEN_AND) {
+			return nil, fmt.Errorf("expected AND in BETWEEN expression")
+		}
+		p.nextToken() // consume AND
+
+		high, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+
+		return &BetweenExpr{Expr: left, Low: low, High: high, Not: isNot}, nil
+	}
+
+	// If we saw NOT but it wasn't IN/BETWEEN, that's an error
+	if isNot {
+		return nil, fmt.Errorf("expected IN or BETWEEN after NOT in comparison")
 	}
 
 	switch p.cur.Type {
