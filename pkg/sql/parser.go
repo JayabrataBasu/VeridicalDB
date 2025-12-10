@@ -1503,6 +1503,10 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 		}
 		return expr, nil
 
+	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
+		// Aggregate functions in expressions (e.g., in HAVING clause)
+		return p.parseAggregateExpression()
+
 	default:
 		return nil, fmt.Errorf("unexpected token in expression: %v (%q)", p.cur.Type, p.cur.Literal)
 	}
@@ -1555,6 +1559,45 @@ func (p *Parser) parseFunctionCall() (Expression, error) {
 	}
 
 	return &FunctionExpr{Name: funcName, Args: args}, nil
+}
+
+// parseAggregateExpression parses aggregate functions like COUNT(*), SUM(column), etc.
+func (p *Parser) parseAggregateExpression() (Expression, error) {
+	funcName := p.aggregateName()
+	p.nextToken() // consume aggregate function name
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected ( after %s", funcName)
+	}
+
+	var arg Expression
+	if p.curTokenIs(TOKEN_STAR) {
+		// COUNT(*)
+		arg = &LiteralExpr{Value: catalog.NewText("*")}
+		p.nextToken()
+	} else if p.curTokenIs(TOKEN_DISTINCT) {
+		// COUNT(DISTINCT col)
+		p.nextToken()
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		// Wrap in a special marker - for now, just use a function expr
+		arg = &FunctionExpr{Name: "DISTINCT", Args: []Expression{expr}}
+	} else {
+		// SUM(column), AVG(column), etc.
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		arg = expr
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &FunctionExpr{Name: funcName, Args: []Expression{arg}}, nil
 }
 
 // parseDateFunction parses NOW(), CURRENT_TIMESTAMP, CURRENT_DATE

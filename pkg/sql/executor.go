@@ -470,14 +470,14 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 
 // executeSelectWithJoins handles SELECT with JOIN clauses.
 func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.TableMeta) (*Result, error) {
-	// Currently only supporting single INNER JOIN
+	// Currently only supporting single JOIN
 	if len(stmt.Joins) != 1 {
 		return nil, fmt.Errorf("only single JOIN is currently supported")
 	}
 
 	join := stmt.Joins[0]
-	if join.JoinType != "INNER" {
-		return nil, fmt.Errorf("only INNER JOIN is currently supported")
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" {
+		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
 	// Get the right table metadata
@@ -501,6 +501,7 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 	}
 
 	leftLen := len(leftMeta.Schema.Columns)
+	rightLen := len(rightMeta.Schema.Columns)
 	for i, col := range rightMeta.Schema.Columns {
 		newCol := col
 		combinedSchema.Columns = append(combinedSchema.Columns, newCol)
@@ -511,29 +512,118 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		}
 	}
 
-	// Perform nested loop join
+	// Create NULL row for outer joins
+	nullRightRow := make([]catalog.Value, rightLen)
+	for i, col := range rightMeta.Schema.Columns {
+		nullRightRow[i] = catalog.Null(col.Type)
+	}
+	nullLeftRow := make([]catalog.Value, leftLen)
+	for i, col := range leftMeta.Schema.Columns {
+		nullLeftRow[i] = catalog.Null(col.Type)
+	}
+
+	// Perform nested loop join based on join type
 	var joinedRows [][]catalog.Value
 
-	err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
-		return true, e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
-			// Combine rows
-			combinedRow := make([]catalog.Value, len(leftRow)+len(rightRow))
-			copy(combinedRow, leftRow)
-			copy(combinedRow[len(leftRow):], rightRow)
+	switch join.JoinType {
+	case "INNER":
+		err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+			return true, e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
 
-			// Evaluate join condition
-			match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
-			if err != nil {
-				return false, err
+				match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return false, err
+				}
+				if match {
+					joinedRows = append(joinedRows, combinedRow)
+				}
+				return true, nil
+			})
+		})
+
+	case "LEFT":
+		err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+			foundMatch := false
+			scanErr := e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return false, err
+				}
+				if match {
+					foundMatch = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+				return true, nil
+			})
+			if scanErr != nil {
+				return false, scanErr
 			}
-
-			if match {
+			// If no match found, emit left row with NULLs for right side
+			if !foundMatch {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], nullRightRow)
 				joinedRows = append(joinedRows, combinedRow)
 			}
-
-			return true, nil // continue scanning
+			return true, nil
 		})
-	})
+
+	case "RIGHT":
+		// Track which right rows have been matched
+		rightRowMatches := make(map[int]bool)
+		var rightRows [][]catalog.Value
+
+		// First collect all right rows
+		err = e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
+			rowCopy := make([]catalog.Value, len(rightRow))
+			copy(rowCopy, rightRow)
+			rightRows = append(rightRows, rowCopy)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Scan left and match with right
+		err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+			for i, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return false, err
+				}
+				if match {
+					rightRowMatches[i] = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Add unmatched right rows with NULLs for left side
+		for i, rightRow := range rightRows {
+			if !rightRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, nullLeftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+		err = nil // Reset err since we handled it above
+	}
 
 	if err != nil {
 		return nil, err
@@ -1100,16 +1190,63 @@ func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []Se
 		return ex.Value, nil
 
 	case *ColumnRef:
-		// Look for this column in GROUP BY columns
+		// Look for this column in GROUP BY columns (grp.groupKey)
+		for i, gbVal := range grp.groupKey {
+			// We need to match column names. Look in columns for GROUP BY entries.
+			// This is tricky - for now assume groupKey order matches groupBy columns
+			_ = i     // placeholder
+			_ = gbVal // placeholder
+		}
+		// Look in SELECT columns for non-aggregate columns
 		for i, col := range columns {
-			if col.Name == ex.Name {
-				return grp.groupKey[i], nil
+			if col.Name == ex.Name && col.Aggregate == nil {
+				if i < len(grp.groupKey) {
+					return grp.groupKey[i], nil
+				}
 			}
 		}
 		return catalog.Value{}, fmt.Errorf("column %s not found in GROUP BY", ex.Name)
 
-		// Note: For now, aggregate functions in HAVING would require more complex parsing.
-		// This is a simplified implementation that compares against literals.
+	case *FunctionExpr:
+		// Handle aggregate functions in HAVING clause
+		funcName := strings.ToUpper(ex.Name)
+
+		// Find matching aggregate in SELECT columns
+		for i, col := range columns {
+			if col.Aggregate != nil && col.Aggregate.Function == funcName {
+				// Found a matching aggregate, use its computed value
+				if i < len(grp.aggregators) {
+					aggState := grp.aggregators[i]
+					switch funcName {
+					case "COUNT":
+						return catalog.NewInt64(aggState.count), nil
+					case "SUM":
+						if !aggState.hasValue {
+							return catalog.Null(catalog.TypeInt64), nil
+						}
+						return catalog.NewInt64(aggState.sum), nil
+					case "AVG":
+						if aggState.count == 0 {
+							return catalog.Null(catalog.TypeInt64), nil
+						}
+						// AVG uses sumFloat
+						avg := int64(aggState.sumFloat / float64(aggState.count))
+						return catalog.NewInt64(avg), nil
+					case "MIN":
+						if !aggState.hasValue {
+							return catalog.Null(catalog.TypeUnknown), nil
+						}
+						return aggState.min, nil
+					case "MAX":
+						if !aggState.hasValue {
+							return catalog.Null(catalog.TypeUnknown), nil
+						}
+						return aggState.max, nil
+					}
+				}
+			}
+		}
+		return catalog.Value{}, fmt.Errorf("aggregate %s not found in SELECT columns", funcName)
 	}
 
 	return catalog.Value{}, fmt.Errorf("unsupported HAVING expression: %T", expr)

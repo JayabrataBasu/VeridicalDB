@@ -3262,3 +3262,269 @@ func TestViewParsing(t *testing.T) {
 		})
 	}
 }
+
+// TestLeftJoin tests LEFT JOIN functionality.
+func TestLeftJoin(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create users table
+	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
+	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'Alice');")
+	executeSQL(t, executor, "INSERT INTO users VALUES (2, 'Bob');")
+	executeSQL(t, executor, "INSERT INTO users VALUES (3, 'Charlie');")
+
+	// Create orders table - Charlie has no orders
+	executeSQL(t, executor, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT);")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (100, 1, 'Widget');")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (101, 1, 'Gadget');")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (102, 2, 'Doodad');")
+
+	// LEFT JOIN - should return 4 rows (Alice: 2, Bob: 1, Charlie: 1 with NULL)
+	result := executeSQL(t, executor, "SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id;")
+
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows from LEFT JOIN, got %d", len(result.Rows))
+	}
+
+	// Verify Charlie has NULL product
+	foundCharlieNull := false
+	for _, row := range result.Rows {
+		if row[0].Text == "Charlie" && row[1].IsNull {
+			foundCharlieNull = true
+			break
+		}
+	}
+	if !foundCharlieNull {
+		t.Error("expected Charlie to have NULL product in LEFT JOIN")
+	}
+}
+
+// TestRightJoin tests RIGHT JOIN functionality.
+func TestRightJoin(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create users table - only Alice and Bob
+	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
+	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'Alice');")
+	executeSQL(t, executor, "INSERT INTO users VALUES (2, 'Bob');")
+
+	// Create orders table - includes order for non-existent user 99
+	executeSQL(t, executor, "CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT);")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (100, 1, 'Widget');")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (101, 2, 'Gadget');")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (102, 99, 'Orphan');")
+
+	// RIGHT JOIN - should include orphan order with NULL user name
+	result := executeSQL(t, executor, "SELECT users.name, orders.product FROM users RIGHT JOIN orders ON users.id = orders.user_id;")
+
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows from RIGHT JOIN, got %d", len(result.Rows))
+	}
+
+	// Verify orphan order has NULL user name
+	foundOrphan := false
+	for _, row := range result.Rows {
+		if row[1].Text == "Orphan" && row[0].IsNull {
+			foundOrphan = true
+			break
+		}
+	}
+	if !foundOrphan {
+		t.Error("expected orphan order to have NULL user name in RIGHT JOIN")
+	}
+}
+
+// TestLeftOuterJoinSyntax tests LEFT OUTER JOIN syntax.
+func TestLeftOuterJoinSyntax(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE a (x INT PRIMARY KEY);")
+	executeSQL(t, executor, "INSERT INTO a VALUES (1);")
+	executeSQL(t, executor, "INSERT INTO a VALUES (2);")
+
+	executeSQL(t, executor, "CREATE TABLE b (y INT PRIMARY KEY);")
+	executeSQL(t, executor, "INSERT INTO b VALUES (1);")
+
+	// LEFT OUTER JOIN should work same as LEFT JOIN
+	result := executeSQL(t, executor, "SELECT a.x, b.y FROM a LEFT OUTER JOIN b ON a.x = b.y;")
+
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows from LEFT OUTER JOIN, got %d", len(result.Rows))
+	}
+
+	// x=2 should have NULL for b.y
+	foundNullY := false
+	for _, row := range result.Rows {
+		if row[0].Int32 == 2 && row[1].IsNull {
+			foundNullY = true
+			break
+		}
+	}
+	if !foundNullY {
+		t.Error("expected x=2 to have NULL y in LEFT OUTER JOIN")
+	}
+}
+
+// TestHavingClause tests HAVING clause filtering on aggregates.
+func TestHavingClause(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create table with sales data
+	executeSQL(t, executor, "CREATE TABLE sales (id INT PRIMARY KEY, region TEXT, amount INT);")
+
+	// Insert data: East has 3 sales, West has 2
+	executeSQL(t, executor, "INSERT INTO sales (id, region, amount) VALUES (1, 'East', 100);")
+	executeSQL(t, executor, "INSERT INTO sales (id, region, amount) VALUES (2, 'East', 200);")
+	executeSQL(t, executor, "INSERT INTO sales (id, region, amount) VALUES (3, 'East', 150);")
+	executeSQL(t, executor, "INSERT INTO sales (id, region, amount) VALUES (4, 'West', 300);")
+	executeSQL(t, executor, "INSERT INTO sales (id, region, amount) VALUES (5, 'West', 250);")
+
+	t.Run("HAVING COUNT > N", func(t *testing.T) {
+		result := executeSQL(t, executor, "SELECT region, COUNT(*) FROM sales GROUP BY region HAVING COUNT(*) > 2;")
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row (only East has >2 sales), got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Text != "East" {
+			t.Errorf("expected region 'East', got '%s'", result.Rows[0][0].Text)
+		}
+	})
+
+	t.Run("HAVING SUM > N", func(t *testing.T) {
+		result := executeSQL(t, executor, "SELECT region, SUM(amount) FROM sales GROUP BY region HAVING SUM(amount) > 400;")
+		if len(result.Rows) != 2 {
+			t.Fatalf("expected 2 rows (both regions have sum > 400), got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("HAVING AVG < N", func(t *testing.T) {
+		result := executeSQL(t, executor, "SELECT region, AVG(amount) FROM sales GROUP BY region HAVING AVG(amount) < 200;")
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row (only East has avg < 200), got %d", len(result.Rows))
+		}
+		if result.Rows[0][0].Text != "East" {
+			t.Errorf("expected region 'East', got '%s'", result.Rows[0][0].Text)
+		}
+	})
+}
+
+// TestHavingWithWhere tests HAVING combined with WHERE.
+func TestHavingWithWhere(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE orders (id INT PRIMARY KEY, category TEXT, value INT);")
+
+	// Insert test data
+	executeSQL(t, executor, "INSERT INTO orders (id, category, value) VALUES (1, 'A', 100);")
+	executeSQL(t, executor, "INSERT INTO orders (id, category, value) VALUES (2, 'A', 200);")
+	executeSQL(t, executor, "INSERT INTO orders (id, category, value) VALUES (3, 'A', 50);")
+	executeSQL(t, executor, "INSERT INTO orders (id, category, value) VALUES (4, 'B', 300);")
+	executeSQL(t, executor, "INSERT INTO orders (id, category, value) VALUES (5, 'B', 400);")
+
+	// WHERE filters rows first, then GROUP BY, then HAVING
+	result := executeSQL(t, executor, "SELECT category, COUNT(*) FROM orders WHERE value > 75 GROUP BY category HAVING COUNT(*) >= 2;")
+
+	// Category A: values 100, 200 pass WHERE (50 excluded), count=2
+	// Category B: values 300, 400 pass WHERE, count=2
+	// Both have count >= 2
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+// TestParseLeftRightJoin verifies LEFT/RIGHT JOIN parsing.
+func TestParseLeftRightJoin(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		joinType string
+		wantErr  bool
+	}{
+		{
+			name:     "LEFT JOIN",
+			input:    "SELECT * FROM a LEFT JOIN b ON a.id = b.id;",
+			joinType: "LEFT",
+			wantErr:  false,
+		},
+		{
+			name:     "LEFT OUTER JOIN",
+			input:    "SELECT * FROM a LEFT OUTER JOIN b ON a.id = b.id;",
+			joinType: "LEFT",
+			wantErr:  false,
+		},
+		{
+			name:     "RIGHT JOIN",
+			input:    "SELECT * FROM a RIGHT JOIN b ON a.id = b.id;",
+			joinType: "RIGHT",
+			wantErr:  false,
+		},
+		{
+			name:     "RIGHT OUTER JOIN",
+			input:    "SELECT * FROM a RIGHT OUTER JOIN b ON a.id = b.id;",
+			joinType: "RIGHT",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr {
+				selectStmt, ok := stmt.(*SelectStmt)
+				if !ok {
+					t.Fatal("expected SelectStmt")
+				}
+				if len(selectStmt.Joins) != 1 {
+					t.Fatal("expected 1 join")
+				}
+				if selectStmt.Joins[0].JoinType != tt.joinType {
+					t.Errorf("expected join type %s, got %s", tt.joinType, selectStmt.Joins[0].JoinType)
+				}
+			}
+		})
+	}
+}
+
+// TestParseHaving verifies HAVING clause parsing.
+func TestParseHaving(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "HAVING with COUNT",
+			input:   "SELECT category, COUNT(*) FROM orders GROUP BY category HAVING COUNT(*) > 5;",
+			wantErr: false,
+		},
+		{
+			name:    "HAVING with SUM",
+			input:   "SELECT dept, SUM(salary) FROM employees GROUP BY dept HAVING SUM(salary) > 100000;",
+			wantErr: false,
+		},
+		{
+			name:    "HAVING without GROUP BY should fail",
+			input:   "SELECT * FROM orders HAVING COUNT(*) > 5;",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

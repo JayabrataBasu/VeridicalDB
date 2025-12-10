@@ -210,6 +210,11 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
 
+	// Handle JOINs separately
+	if len(stmt.Joins) > 0 {
+		return e.executeSelectWithJoins(stmt, tx)
+	}
+
 	// Try to use an index scan first
 	result, used, err := e.executeSelectWithIndex(stmt, tx)
 	if err != nil {
@@ -1016,6 +1021,318 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 	default:
 		return nil, fmt.Errorf("unsupported index scan operator: %v", scanInfo.Op)
 	}
+}
+
+// executeSelectWithJoins handles SELECT with JOIN clauses for MVCC executor.
+func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+	if len(stmt.Joins) != 1 {
+		return nil, fmt.Errorf("only single JOIN is currently supported")
+	}
+
+	join := stmt.Joins[0]
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" {
+		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
+	}
+
+	cat := e.mtm.Catalog()
+	leftMeta, err := cat.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+	rightMeta, err := cat.GetTable(join.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build combined schema
+	combinedSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, 0, len(leftMeta.Schema.Columns)+len(rightMeta.Schema.Columns)),
+	}
+	colTableMap := make(map[string]int)
+
+	for i, col := range leftMeta.Schema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colTableMap[stmt.TableName+"."+col.Name] = i
+		colTableMap[col.Name] = i
+	}
+
+	leftLen := len(leftMeta.Schema.Columns)
+	rightLen := len(rightMeta.Schema.Columns)
+	for i, col := range rightMeta.Schema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colTableMap[join.TableName+"."+col.Name] = leftLen + i
+		if _, exists := colTableMap[col.Name]; !exists {
+			colTableMap[col.Name] = leftLen + i
+		}
+	}
+
+	// Create NULL rows for outer joins
+	nullRightRow := make([]catalog.Value, rightLen)
+	for i, col := range rightMeta.Schema.Columns {
+		nullRightRow[i] = catalog.Null(col.Type)
+	}
+	nullLeftRow := make([]catalog.Value, leftLen)
+	for i, col := range leftMeta.Schema.Columns {
+		nullLeftRow[i] = catalog.Null(col.Type)
+	}
+
+	// Collect rows from both tables
+	var leftRows [][]catalog.Value
+	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		rowCopy := make([]catalog.Value, len(row.Values))
+		copy(rowCopy, row.Values)
+		leftRows = append(leftRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var rightRows [][]catalog.Value
+	err = e.mtm.Scan(join.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		rowCopy := make([]catalog.Value, len(row.Values))
+		copy(rowCopy, row.Values)
+		rightRows = append(rightRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform join based on type
+	var joinedRows [][]catalog.Value
+
+	switch join.JoinType {
+	case "INNER":
+		for _, leftRow := range leftRows {
+			for _, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinConditionMVCC(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+		}
+
+	case "LEFT":
+		for _, leftRow := range leftRows {
+			foundMatch := false
+			for _, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinConditionMVCC(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					foundMatch = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+			if !foundMatch {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], nullRightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+
+	case "RIGHT":
+		rightRowMatches := make(map[int]bool)
+		for _, leftRow := range leftRows {
+			for i, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinConditionMVCC(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					rightRowMatches[i] = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+		}
+		// Add unmatched right rows
+		for i, rightRow := range rightRows {
+			if !rightRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, nullLeftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+	}
+
+	// Apply WHERE filter
+	var filteredRows [][]catalog.Value
+	for _, row := range joinedRows {
+		if stmt.Where != nil {
+			match, err := e.evalJoinConditionMVCC(stmt.Where, combinedSchema, row, colTableMap)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filteredRows = append(filteredRows, row)
+	}
+
+	// Determine output columns
+	var outputCols []string
+	var colIndices []int
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		for i, c := range combinedSchema.Columns {
+			outputCols = append(outputCols, c.Name)
+			colIndices = append(colIndices, i)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			idx, ok := colTableMap[sc.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			if sc.Alias != "" {
+				outputCols = append(outputCols, sc.Alias)
+			} else {
+				outputCols = append(outputCols, sc.Name)
+			}
+			colIndices = append(colIndices, idx)
+		}
+	}
+
+	// Project columns
+	resultRows := make([][]catalog.Value, len(filteredRows))
+	for i, row := range filteredRows {
+		projectedRow := make([]catalog.Value, len(colIndices))
+		for j, idx := range colIndices {
+			projectedRow[j] = row[idx]
+		}
+		resultRows[i] = projectedRow
+	}
+
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			idx, ok := colTableMap[ob.Column]
+			if !ok {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+			orderByIndices[i] = idx
+		}
+		sortRowsMVCC(filteredRows, stmt.OrderBy, orderByIndices)
+		for i, row := range filteredRows {
+			projectedRow := make([]catalog.Value, len(colIndices))
+			for j, idx := range colIndices {
+				projectedRow[j] = row[idx]
+			}
+			resultRows[i] = projectedRow
+		}
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		offset := int(*stmt.Offset)
+		if offset >= len(resultRows) {
+			resultRows = nil
+		} else {
+			resultRows = resultRows[offset:]
+		}
+	}
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(resultRows) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	// Apply DISTINCT
+	if stmt.Distinct {
+		resultRows = deduplicateRows(resultRows)
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// evalJoinConditionMVCC evaluates a join condition for MVCC executor.
+func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
+	switch ex := expr.(type) {
+	case *BinaryExpr:
+		switch ex.Op {
+		case TOKEN_AND:
+			left, err := e.evalJoinConditionMVCC(ex.Left, schema, row, colMap)
+			if err != nil {
+				return false, err
+			}
+			if !left {
+				return false, nil
+			}
+			return e.evalJoinConditionMVCC(ex.Right, schema, row, colMap)
+
+		case TOKEN_OR:
+			left, err := e.evalJoinConditionMVCC(ex.Left, schema, row, colMap)
+			if err != nil {
+				return false, err
+			}
+			if left {
+				return true, nil
+			}
+			return e.evalJoinConditionMVCC(ex.Right, schema, row, colMap)
+
+		default:
+			// Comparison operators
+			leftVal, err := e.evalJoinExprMVCC(ex.Left, schema, row, colMap)
+			if err != nil {
+				return false, err
+			}
+			rightVal, err := e.evalJoinExprMVCC(ex.Right, schema, row, colMap)
+			if err != nil {
+				return false, err
+			}
+			return compareValuesMVCC(leftVal, rightVal, ex.Op)
+		}
+	case *UnaryExpr:
+		if ex.Op == TOKEN_NOT {
+			result, err := e.evalJoinConditionMVCC(ex.Expr, schema, row, colMap)
+			if err != nil {
+				return false, err
+			}
+			return !result, nil
+		}
+	}
+	return false, fmt.Errorf("unsupported join condition type: %T", expr)
+}
+
+// evalJoinExprMVCC evaluates an expression in a join context for MVCC executor.
+func (e *MVCCExecutor) evalJoinExprMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		// ColumnRef.Name may be "table.column" or just "column"
+		idx, ok := colMap[ex.Name]
+		if !ok {
+			return catalog.Value{}, fmt.Errorf("unknown column in join: %s", ex.Name)
+		}
+		return row[idx], nil
+	case *LiteralExpr:
+		return ex.Value, nil
+	}
+	return catalog.Value{}, fmt.Errorf("unsupported expression type in join: %T", expr)
 }
 
 // executeSelectWithIndex performs a SELECT using an index scan when possible.
