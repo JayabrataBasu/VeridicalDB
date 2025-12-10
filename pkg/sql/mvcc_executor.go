@@ -61,12 +61,31 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 	cols := make([]catalog.Column, len(stmt.Columns))
 	for i, def := range stmt.Columns {
-		cols[i] = catalog.Column{
-			ID:      i,
-			Name:    def.Name,
-			Type:    def.Type,
-			NotNull: def.NotNull,
+		col := catalog.Column{
+			ID:            i,
+			Name:          def.Name,
+			Type:          def.Type,
+			NotNull:       def.NotNull,
+			PrimaryKey:    def.PrimaryKey,
+			HasDefault:    def.HasDefault,
+			AutoIncrement: def.AutoIncrement,
 		}
+
+		// If there's a default value, evaluate it and store it
+		if def.HasDefault && def.Default != nil {
+			defaultVal, err := e.evalExpr(def.Default, nil, nil)
+			if err != nil {
+				return nil, fmt.Errorf("invalid default value for column %s: %w", def.Name, err)
+			}
+			col.DefaultValue = &defaultVal
+		}
+
+		// If there's a CHECK constraint, serialize it to string for storage
+		if def.Check != nil {
+			col.CheckExpr = exprToString(def.Check)
+		}
+
+		cols[i] = col
 	}
 
 	// Use storage type from statement (default is "ROW")
@@ -153,6 +172,11 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 			}
 			values[i] = val
 		}
+	}
+
+	// Validate CHECK constraints
+	if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+		return nil, err
 	}
 
 	// Insert with MVCC
@@ -329,6 +353,11 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 				return false, fmt.Errorf("column %s: %w", assign.Column, err)
 			}
 			newRow[idx] = val
+		}
+
+		// Validate CHECK constraints on the updated row
+		if err := e.validateCheckConstraints(meta.Schema, newRow); err != nil {
+			return false, err
 		}
 
 		toUpdate = append(toUpdate, struct {
@@ -1285,4 +1314,32 @@ func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, 
 
 	// No ELSE clause - return NULL
 	return catalog.Null(catalog.TypeUnknown), nil
+}
+
+// validateCheckConstraints validates all CHECK constraints for a row.
+func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values []catalog.Value) error {
+	for i, col := range schema.Columns {
+		if col.CheckExpr == "" {
+			continue
+		}
+
+		// Parse the CHECK expression directly
+		parser := NewParser(col.CheckExpr)
+		expr, err := parser.parseExpression()
+		if err != nil {
+			return fmt.Errorf("invalid CHECK expression for column %s: %w", col.Name, err)
+		}
+
+		// Evaluate the CHECK expression with the row values
+		result, err := e.evalCondition(expr, schema, values)
+		if err != nil {
+			return fmt.Errorf("error evaluating CHECK constraint for column %s: %w", col.Name, err)
+		}
+
+		if !result {
+			return fmt.Errorf("CHECK constraint violated for column %s (value: %v)", col.Name, values[i])
+		}
+	}
+
+	return nil
 }

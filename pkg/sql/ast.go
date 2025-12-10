@@ -23,6 +23,8 @@ type ColumnDef struct {
 	HasDefault    bool
 	Default       Expression // literal value or NULL
 	AutoIncrement bool
+	Check         Expression // CHECK constraint expression
+	CheckExprStr  string     // Original CHECK expression string for storage
 }
 
 // CreateTableStmt represents CREATE TABLE statement.

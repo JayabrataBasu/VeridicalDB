@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
@@ -2583,6 +2584,294 @@ func TestCaseWhenExecution(t *testing.T) {
 			if !result.Rows[0][0].IsNull {
 				t.Errorf("expected NULL but got '%s'", result.Rows[0][0].Text)
 			}
+		}
+	})
+}
+
+// TestCheckConstraintParsing tests parsing of CHECK constraints in CREATE TABLE.
+func TestCheckConstraintParsing(t *testing.T) {
+	// First, let's test that parsing SELECT with literal and WHERE works
+	t.Run("test wrapped check expression parsing", func(t *testing.T) {
+		// Try just parsing the WHERE clause differently
+		parser := NewParser("SELECT x FROM t WHERE (age >= 18);")
+		stmt, err := parser.Parse()
+		if err != nil {
+			t.Fatalf("Failed to parse wrapped expression: %v", err)
+		}
+		selectStmt, ok := stmt.(*SelectStmt)
+		if !ok {
+			t.Fatalf("Expected SelectStmt, got %T", stmt)
+		}
+		if selectStmt.Where == nil {
+			t.Fatal("Expected WHERE clause but got nil")
+		}
+		t.Logf("Successfully parsed: %+v", selectStmt.Where)
+	})
+
+	tests := []struct {
+		name      string
+		sql       string
+		shouldErr bool
+	}{
+		{
+			name:      "simple check constraint",
+			sql:       "CREATE TABLE test (age INT CHECK(age >= 0));",
+			shouldErr: false,
+		},
+		{
+			name:      "check with comparison",
+			sql:       "CREATE TABLE test (price INT CHECK(price > 0));",
+			shouldErr: false,
+		},
+		{
+			name:      "check with AND",
+			sql:       "CREATE TABLE test (age INT CHECK(age >= 0 AND age <= 150));",
+			shouldErr: false,
+		},
+		{
+			name:      "check with OR",
+			sql:       "CREATE TABLE test (status TEXT CHECK(status = 'active' OR status = 'inactive'));",
+			shouldErr: false,
+		},
+		{
+			name:      "check without parentheses should fail",
+			sql:       "CREATE TABLE test (age INT CHECK age >= 0);",
+			shouldErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.sql)
+			_, err := parser.Parse()
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected parse error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestCheckConstraintExecution tests CHECK constraint enforcement during INSERT and UPDATE.
+func TestCheckConstraintExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create a table with CHECK constraints
+	_, err := session.ExecuteSQL("CREATE TABLE employees (id INT, age INT CHECK(age >= 18), salary INT CHECK(salary > 0));")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Test: Valid INSERT should succeed
+	t.Run("valid insert succeeds", func(t *testing.T) {
+		_, err := session.ExecuteSQL("INSERT INTO employees VALUES (1, 25, 50000);")
+		if err != nil {
+			t.Errorf("valid insert should succeed, got error: %v", err)
+		}
+	})
+
+	// Test: INSERT violating age CHECK should fail
+	t.Run("insert violating age check fails", func(t *testing.T) {
+		_, err := session.ExecuteSQL("INSERT INTO employees VALUES (2, 15, 30000);")
+		if err == nil {
+			t.Error("expected error for age < 18, but insert succeeded")
+		} else if !strings.Contains(err.Error(), "CHECK constraint violated") {
+			t.Errorf("expected CHECK constraint violation error, got: %v", err)
+		}
+	})
+
+	// Test: INSERT violating salary CHECK should fail
+	t.Run("insert violating salary check fails", func(t *testing.T) {
+		_, err := session.ExecuteSQL("INSERT INTO employees VALUES (3, 30, 0);")
+		if err == nil {
+			t.Error("expected error for salary <= 0, but insert succeeded")
+		} else if !strings.Contains(err.Error(), "CHECK constraint violated") {
+			t.Errorf("expected CHECK constraint violation error, got: %v", err)
+		}
+	})
+
+	// Test: UPDATE violating CHECK should fail
+	t.Run("update violating check fails", func(t *testing.T) {
+		// First verify the valid row exists
+		result, err := session.ExecuteSQL("SELECT age FROM employees WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("select failed: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		// Try to update to an invalid age
+		_, err = session.ExecuteSQL("UPDATE employees SET age = 10 WHERE id = 1;")
+		if err == nil {
+			t.Error("expected error for updating age to < 18, but update succeeded")
+		} else if !strings.Contains(err.Error(), "CHECK constraint violated") {
+			t.Errorf("expected CHECK constraint violation error, got: %v", err)
+		}
+	})
+
+	// Test: Valid UPDATE should succeed
+	t.Run("valid update succeeds", func(t *testing.T) {
+		_, err := session.ExecuteSQL("UPDATE employees SET age = 26 WHERE id = 1;")
+		if err != nil {
+			t.Errorf("valid update should succeed, got error: %v", err)
+		}
+
+		// Verify the update
+		result, err := session.ExecuteSQL("SELECT age FROM employees WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("select failed: %v", err)
+		}
+		if len(result.Rows) != 1 || result.Rows[0][0].Int32 != 26 {
+			t.Errorf("expected age 26, got %v", result.Rows[0][0])
+		}
+	})
+}
+
+// TestDateFunctionParsing tests parsing of date functions.
+func TestDateFunctionParsing(t *testing.T) {
+	tests := []struct {
+		name      string
+		sql       string
+		shouldErr bool
+	}{
+		{
+			name:      "NOW function with FROM",
+			sql:       "SELECT NOW() FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "NOW with alias",
+			sql:       "SELECT NOW() AS current_time FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "CURRENT_TIMESTAMP with FROM",
+			sql:       "SELECT CURRENT_TIMESTAMP FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "YEAR function",
+			sql:       "SELECT YEAR(created_at) FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "MONTH function",
+			sql:       "SELECT MONTH(created_at) FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "DAY function",
+			sql:       "SELECT DAY(created_at) FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "DATE_ADD function",
+			sql:       "SELECT DATE_ADD(created_at, INTERVAL 1 DAY) FROM events;",
+			shouldErr: false,
+		},
+		{
+			name:      "DATE_SUB function",
+			sql:       "SELECT DATE_SUB(created_at, INTERVAL 2 MONTH) FROM events;",
+			shouldErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.sql)
+			_, err := parser.Parse()
+
+			if tt.shouldErr {
+				if err == nil {
+					t.Error("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected parse error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestDateFunctionExecution tests date function execution.
+func TestDateFunctionExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create a table with timestamp column
+	_, err := session.ExecuteSQL("CREATE TABLE events (id INT, name TEXT, created_at TIMESTAMP);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert a row with NOW()
+	t.Run("insert with NOW", func(t *testing.T) {
+		_, err := session.ExecuteSQL("INSERT INTO events VALUES (1, 'meeting', NOW());")
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	})
+
+	// Test YEAR function
+	t.Run("YEAR extracts year from timestamp", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT YEAR(created_at) FROM events WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		year := result.Rows[0][0].Int32
+		currentYear := int32(time.Now().Year())
+		if year != currentYear {
+			t.Errorf("expected year %d, got %d", currentYear, year)
+		}
+	})
+
+	// Test MONTH function
+	t.Run("MONTH extracts month from timestamp", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT MONTH(created_at) FROM events WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		month := result.Rows[0][0].Int32
+		currentMonth := int32(time.Now().Month())
+		if month != currentMonth {
+			t.Errorf("expected month %d, got %d", currentMonth, month)
+		}
+	})
+
+	// Test DAY function
+	t.Run("DAY extracts day from timestamp", func(t *testing.T) {
+		result, err := session.ExecuteSQL("SELECT DAY(created_at) FROM events WHERE id = 1;")
+		if err != nil {
+			t.Fatalf("query failed: %v", err)
+		}
+
+		if len(result.Rows) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(result.Rows))
+		}
+
+		day := result.Rows[0][0].Int32
+		currentDay := int32(time.Now().Day())
+		if day != currentDay {
+			t.Errorf("expected day %d, got %d", currentDay, day)
 		}
 	})
 }

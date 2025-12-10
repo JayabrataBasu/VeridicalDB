@@ -155,6 +155,7 @@ type Column struct {
 	HasDefault    bool
 	DefaultValue  *Value // pointer to allow nil for no default
 	AutoIncrement bool
+	CheckExpr     string // CHECK constraint expression (stored as SQL string)
 }
 
 // Schema represents the structure of a table.

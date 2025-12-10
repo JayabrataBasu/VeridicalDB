@@ -3,8 +3,10 @@ package sql
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
@@ -85,6 +87,11 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 				return nil, fmt.Errorf("invalid default value for column %s: %w", c.Name, err)
 			}
 			col.DefaultValue = &defaultVal
+		}
+
+		// If there's a CHECK constraint, serialize it to string for storage
+		if c.Check != nil {
+			col.CheckExpr = exprToString(c.Check)
 		}
 
 		cols[i] = col
@@ -203,6 +210,11 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 				return nil, fmt.Errorf("duplicate key value violates primary key constraint on column %q", col.Name)
 			}
 		}
+	}
+
+	// Validate CHECK constraints
+	if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+		return nil, err
 	}
 
 	_, err = e.tm.Insert(stmt.TableName, values)
@@ -1138,6 +1150,11 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 				return false, fmt.Errorf("column %s: %w", assign.Column, err)
 			}
 			newRow[idx] = val
+		}
+
+		// Validate CHECK constraints on the updated row
+		if err := e.validateCheckConstraints(meta.Schema, newRow); err != nil {
+			return false, err
 		}
 
 		ridsToUpdate = append(ridsToUpdate, rid)
@@ -2094,6 +2111,163 @@ func evalFunction(name string, args []catalog.Value) (catalog.Value, error) {
 
 		return catalog.NewText(str[start:]), nil
 
+	case "NOW", "CURRENT_TIMESTAMP":
+		// Return current timestamp
+		now := time.Now()
+		return catalog.NewTimestamp(now), nil
+
+	case "CURRENT_DATE":
+		// Return current date (timestamp with time set to midnight)
+		now := time.Now()
+		date := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		return catalog.NewTimestamp(date), nil
+
+	case "YEAR":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("YEAR requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("YEAR requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Year())), nil
+
+	case "MONTH":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("MONTH requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("MONTH requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Month())), nil
+
+	case "DAY":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("DAY requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("DAY requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Day())), nil
+
+	case "HOUR":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("HOUR requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("HOUR requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Hour())), nil
+
+	case "MINUTE":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("MINUTE requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("MINUTE requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Minute())), nil
+
+	case "SECOND":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("SECOND requires exactly 1 argument")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeInt32), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("SECOND requires timestamp argument")
+		}
+		return catalog.NewInt32(int32(args[0].Timestamp.Second())), nil
+
+	case "DATE_ADD":
+		// DATE_ADD(date, interval_value, interval_unit)
+		if len(args) != 3 {
+			return catalog.Value{}, fmt.Errorf("DATE_ADD requires 3 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeTimestamp), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("DATE_ADD first argument must be timestamp")
+		}
+		if args[1].Type != catalog.TypeText || args[2].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("DATE_ADD interval arguments must be text")
+		}
+		interval, err := strconv.ParseInt(args[1].Text, 10, 64)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("DATE_ADD interval value must be integer: %w", err)
+		}
+		ts := args[0].Timestamp
+		switch strings.ToUpper(args[2].Text) {
+		case "YEAR":
+			ts = ts.AddDate(int(interval), 0, 0)
+		case "MONTH":
+			ts = ts.AddDate(0, int(interval), 0)
+		case "DAY":
+			ts = ts.AddDate(0, 0, int(interval))
+		case "HOUR":
+			ts = ts.Add(time.Duration(interval) * time.Hour)
+		case "MINUTE":
+			ts = ts.Add(time.Duration(interval) * time.Minute)
+		case "SECOND":
+			ts = ts.Add(time.Duration(interval) * time.Second)
+		default:
+			return catalog.Value{}, fmt.Errorf("DATE_ADD unknown interval unit: %s", args[2].Text)
+		}
+		return catalog.NewTimestamp(ts), nil
+
+	case "DATE_SUB":
+		// DATE_SUB(date, interval_value, interval_unit) - same as DATE_ADD but subtract
+		if len(args) != 3 {
+			return catalog.Value{}, fmt.Errorf("DATE_SUB requires 3 arguments")
+		}
+		if args[0].IsNull {
+			return catalog.Null(catalog.TypeTimestamp), nil
+		}
+		if args[0].Type != catalog.TypeTimestamp {
+			return catalog.Value{}, fmt.Errorf("DATE_SUB first argument must be timestamp")
+		}
+		if args[1].Type != catalog.TypeText || args[2].Type != catalog.TypeText {
+			return catalog.Value{}, fmt.Errorf("DATE_SUB interval arguments must be text")
+		}
+		interval, err := strconv.ParseInt(args[1].Text, 10, 64)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("DATE_SUB interval value must be integer: %w", err)
+		}
+		ts := args[0].Timestamp
+		switch strings.ToUpper(args[2].Text) {
+		case "YEAR":
+			ts = ts.AddDate(-int(interval), 0, 0)
+		case "MONTH":
+			ts = ts.AddDate(0, -int(interval), 0)
+		case "DAY":
+			ts = ts.AddDate(0, 0, -int(interval))
+		case "HOUR":
+			ts = ts.Add(-time.Duration(interval) * time.Hour)
+		case "MINUTE":
+			ts = ts.Add(-time.Duration(interval) * time.Minute)
+		case "SECOND":
+			ts = ts.Add(-time.Duration(interval) * time.Second)
+		default:
+			return catalog.Value{}, fmt.Errorf("DATE_SUB unknown interval unit: %s", args[2].Text)
+		}
+		return catalog.NewTimestamp(ts), nil
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unknown function: %s", name)
 	}
@@ -2209,4 +2383,177 @@ func (e *Executor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row 
 
 	// No ELSE clause - return NULL
 	return catalog.Null(catalog.TypeUnknown), nil
+}
+
+// exprToString converts an Expression AST node to a SQL string representation.
+// This is used to serialize CHECK constraints for storage.
+func exprToString(expr Expression) string {
+	if expr == nil {
+		return ""
+	}
+
+	switch e := expr.(type) {
+	case *LiteralExpr:
+		switch e.Value.Type {
+		case catalog.TypeText:
+			return fmt.Sprintf("'%s'", e.Value.Text)
+		case catalog.TypeInt32:
+			return fmt.Sprintf("%d", e.Value.Int32)
+		case catalog.TypeInt64:
+			return fmt.Sprintf("%d", e.Value.Int64)
+		case catalog.TypeBool:
+			if e.Value.Bool {
+				return "TRUE"
+			}
+			return "FALSE"
+		default:
+			if e.Value.IsNull {
+				return "NULL"
+			}
+			return fmt.Sprintf("%v", e.Value)
+		}
+
+	case *ColumnRef:
+		return e.Name
+
+	case *BinaryExpr:
+		left := exprToString(e.Left)
+		right := exprToString(e.Right)
+		op := tokenToOperator(e.Op)
+		return fmt.Sprintf("(%s %s %s)", left, op, right)
+
+	case *UnaryExpr:
+		operand := exprToString(e.Expr)
+		if e.Op == TOKEN_NOT {
+			return fmt.Sprintf("NOT %s", operand)
+		}
+		return fmt.Sprintf("-%s", operand)
+
+	case *InExpr:
+		left := exprToString(e.Left)
+		values := make([]string, len(e.Values))
+		for i, v := range e.Values {
+			values[i] = exprToString(v)
+		}
+		not := ""
+		if e.Not {
+			not = "NOT "
+		}
+		return fmt.Sprintf("%s %sIN (%s)", left, not, strings.Join(values, ", "))
+
+	case *BetweenExpr:
+		val := exprToString(e.Expr)
+		low := exprToString(e.Low)
+		high := exprToString(e.High)
+		not := ""
+		if e.Not {
+			not = "NOT "
+		}
+		return fmt.Sprintf("%s %sBETWEEN %s AND %s", val, not, low, high)
+
+	case *LikeExpr:
+		left := exprToString(e.Expr)
+		pattern := exprToString(e.Pattern)
+		op := "LIKE"
+		if e.CaseInsensitive {
+			op = "ILIKE"
+		}
+		not := ""
+		if e.Not {
+			not = "NOT "
+		}
+		return fmt.Sprintf("%s %s%s %s", left, not, op, pattern)
+
+	case *FunctionExpr:
+		args := make([]string, len(e.Args))
+		for i, arg := range e.Args {
+			args[i] = exprToString(arg)
+		}
+		return fmt.Sprintf("%s(%s)", e.Name, strings.Join(args, ", "))
+
+	case *CaseExpr:
+		var sb strings.Builder
+		sb.WriteString("CASE")
+		if e.Operand != nil {
+			sb.WriteString(" ")
+			sb.WriteString(exprToString(e.Operand))
+		}
+		for _, when := range e.Whens {
+			sb.WriteString(" WHEN ")
+			sb.WriteString(exprToString(when.Condition))
+			sb.WriteString(" THEN ")
+			sb.WriteString(exprToString(when.Result))
+		}
+		if e.Else != nil {
+			sb.WriteString(" ELSE ")
+			sb.WriteString(exprToString(e.Else))
+		}
+		sb.WriteString(" END")
+		return sb.String()
+
+	default:
+		return "?"
+	}
+}
+
+// tokenToOperator converts a token type to its SQL string representation.
+func tokenToOperator(op TokenType) string {
+	switch op {
+	case TOKEN_EQ:
+		return "="
+	case TOKEN_NE:
+		return "<>"
+	case TOKEN_LT:
+		return "<"
+	case TOKEN_LE:
+		return "<="
+	case TOKEN_GT:
+		return ">"
+	case TOKEN_GE:
+		return ">="
+	case TOKEN_AND:
+		return "AND"
+	case TOKEN_OR:
+		return "OR"
+	case TOKEN_PLUS:
+		return "+"
+	case TOKEN_MINUS:
+		return "-"
+	case TOKEN_STAR:
+		return "*"
+	case TOKEN_SLASH:
+		return "/"
+	default:
+		return "?"
+	}
+}
+
+// validateCheckConstraints validates all CHECK constraints for a row.
+func (e *Executor) validateCheckConstraints(schema *catalog.Schema, values []catalog.Value) error {
+	for i, col := range schema.Columns {
+		if col.CheckExpr == "" {
+			continue
+		}
+
+		// Parse the CHECK expression directly as a condition
+		// We wrap it in a dummy SELECT to reuse the parser, but with a real column name
+		// Actually, let's just parse the expression directly
+		parser := NewParser(col.CheckExpr)
+		expr, err := parser.parseExpression()
+		if err != nil {
+			return fmt.Errorf("invalid CHECK expression for column %s: %w", col.Name, err)
+		}
+
+		// Evaluate the CHECK expression with the row values
+		result, err := e.evalCondition(expr, schema, values)
+		if err != nil {
+			return fmt.Errorf("error evaluating CHECK constraint for column %s: %w", col.Name, err)
+		}
+
+		if !result {
+			return fmt.Errorf("CHECK constraint violated for column %s (value: %v)", col.Name, values[i])
+		}
+	}
+
+	return nil
 }

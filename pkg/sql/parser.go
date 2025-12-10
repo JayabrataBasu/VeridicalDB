@@ -382,6 +382,31 @@ func (p *Parser) aggregateName() string {
 	return ""
 }
 
+// isDateFunction returns true if the current token is a date/time function.
+func (p *Parser) isDateFunction() bool {
+	switch p.cur.Type {
+	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE,
+		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
+		TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+		return true
+	}
+	return false
+}
+
+// parseDateFunctionInSelect parses date functions when they appear in SELECT columns.
+func (p *Parser) parseDateFunctionInSelect() (Expression, error) {
+	switch p.cur.Type {
+	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE:
+		return p.parseDateFunction()
+	case TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+		return p.parseDatePartFunction()
+	case TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+		return p.parseDateAddFunction()
+	default:
+		return nil, fmt.Errorf("not a date function: %v", p.cur.Type)
+	}
+}
+
 func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 	var cols []SelectColumn
 
@@ -435,6 +460,30 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 		} else if p.curTokenIs(TOKEN_CASE) {
 			// Parse CASE expression
 			expr, err := p.parseCaseExpression()
+			if err != nil {
+				return nil, err
+			}
+
+			col := SelectColumn{Expression: expr}
+
+			// Check for alias: AS name or just name
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken() // consume AS
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				// Implicit alias (without AS)
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, col)
+		} else if p.isDateFunction() {
+			// Parse date/time function as expression
+			expr, err := p.parseDateFunctionInSelect()
 			if err != nil {
 				return nil, err
 			}
@@ -752,7 +801,7 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 	}
 	p.nextToken()
 
-	// Optional NOT NULL, PRIMARY KEY, and DEFAULT
+	// Optional NOT NULL, PRIMARY KEY, DEFAULT, CHECK, and AUTO_INCREMENT
 	for {
 		if p.curTokenIs(TOKEN_NOT) {
 			p.nextToken()
@@ -780,6 +829,22 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			p.nextToken()
 			col.AutoIncrement = true
 			col.NotNull = true // auto-increment columns are implicitly not null
+		} else if p.curTokenIs(TOKEN_CHECK) {
+			// Parse CHECK constraint: CHECK(expression)
+			p.nextToken() // consume CHECK
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return col, fmt.Errorf("expected ( after CHECK: %w", err)
+			}
+			// Parse the check expression
+			expr, err := p.parseExpression()
+			if err != nil {
+				return col, fmt.Errorf("error parsing CHECK expression: %w", err)
+			}
+			col.Check = expr
+			// We'll serialize the expression to string when storing in catalog
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return col, fmt.Errorf("expected ) after CHECK expression: %w", err)
+			}
 		} else {
 			break
 		}
@@ -1126,6 +1191,15 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	case TOKEN_COALESCE, TOKEN_NULLIF, TOKEN_UPPER, TOKEN_LOWER, TOKEN_LENGTH, TOKEN_CONCAT, TOKEN_SUBSTR, TOKEN_SUBSTRING:
 		return p.parseFunctionCall()
 
+	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE:
+		return p.parseDateFunction()
+
+	case TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+		return p.parseDatePartFunction()
+
+	case TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+		return p.parseDateAddFunction()
+
 	case TOKEN_CASE:
 		return p.parseCaseExpression()
 
@@ -1192,6 +1266,110 @@ func (p *Parser) parseFunctionCall() (Expression, error) {
 	}
 
 	return &FunctionExpr{Name: funcName, Args: args}, nil
+}
+
+// parseDateFunction parses NOW(), CURRENT_TIMESTAMP, CURRENT_DATE
+func (p *Parser) parseDateFunction() (Expression, error) {
+	funcName := p.cur.Literal
+	p.nextToken() // consume function name
+
+	// Optional parentheses with no arguments
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume (
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ) after %s(", funcName)
+		}
+	}
+
+	return &FunctionExpr{Name: funcName, Args: nil}, nil
+}
+
+// parseDatePartFunction parses YEAR(date), MONTH(date), DAY(date), etc.
+func (p *Parser) parseDatePartFunction() (Expression, error) {
+	funcName := p.cur.Literal
+	p.nextToken() // consume function name
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected ( after %s", funcName)
+	}
+
+	arg, err := p.parseExpression()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing argument to %s: %w", funcName, err)
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	return &FunctionExpr{Name: funcName, Args: []Expression{arg}}, nil
+}
+
+// parseDateAddFunction parses DATE_ADD(date, INTERVAL n unit) and DATE_SUB(date, INTERVAL n unit)
+func (p *Parser) parseDateAddFunction() (Expression, error) {
+	funcName := p.cur.Literal
+	p.nextToken() // consume DATE_ADD or DATE_SUB
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected ( after %s", funcName)
+	}
+
+	// Parse the date expression
+	dateExpr, err := p.parseExpression()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing date argument: %w", err)
+	}
+
+	if err := p.expect(TOKEN_COMMA); err != nil {
+		return nil, fmt.Errorf("expected comma after date in %s", funcName)
+	}
+
+	// Expect INTERVAL keyword
+	if err := p.expect(TOKEN_INTERVAL); err != nil {
+		return nil, fmt.Errorf("expected INTERVAL keyword in %s", funcName)
+	}
+
+	// Parse the interval value (should be an integer)
+	if !p.curTokenIs(TOKEN_INT) {
+		return nil, fmt.Errorf("expected integer interval value in %s", funcName)
+	}
+	intervalValue := p.cur.Literal
+	p.nextToken()
+
+	// Parse the interval unit (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND)
+	var intervalUnit string
+	switch p.cur.Type {
+	case TOKEN_YEAR:
+		intervalUnit = "YEAR"
+	case TOKEN_MONTH:
+		intervalUnit = "MONTH"
+	case TOKEN_DAY:
+		intervalUnit = "DAY"
+	case TOKEN_HOUR:
+		intervalUnit = "HOUR"
+	case TOKEN_MINUTE:
+		intervalUnit = "MINUTE"
+	case TOKEN_SECOND:
+		intervalUnit = "SECOND"
+	default:
+		return nil, fmt.Errorf("expected interval unit (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND) in %s", funcName)
+	}
+	p.nextToken() // consume unit
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	// Create a FunctionExpr with special arguments for interval
+	// Args: [dateExpr, intervalValue (as literal), intervalUnit (as literal)]
+	return &FunctionExpr{
+		Name: funcName,
+		Args: []Expression{
+			dateExpr,
+			&LiteralExpr{Value: catalog.NewText(intervalValue)},
+			&LiteralExpr{Value: catalog.NewText(intervalUnit)},
+		},
+	}, nil
 }
 
 // parseAlter parses: ALTER TABLE table_name action
