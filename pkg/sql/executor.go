@@ -432,6 +432,16 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 		if endIdx > len(fullRows) {
 			endIdx = len(fullRows)
 		}
+	} else if stmt.LimitExpr != nil {
+		// Evaluate LIMIT expression (e.g., subquery)
+		limitVal, err := e.evalLimitExpr(stmt.LimitExpr)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating LIMIT expression: %v", err)
+		}
+		endIdx = startIdx + limitVal
+		if endIdx > len(fullRows) {
+			endIdx = len(fullRows)
+		}
 	}
 
 	// Slice rows based on OFFSET and LIMIT
@@ -457,9 +467,15 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 		resultRows[i] = projectedRow
 	}
 
-	// Apply DISTINCT - deduplicate rows
+	// Apply DISTINCT or DISTINCT ON - deduplicate rows
 	if stmt.Distinct {
-		resultRows = deduplicateRows(resultRows)
+		if len(stmt.DistinctOn) > 0 {
+			// DISTINCT ON: keep first row for each unique combination of specified columns
+			resultRows = deduplicateRowsOn(resultRows, stmt.DistinctOn, outputCols)
+		} else {
+			// Regular DISTINCT: deduplicate based on all columns
+			resultRows = deduplicateRows(resultRows)
+		}
 	}
 
 	return &Result{
@@ -476,7 +492,7 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 	}
 
 	join := stmt.Joins[0]
-	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" {
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" && join.JoinType != "CROSS" {
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
@@ -692,6 +708,18 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 			}
 		}
 		err = nil // Reset err since we handled it above
+
+	case "CROSS":
+		// CROSS JOIN: Cartesian product of both tables (no condition)
+		err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+			return true, e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+				return true, nil
+			})
+		})
 	}
 
 	if err != nil {
@@ -779,11 +807,23 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		if limit < len(resultRows) {
 			resultRows = resultRows[:limit]
 		}
+	} else if stmt.LimitExpr != nil {
+		limitVal, err := e.evalLimitExpr(stmt.LimitExpr)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating LIMIT expression: %v", err)
+		}
+		if limitVal < len(resultRows) {
+			resultRows = resultRows[:limitVal]
+		}
 	}
 
-	// Apply DISTINCT
+	// Apply DISTINCT or DISTINCT ON
 	if stmt.Distinct {
-		resultRows = deduplicateRows(resultRows)
+		if len(stmt.DistinctOn) > 0 {
+			resultRows = deduplicateRowsOn(resultRows, stmt.DistinctOn, outputCols)
+		} else {
+			resultRows = deduplicateRows(resultRows)
+		}
 	}
 
 	return &Result{
@@ -1204,6 +1244,94 @@ func rowKeyString(row []catalog.Value) string {
 		}
 	}
 	return strings.Join(parts, "|")
+}
+
+// deduplicateRowsOn removes duplicates based on specific columns (DISTINCT ON).
+// It keeps the first row encountered for each unique combination of the specified columns.
+func deduplicateRowsOn(rows [][]catalog.Value, distinctCols []string, outputCols []string) [][]catalog.Value {
+	if len(rows) <= 1 || len(distinctCols) == 0 {
+		return rows
+	}
+
+	// Find indices of DISTINCT ON columns in the output
+	colIndices := make([]int, 0, len(distinctCols))
+	for _, dc := range distinctCols {
+		for i, oc := range outputCols {
+			if oc == dc {
+				colIndices = append(colIndices, i)
+				break
+			}
+		}
+	}
+
+	// If no matching columns found, return all rows
+	if len(colIndices) == 0 {
+		return rows
+	}
+
+	seen := make(map[string]bool)
+	result := make([][]catalog.Value, 0, len(rows))
+
+	for _, row := range rows {
+		// Build key from only the DISTINCT ON columns
+		var keyParts []string
+		for _, idx := range colIndices {
+			if idx < len(row) {
+				if row[idx].IsNull {
+					keyParts = append(keyParts, "NULL")
+				} else {
+					keyParts = append(keyParts, row[idx].String())
+				}
+			}
+		}
+		key := strings.Join(keyParts, "|")
+
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, row)
+		}
+	}
+
+	return result
+}
+
+// evalLimitExpr evaluates a LIMIT expression and returns an integer value.
+func (e *Executor) evalLimitExpr(expr Expression) (int, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		// Literal integer
+		switch ex.Value.Type {
+		case catalog.TypeInt32:
+			return int(ex.Value.Int32), nil
+		case catalog.TypeInt64:
+			return int(ex.Value.Int64), nil
+		default:
+			return 0, fmt.Errorf("LIMIT must be an integer, got %v", ex.Value.Type)
+		}
+
+	case *SubqueryExpr:
+		// Execute the subquery
+		result, err := e.executeSelect(ex.Query)
+		if err != nil {
+			return 0, fmt.Errorf("error executing LIMIT subquery: %v", err)
+		}
+		// Subquery must return single row with single column
+		if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+			return 0, fmt.Errorf("LIMIT subquery must return exactly one value")
+		}
+		val := result.Rows[0][0]
+		switch val.Type {
+		case catalog.TypeInt32:
+			return int(val.Int32), nil
+		case catalog.TypeInt64:
+			return int(val.Int64), nil
+		default:
+			return 0, fmt.Errorf("LIMIT subquery must return an integer, got %v", val.Type)
+		}
+
+	default:
+		return 0, fmt.Errorf("unsupported LIMIT expression type: %T", expr)
+	}
 }
 
 // evalHavingCondition evaluates a HAVING condition against group aggregates.

@@ -99,16 +99,45 @@ func (p *Parser) Parse() (Statement, error) {
 	}
 }
 
-// parseSelect parses: SELECT [DISTINCT] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
+// parseSelect parses: SELECT [DISTINCT [ON (cols)]] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
 func (p *Parser) parseSelect() (*SelectStmt, error) {
 	stmt := &SelectStmt{}
 
 	p.nextToken() // consume SELECT
 
-	// Optional DISTINCT
+	// Optional DISTINCT [ON (col1, col2, ...)]
 	if p.curTokenIs(TOKEN_DISTINCT) {
 		stmt.Distinct = true
 		p.nextToken()
+
+		// Check for DISTINCT ON (PostgreSQL style)
+		if p.curTokenIs(TOKEN_ON) {
+			p.nextToken() // consume ON
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, fmt.Errorf("expected '(' after DISTINCT ON")
+			}
+
+			// Parse column list
+			var distinctCols []string
+			for {
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected column name in DISTINCT ON, got %v", p.cur.Type)
+				}
+				distinctCols = append(distinctCols, p.cur.Literal)
+				p.nextToken()
+
+				if p.curTokenIs(TOKEN_COMMA) {
+					p.nextToken() // consume comma
+				} else {
+					break
+				}
+			}
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after DISTINCT ON columns")
+			}
+			stmt.DistinctOn = distinctCols
+		}
 	}
 
 	// Parse column list
@@ -145,7 +174,7 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 	}
 
 	// Optional JOIN clauses
-	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) {
+	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) || p.curTokenIs(TOKEN_CROSS) {
 		join, err := p.parseJoinClause()
 		if err != nil {
 			return nil, err
@@ -205,18 +234,28 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 	// Optional LIMIT
 	if p.curTokenIs(TOKEN_LIMIT) {
 		p.nextToken() // consume LIMIT
-		if !p.curTokenIs(TOKEN_INT) {
-			return nil, fmt.Errorf("expected integer after LIMIT, got %v", p.cur.Type)
+
+		// Check for integer literal (common case)
+		if p.curTokenIs(TOKEN_INT) {
+			limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
+			}
+			if limit < 0 {
+				return nil, fmt.Errorf("LIMIT must be non-negative, got %d", limit)
+			}
+			stmt.Limit = &limit
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_LPAREN) {
+			// LIMIT with subquery or expression: LIMIT (SELECT ...)
+			expr, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing LIMIT expression: %v", err)
+			}
+			stmt.LimitExpr = expr
+		} else {
+			return nil, fmt.Errorf("expected integer or expression after LIMIT, got %v", p.cur.Type)
 		}
-		limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
-		}
-		if limit < 0 {
-			return nil, fmt.Errorf("LIMIT must be non-negative, got %d", limit)
-		}
-		stmt.Limit = &limit
-		p.nextToken()
 	}
 
 	// Optional OFFSET
@@ -290,9 +329,10 @@ func (p *Parser) parseGroupByList() ([]string, error) {
 	return groupBy, nil
 }
 
-// parseJoinClause parses: [INNER|LEFT|RIGHT] JOIN table ON condition
+// parseJoinClause parses: [INNER|LEFT|RIGHT|FULL|CROSS] JOIN table [ON condition]
 func (p *Parser) parseJoinClause() (JoinClause, error) {
 	join := JoinClause{JoinType: "INNER"} // default
+	isCrossJoin := false
 
 	// Parse optional join type
 	if p.curTokenIs(TOKEN_INNER) {
@@ -315,6 +355,10 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		if p.curTokenIs(TOKEN_OUTER) {
 			p.nextToken() // optional OUTER
 		}
+	} else if p.curTokenIs(TOKEN_CROSS) {
+		join.JoinType = "CROSS"
+		isCrossJoin = true
+		p.nextToken()
 	}
 
 	// Expect JOIN keyword
@@ -343,7 +387,12 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		p.nextToken()
 	}
 
-	// ON keyword
+	// CROSS JOIN has no ON condition
+	if isCrossJoin {
+		return join, nil
+	}
+
+	// ON keyword (required for non-CROSS joins)
 	if err := p.expect(TOKEN_ON); err != nil {
 		return join, err
 	}
@@ -372,7 +421,7 @@ func (p *Parser) isKeyword() bool {
 	switch p.cur.Type {
 	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
 		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
-		TOKEN_RIGHT, TOKEN_FULL, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
+		TOKEN_RIGHT, TOKEN_FULL, TOKEN_CROSS, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
 		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON:
 		return true
 	}

@@ -1047,7 +1047,7 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 	}
 
 	join := stmt.Joins[0]
-	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" {
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" && join.JoinType != "CROSS" {
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
@@ -1229,6 +1229,17 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 			if !rightRowMatches[j] {
 				combinedRow := make([]catalog.Value, leftLen+rightLen)
 				copy(combinedRow, nullLeftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+
+	case "CROSS":
+		// CROSS JOIN: Cartesian product of both tables (no condition)
+		for _, leftRow := range leftRows {
+			for _, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
 				copy(combinedRow[leftLen:], rightRow)
 				joinedRows = append(joinedRows, combinedRow)
 			}

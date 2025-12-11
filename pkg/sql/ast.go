@@ -71,7 +71,8 @@ func (s *InsertStmt) statementNode() {}
 
 // SelectStmt represents SELECT statement.
 type SelectStmt struct {
-	Distinct   bool // SELECT DISTINCT
+	Distinct   bool     // SELECT DISTINCT
+	DistinctOn []string // SELECT DISTINCT ON (col1, col2) - PostgreSQL style
 	Columns    []SelectColumn
 	TableName  string
 	TableAlias string       // optional table alias (FROM table AS t)
@@ -80,18 +81,19 @@ type SelectStmt struct {
 	GroupBy    []string   // column names for GROUP BY
 	Having     Expression // HAVING condition
 	OrderBy    []OrderByClause
-	Limit      *int64 // nil means no limit
-	Offset     *int64 // nil means no offset
+	Limit      *int64     // nil means no limit (static value)
+	LimitExpr  Expression // LIMIT expression (for subqueries)
+	Offset     *int64     // nil means no offset
 }
 
 func (s *SelectStmt) statementNode() {}
 
 // JoinClause represents a JOIN clause in SELECT.
 type JoinClause struct {
-	JoinType   string     // "INNER", "LEFT", "RIGHT", "FULL"
+	JoinType   string     // "INNER", "LEFT", "RIGHT", "FULL", "CROSS"
 	TableName  string     // table to join
 	TableAlias string     // optional table alias
-	Condition  Expression // ON condition
+	Condition  Expression // ON condition (nil for CROSS JOIN)
 }
 
 // SelectColumn represents a column in SELECT.

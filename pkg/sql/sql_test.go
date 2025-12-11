@@ -3780,3 +3780,147 @@ func TestParseSubqueries(t *testing.T) {
 		})
 	}
 }
+
+// TestParseCrossJoin verifies CROSS JOIN parsing.
+func TestParseCrossJoin(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "simple CROSS JOIN",
+			input:   "SELECT * FROM t1 CROSS JOIN t2;",
+			wantErr: false,
+		},
+		{
+			name:    "CROSS JOIN with columns",
+			input:   "SELECT t1.a, t2.b FROM t1 CROSS JOIN t2;",
+			wantErr: false,
+		},
+		{
+			name:    "multiple CROSS JOINs",
+			input:   "SELECT * FROM t1 CROSS JOIN t2 CROSS JOIN t3;",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseDistinctOn verifies DISTINCT ON parsing.
+func TestParseDistinctOn(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "DISTINCT ON single column",
+			input:   "SELECT DISTINCT ON (a) a, b FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "DISTINCT ON multiple columns",
+			input:   "SELECT DISTINCT ON (a, b) a, b, c FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "DISTINCT ON with ORDER BY",
+			input:   "SELECT DISTINCT ON (a) a, b FROM t ORDER BY a, b;",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseLimitExpression verifies LIMIT with expressions.
+func TestParseLimitExpression(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "LIMIT with number",
+			input:   "SELECT * FROM t LIMIT 10;",
+			wantErr: false,
+		},
+		{
+			name:    "LIMIT with subquery",
+			input:   "SELECT * FROM t LIMIT (SELECT COUNT(*) FROM t2);",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestCrossJoinExecution verifies CROSS JOIN execution.
+func TestCrossJoinExecution(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create and populate tables
+	executeSQL(t, executor, "CREATE TABLE cross_t1 (id INT, name TEXT);")
+	executeSQL(t, executor, "CREATE TABLE cross_t2 (code INT, value TEXT);")
+
+	executeSQL(t, executor, "INSERT INTO cross_t1 VALUES (1, 'a');")
+	executeSQL(t, executor, "INSERT INTO cross_t1 VALUES (2, 'b');")
+
+	executeSQL(t, executor, "INSERT INTO cross_t2 VALUES (10, 'x');")
+	executeSQL(t, executor, "INSERT INTO cross_t2 VALUES (20, 'y');")
+
+	// Test CROSS JOIN - should produce 2 * 2 = 4 rows
+	result := executeSQL(t, executor, "SELECT * FROM cross_t1 CROSS JOIN cross_t2;")
+
+	if len(result.Rows) != 4 {
+		t.Errorf("Expected 4 rows from CROSS JOIN, got %d", len(result.Rows))
+	}
+}
+
+// TestDistinctOnExecution verifies DISTINCT ON execution.
+func TestDistinctOnExecution(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, executor, "CREATE TABLE distinct_on_t (category TEXT, value INT, name TEXT);")
+
+	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('A', 1, 'first');")
+	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('A', 2, 'second');")
+	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('B', 3, 'third');")
+	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('B', 4, 'fourth');")
+
+	// Test DISTINCT ON (category) - should get one row per category
+	result := executeSQL(t, executor, "SELECT DISTINCT ON (category) category, value, name FROM distinct_on_t;")
+
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 rows from DISTINCT ON (category), got %d", len(result.Rows))
+	}
+}
