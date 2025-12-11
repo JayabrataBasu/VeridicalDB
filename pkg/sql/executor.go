@@ -323,6 +323,21 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 		return e.executeSelectWithJoins(stmt, meta)
 	}
 
+	// Check if query contains window functions
+	hasWindowFunctions := false
+	for _, col := range stmt.Columns {
+		if col.Expression != nil {
+			if _, ok := col.Expression.(*WindowFuncExpr); ok {
+				hasWindowFunctions = true
+				break
+			}
+		}
+	}
+
+	if hasWindowFunctions {
+		return e.executeSelectWithWindowFunctions(stmt, meta)
+	}
+
 	// Check if query contains aggregate functions or GROUP BY
 	hasAggregates := false
 	for _, col := range stmt.Columns {
@@ -3638,4 +3653,594 @@ func rowKey(row []catalog.Value) string {
 		}
 	}
 	return strings.Join(parts, "|")
+}
+
+// executeSelectWithWindowFunctions handles SELECT with window functions.
+func (e *Executor) executeSelectWithWindowFunctions(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+	// First, scan all rows that match WHERE clause
+	var allRows [][]catalog.Value
+
+	err := e.scanTable(stmt.TableName, meta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, evalErr := e.evalCondition(stmt.Where, meta.Schema, row)
+			if evalErr != nil {
+				return false, evalErr
+			}
+			if !match {
+				return true, nil // continue scanning
+			}
+		}
+
+		rowCopy := make([]catalog.Value, len(row))
+		copy(rowCopy, row)
+		allRows = append(allRows, rowCopy)
+		return true, nil // continue
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine output columns
+	var outputCols []string
+	for _, col := range stmt.Columns {
+		if col.Star {
+			for _, c := range meta.Schema.Columns {
+				outputCols = append(outputCols, c.Name)
+			}
+		} else if col.Alias != "" {
+			outputCols = append(outputCols, col.Alias)
+		} else if col.Name != "" {
+			outputCols = append(outputCols, col.Name)
+		} else if col.Expression != nil {
+			if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+				outputCols = append(outputCols, wf.Function)
+			} else {
+				outputCols = append(outputCols, "expr")
+			}
+		}
+	}
+
+	// Build output rows with window function results
+	outputRows := make([][]catalog.Value, len(allRows))
+	for i := range outputRows {
+		outputRows[i] = make([]catalog.Value, len(stmt.Columns))
+	}
+
+	// Process each column
+	for colIdx, col := range stmt.Columns {
+		if col.Star {
+			// Copy all columns for this position (handled separately)
+			continue
+		}
+
+		if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+			// This is a window function - compute values for all rows
+			windowValues, err := e.computeWindowFunction(wf, allRows, meta.Schema)
+			if err != nil {
+				return nil, err
+			}
+			for rowIdx, val := range windowValues {
+				outputRows[rowIdx][colIdx] = val
+			}
+		} else if col.Name != "" {
+			// Regular column
+			_, idx := meta.Schema.ColumnByName(col.Name)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", col.Name)
+			}
+			for rowIdx, row := range allRows {
+				outputRows[rowIdx][colIdx] = row[idx]
+			}
+		} else if col.Expression != nil {
+			// Other expression
+			for rowIdx, row := range allRows {
+				val, err := e.evalExpr(col.Expression, meta.Schema, row)
+				if err != nil {
+					return nil, err
+				}
+				outputRows[rowIdx][colIdx] = val
+			}
+		}
+	}
+
+	// Handle SELECT * expansion
+	starOffset := 0
+	for colIdx, col := range stmt.Columns {
+		if col.Star {
+			// Expand star at this position
+			for rowIdx, row := range allRows {
+				for i := range meta.Schema.Columns {
+					if colIdx+starOffset+i < len(outputRows[rowIdx]) {
+						outputRows[rowIdx][colIdx+starOffset+i] = row[i]
+					}
+				}
+			}
+			starOffset += len(meta.Schema.Columns) - 1
+		}
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			_, idx := meta.Schema.ColumnByName(ob.Column)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+			orderByIndices[i] = idx
+		}
+
+		// Sort using the original rows for ordering
+		type indexedRow struct {
+			origIdx   int
+			outputRow []catalog.Value
+			sortRow   []catalog.Value
+		}
+		indexed := make([]indexedRow, len(allRows))
+		for i := range allRows {
+			indexed[i] = indexedRow{origIdx: i, outputRow: outputRows[i], sortRow: allRows[i]}
+		}
+
+		sort.SliceStable(indexed, func(i, j int) bool {
+			for k, ob := range stmt.OrderBy {
+				idx := orderByIndices[k]
+				cmp := compareValuesForSort(indexed[i].sortRow[idx], indexed[j].sortRow[idx])
+				if cmp != 0 {
+					if ob.Desc {
+						return cmp > 0
+					}
+					return cmp < 0
+				}
+			}
+			return false
+		})
+
+		for i, ir := range indexed {
+			outputRows[i] = ir.outputRow
+		}
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		if int(*stmt.Offset) >= len(outputRows) {
+			outputRows = nil
+		} else {
+			outputRows = outputRows[*stmt.Offset:]
+		}
+	}
+	if stmt.Limit != nil && *stmt.Limit >= 0 {
+		if int(*stmt.Limit) < len(outputRows) {
+			outputRows = outputRows[:*stmt.Limit]
+		}
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    outputRows,
+	}, nil
+}
+
+// computeWindowFunction computes window function values for all rows.
+func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
+	result := make([]catalog.Value, len(rows))
+
+	// Get partition column indices
+	partitionIndices := make([]int, len(wf.Over.PartitionBy))
+	for i, colName := range wf.Over.PartitionBy {
+		_, idx := schema.ColumnByName(colName)
+		if idx < 0 {
+			return nil, fmt.Errorf("unknown column in PARTITION BY: %s", colName)
+		}
+		partitionIndices[i] = idx
+	}
+
+	// Get order by column indices for window ordering
+	orderByIndices := make([]int, len(wf.Over.OrderBy))
+	for i, ob := range wf.Over.OrderBy {
+		_, idx := schema.ColumnByName(ob.Column)
+		if idx < 0 {
+			return nil, fmt.Errorf("unknown column in window ORDER BY: %s", ob.Column)
+		}
+		orderByIndices[i] = idx
+	}
+
+	// Group rows by partition
+	partitions := make(map[string][]int) // partition key -> row indices
+	partitionOrder := []string{}         // to maintain order
+
+	for i, row := range rows {
+		key := makePartitionKey(row, partitionIndices)
+		if _, exists := partitions[key]; !exists {
+			partitionOrder = append(partitionOrder, key)
+		}
+		partitions[key] = append(partitions[key], i)
+	}
+
+	// Process each partition
+	for _, partKey := range partitionOrder {
+		rowIndices := partitions[partKey]
+
+		// Sort rows within partition by ORDER BY columns
+		if len(wf.Over.OrderBy) > 0 {
+			sort.SliceStable(rowIndices, func(i, j int) bool {
+				for k, ob := range wf.Over.OrderBy {
+					idx := orderByIndices[k]
+					cmp := compareValuesForSort(rows[rowIndices[i]][idx], rows[rowIndices[j]][idx])
+					if cmp != 0 {
+						if ob.Desc {
+							return cmp > 0
+						}
+						return cmp < 0
+					}
+				}
+				return false
+			})
+		}
+
+		// Compute window function for this partition
+		switch strings.ToUpper(wf.Function) {
+		case "ROW_NUMBER":
+			for rank, rowIdx := range rowIndices {
+				result[rowIdx] = catalog.NewInt64(int64(rank + 1))
+			}
+
+		case "RANK":
+			// RANK: same values get same rank, gaps after ties
+			var prevVals []catalog.Value
+			rank := 1
+			for i, rowIdx := range rowIndices {
+				currVals := getOrderByValues(rows[rowIdx], orderByIndices)
+				if i == 0 || !windowValuesEqual(currVals, prevVals) {
+					rank = i + 1
+				}
+				result[rowIdx] = catalog.NewInt64(int64(rank))
+				prevVals = currVals
+			}
+
+		case "DENSE_RANK":
+			// DENSE_RANK: same values get same rank, no gaps
+			var prevVals []catalog.Value
+			rank := 0
+			for i, rowIdx := range rowIndices {
+				currVals := getOrderByValues(rows[rowIdx], orderByIndices)
+				if i == 0 || !windowValuesEqual(currVals, prevVals) {
+					rank++
+				}
+				result[rowIdx] = catalog.NewInt64(int64(rank))
+				prevVals = currVals
+			}
+
+		case "NTILE":
+			// NTILE(n): divide rows into n buckets
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("NTILE requires exactly 1 argument")
+			}
+			nVal, err := e.evalExpr(wf.Args[0], schema, nil)
+			if err != nil {
+				return nil, err
+			}
+			n := int64(1)
+			if nVal.Type == catalog.TypeInt32 {
+				n = int64(nVal.Int32)
+			} else if nVal.Type == catalog.TypeInt64 {
+				n = nVal.Int64
+			}
+			if n < 1 {
+				n = 1
+			}
+
+			totalRows := int64(len(rowIndices))
+			for i, rowIdx := range rowIndices {
+				bucket := (int64(i) * n / totalRows) + 1
+				result[rowIdx] = catalog.NewInt64(bucket)
+			}
+
+		case "SUM":
+			// Running SUM or total SUM depending on frame
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("SUM requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("SUM argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			// Calculate running sum
+			var runningSum int64
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if val.Type == catalog.TypeInt32 {
+						runningSum += int64(val.Int32)
+					} else if val.Type == catalog.TypeInt64 {
+						runningSum += val.Int64
+					}
+				}
+				result[rowIdx] = catalog.NewInt64(runningSum)
+			}
+
+		case "COUNT":
+			// Running COUNT
+			for i, rowIdx := range rowIndices {
+				result[rowIdx] = catalog.NewInt64(int64(i + 1))
+			}
+
+		case "AVG":
+			// Running AVG
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("AVG requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("AVG argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			var runningSum int64
+			count := 0
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if val.Type == catalog.TypeInt32 {
+						runningSum += int64(val.Int32)
+					} else if val.Type == catalog.TypeInt64 {
+						runningSum += val.Int64
+					}
+					count++
+				}
+				if count > 0 {
+					result[rowIdx] = catalog.NewInt64(runningSum / int64(count))
+				} else {
+					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				}
+			}
+
+		case "MIN":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("MIN requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("MIN argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			var minVal catalog.Value
+			minVal.IsNull = true
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if minVal.IsNull || compareValuesForSort(val, minVal) < 0 {
+						minVal = val
+					}
+				}
+				result[rowIdx] = minVal
+			}
+
+		case "MAX":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("MAX requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("MAX argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			var maxVal catalog.Value
+			maxVal.IsNull = true
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if maxVal.IsNull || compareValuesForSort(val, maxVal) > 0 {
+						maxVal = val
+					}
+				}
+				result[rowIdx] = maxVal
+			}
+
+		case "LAG":
+			// LAG(col, offset, default)
+			if len(wf.Args) < 1 {
+				return nil, fmt.Errorf("LAG requires at least 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("LAG first argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			offset := int64(1)
+			if len(wf.Args) >= 2 {
+				offsetVal, err := e.evalExpr(wf.Args[1], schema, nil)
+				if err != nil {
+					return nil, err
+				}
+				if offsetVal.Type == catalog.TypeInt32 {
+					offset = int64(offsetVal.Int32)
+				} else if offsetVal.Type == catalog.TypeInt64 {
+					offset = offsetVal.Int64
+				}
+			}
+
+			defaultVal := catalog.Null(catalog.TypeUnknown)
+			if len(wf.Args) >= 3 {
+				var err error
+				defaultVal, err = e.evalExpr(wf.Args[2], schema, nil)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			for i, rowIdx := range rowIndices {
+				lagIdx := i - int(offset)
+				if lagIdx >= 0 && lagIdx < len(rowIndices) {
+					result[rowIdx] = rows[rowIndices[lagIdx]][colIdx]
+				} else {
+					result[rowIdx] = defaultVal
+				}
+			}
+
+		case "LEAD":
+			// LEAD(col, offset, default)
+			if len(wf.Args) < 1 {
+				return nil, fmt.Errorf("LEAD requires at least 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("LEAD first argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			offset := int64(1)
+			if len(wf.Args) >= 2 {
+				offsetVal, err := e.evalExpr(wf.Args[1], schema, nil)
+				if err != nil {
+					return nil, err
+				}
+				if offsetVal.Type == catalog.TypeInt32 {
+					offset = int64(offsetVal.Int32)
+				} else if offsetVal.Type == catalog.TypeInt64 {
+					offset = offsetVal.Int64
+				}
+			}
+
+			defaultVal := catalog.Null(catalog.TypeUnknown)
+			if len(wf.Args) >= 3 {
+				var err error
+				defaultVal, err = e.evalExpr(wf.Args[2], schema, nil)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			for i, rowIdx := range rowIndices {
+				leadIdx := i + int(offset)
+				if leadIdx >= 0 && leadIdx < len(rowIndices) {
+					result[rowIdx] = rows[rowIndices[leadIdx]][colIdx]
+				} else {
+					result[rowIdx] = defaultVal
+				}
+			}
+
+		case "FIRST_VALUE":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("FIRST_VALUE requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("FIRST_VALUE argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			if len(rowIndices) > 0 {
+				firstVal := rows[rowIndices[0]][colIdx]
+				for _, rowIdx := range rowIndices {
+					result[rowIdx] = firstVal
+				}
+			}
+
+		case "LAST_VALUE":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("LAST_VALUE requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("LAST_VALUE argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			// Default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+			// So LAST_VALUE returns current row's value by default
+			for i, rowIdx := range rowIndices {
+				result[rowIdx] = rows[rowIndices[i]][colIdx]
+			}
+
+		default:
+			return nil, fmt.Errorf("unsupported window function: %s", wf.Function)
+		}
+	}
+
+	return result, nil
+}
+
+// makePartitionKey creates a key for grouping rows by partition columns.
+func makePartitionKey(row []catalog.Value, indices []int) string {
+	if len(indices) == 0 {
+		return "" // All rows in same partition
+	}
+	var parts []string
+	for _, idx := range indices {
+		parts = append(parts, valueToString(row[idx]))
+	}
+	return strings.Join(parts, "|")
+}
+
+// getOrderByValues extracts the values used for ordering.
+func getOrderByValues(row []catalog.Value, indices []int) []catalog.Value {
+	vals := make([]catalog.Value, len(indices))
+	for i, idx := range indices {
+		vals[i] = row[idx]
+	}
+	return vals
+}
+
+// windowValuesEqual checks if two slices of values are equal (for window function comparisons).
+func windowValuesEqual(a, b []catalog.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if compareValuesForSort(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// valueToString converts a value to string for partition key.
+func valueToString(v catalog.Value) string {
+	if v.IsNull {
+		return "NULL"
+	}
+	switch v.Type {
+	case catalog.TypeInt32:
+		return fmt.Sprintf("%d", v.Int32)
+	case catalog.TypeInt64:
+		return fmt.Sprintf("%d", v.Int64)
+	case catalog.TypeText:
+		return v.Text
+	case catalog.TypeBool:
+		return fmt.Sprintf("%t", v.Bool)
+	case catalog.TypeTimestamp:
+		return v.Timestamp.String()
+	default:
+		return "?"
+	}
 }

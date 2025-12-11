@@ -416,13 +416,48 @@ func (p *Parser) isAggregateToken() bool {
 	return false
 }
 
+// isWindowFunctionToken returns true if the token is a window-specific function.
+func (p *Parser) isWindowFunctionToken() bool {
+	switch p.cur.Type {
+	case TOKEN_ROW_NUMBER, TOKEN_RANK, TOKEN_DENSE_RANK, TOKEN_NTILE,
+		TOKEN_LAG, TOKEN_LEAD, TOKEN_FIRST_VALUE, TOKEN_LAST_VALUE, TOKEN_NTH_VALUE:
+		return true
+	}
+	return false
+}
+
+// windowFunctionName returns the name of the current window function token.
+func (p *Parser) windowFunctionName() string {
+	switch p.cur.Type {
+	case TOKEN_ROW_NUMBER:
+		return "ROW_NUMBER"
+	case TOKEN_RANK:
+		return "RANK"
+	case TOKEN_DENSE_RANK:
+		return "DENSE_RANK"
+	case TOKEN_NTILE:
+		return "NTILE"
+	case TOKEN_LAG:
+		return "LAG"
+	case TOKEN_LEAD:
+		return "LEAD"
+	case TOKEN_FIRST_VALUE:
+		return "FIRST_VALUE"
+	case TOKEN_LAST_VALUE:
+		return "LAST_VALUE"
+	case TOKEN_NTH_VALUE:
+		return "NTH_VALUE"
+	}
+	return ""
+}
+
 // isKeyword returns true if the current token is a SQL keyword (not suitable for implicit alias).
 func (p *Parser) isKeyword() bool {
 	switch p.cur.Type {
 	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
 		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
 		TOKEN_RIGHT, TOKEN_FULL, TOKEN_CROSS, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
-		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON:
+		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON, TOKEN_OVER, TOKEN_PARTITION:
 		return true
 	}
 	return false
@@ -499,8 +534,70 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 		if p.curTokenIs(TOKEN_STAR) {
 			cols = append(cols, SelectColumn{Star: true})
 			p.nextToken()
+		} else if p.isWindowFunctionToken() {
+			// Parse window-specific functions: ROW_NUMBER(), RANK(), etc.
+			funcName := p.windowFunctionName()
+			p.nextToken() // consume function name
+
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, fmt.Errorf("expected ( after %s", funcName)
+			}
+
+			// Parse optional arguments (e.g., NTILE(4), LAG(col, 1))
+			var args []Expression
+			if !p.curTokenIs(TOKEN_RPAREN) {
+				for {
+					arg, err := p.parseExpression()
+					if err != nil {
+						return nil, err
+					}
+					args = append(args, arg)
+					if !p.curTokenIs(TOKEN_COMMA) {
+						break
+					}
+					p.nextToken() // consume comma
+				}
+			}
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, err
+			}
+
+			// Window functions MUST have OVER clause
+			if !p.curTokenIs(TOKEN_OVER) {
+				return nil, fmt.Errorf("%s requires OVER clause", funcName)
+			}
+
+			overClause, err := p.parseOverClause()
+			if err != nil {
+				return nil, err
+			}
+
+			windowExpr := &WindowFuncExpr{
+				Function: funcName,
+				Args:     args,
+				Over:     overClause,
+			}
+
+			col := SelectColumn{Expression: windowExpr}
+
+			// Check for alias
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken()
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, col)
 		} else if p.isAggregateToken() {
 			// Parse aggregate function: COUNT(*), SUM(col), etc.
+			// May also be a window function if followed by OVER
 			funcName := p.aggregateName()
 			p.nextToken() // consume function name
 
@@ -523,25 +620,63 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				return nil, err
 			}
 
-			col := SelectColumn{
-				Aggregate: &AggregateFunc{Function: funcName, Arg: arg},
-			}
-
-			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
-				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
-					return nil, fmt.Errorf("expected alias name after AS")
+			// Check if this is a window function (aggregate with OVER clause)
+			if p.curTokenIs(TOKEN_OVER) {
+				overClause, err := p.parseOverClause()
+				if err != nil {
+					return nil, err
 				}
-				col.Alias = p.cur.Literal
-				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
-				// Implicit alias (without AS)
-				col.Alias = p.cur.Literal
-				p.nextToken()
-			}
 
-			cols = append(cols, col)
+				// Convert to window function expression
+				var args []Expression
+				if arg != "*" {
+					args = append(args, &ColumnRef{Name: arg})
+				}
+
+				windowExpr := &WindowFuncExpr{
+					Function: funcName,
+					Args:     args,
+					Over:     overClause,
+				}
+
+				col := SelectColumn{Expression: windowExpr}
+
+				// Check for alias
+				if p.curTokenIs(TOKEN_AS) {
+					p.nextToken()
+					if !p.curTokenIs(TOKEN_IDENT) {
+						return nil, fmt.Errorf("expected alias name after AS")
+					}
+					col.Alias = p.cur.Literal
+					p.nextToken()
+				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+					col.Alias = p.cur.Literal
+					p.nextToken()
+				}
+
+				cols = append(cols, col)
+			} else {
+				// Regular aggregate function (no OVER)
+				col := SelectColumn{
+					Aggregate: &AggregateFunc{Function: funcName, Arg: arg},
+				}
+
+				// Check for alias: AS name or just name
+				if p.curTokenIs(TOKEN_AS) {
+					p.nextToken() // consume AS
+					if !p.curTokenIs(TOKEN_IDENT) {
+						return nil, fmt.Errorf("expected alias name after AS")
+					}
+					col.Alias = p.cur.Literal
+					p.nextToken()
+				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+					// Implicit alias (without AS)
+					col.Alias = p.cur.Literal
+					p.nextToken()
+				}
+
+				cols = append(cols, col)
+			}
 		} else if p.curTokenIs(TOKEN_CASE) {
 			// Parse CASE expression
 			expr, err := p.parseCaseExpression()
@@ -914,7 +1049,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 		if p.curTokenIs(TOKEN_COLUMN) {
 			stmt.StorageType = "COLUMN"
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ROW" {
+		} else if p.curTokenIs(TOKEN_ROW) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ROW") {
 			stmt.StorageType = "ROW"
 			p.nextToken()
 		} else {
@@ -2175,4 +2310,152 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 	p.nextToken() // consume END
 
 	return caseExpr, nil
+}
+
+// parseOverClause parses OVER (PARTITION BY ... ORDER BY ...) for window functions.
+func (p *Parser) parseOverClause() (*WindowSpec, error) {
+	if !p.curTokenIs(TOKEN_OVER) {
+		return nil, fmt.Errorf("expected OVER, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume OVER
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected ( after OVER")
+	}
+
+	spec := &WindowSpec{}
+
+	// Parse PARTITION BY clause (optional)
+	if p.curTokenIs(TOKEN_PARTITION) {
+		p.nextToken() // consume PARTITION
+		if !p.curTokenIs(TOKEN_BY) {
+			return nil, fmt.Errorf("expected BY after PARTITION")
+		}
+		p.nextToken() // consume BY
+
+		// Parse partition columns
+		for {
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected column name in PARTITION BY, got %v", p.cur.Type)
+			}
+			spec.PartitionBy = append(spec.PartitionBy, p.cur.Literal)
+			p.nextToken()
+
+			if !p.curTokenIs(TOKEN_COMMA) {
+				break
+			}
+			p.nextToken() // consume comma
+		}
+	}
+
+	// Parse ORDER BY clause (optional)
+	if p.curTokenIs(TOKEN_ORDER) {
+		p.nextToken() // consume ORDER
+		if !p.curTokenIs(TOKEN_BY) {
+			return nil, fmt.Errorf("expected BY after ORDER")
+		}
+		p.nextToken() // consume BY
+
+		// Parse order by columns
+		for {
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
+			}
+			orderCol := OrderByClause{Column: p.cur.Literal}
+			p.nextToken()
+
+			// Check for ASC/DESC
+			if p.curTokenIs(TOKEN_ASC) {
+				orderCol.Desc = false
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_DESC) {
+				orderCol.Desc = true
+				p.nextToken()
+			}
+
+			// Check for NULLS FIRST/LAST
+			if p.curTokenIs(TOKEN_NULL) && p.peek.Literal == "S" {
+				// This would be NULLS - skip for now
+			}
+
+			spec.OrderBy = append(spec.OrderBy, orderCol)
+
+			if !p.curTokenIs(TOKEN_COMMA) {
+				break
+			}
+			p.nextToken() // consume comma
+		}
+	}
+
+	// Parse frame specification (optional): ROWS/RANGE BETWEEN ... AND ...
+	if p.curTokenIs(TOKEN_ROWS) || p.curTokenIs(TOKEN_RANGE) {
+		if p.curTokenIs(TOKEN_ROWS) {
+			spec.FrameType = "ROWS"
+		} else {
+			spec.FrameType = "RANGE"
+		}
+		p.nextToken() // consume ROWS/RANGE
+
+		// Parse frame bound
+		frameBound, err := p.parseFrameBound()
+		if err != nil {
+			return nil, err
+		}
+		spec.FrameStart = frameBound
+
+		// Check for BETWEEN ... AND ...
+		if p.curTokenIs(TOKEN_AND) {
+			p.nextToken() // consume AND
+			endBound, err := p.parseFrameBound()
+			if err != nil {
+				return nil, err
+			}
+			spec.FrameEnd = endBound
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ) to close OVER clause")
+	}
+
+	return spec, nil
+}
+
+// parseFrameBound parses a frame bound like UNBOUNDED PRECEDING, CURRENT ROW, 5 PRECEDING, etc.
+func (p *Parser) parseFrameBound() (string, error) {
+	if p.curTokenIs(TOKEN_UNBOUNDED) {
+		p.nextToken() // consume UNBOUNDED
+		if p.curTokenIs(TOKEN_PRECEDING) {
+			p.nextToken()
+			return "UNBOUNDED PRECEDING", nil
+		} else if p.curTokenIs(TOKEN_FOLLOWING) {
+			p.nextToken()
+			return "UNBOUNDED FOLLOWING", nil
+		}
+		return "", fmt.Errorf("expected PRECEDING or FOLLOWING after UNBOUNDED")
+	}
+
+	if p.curTokenIs(TOKEN_CURRENT) {
+		p.nextToken() // consume CURRENT
+		if p.curTokenIs(TOKEN_ROW) {
+			p.nextToken()
+			return "CURRENT ROW", nil
+		}
+		return "", fmt.Errorf("expected ROW after CURRENT")
+	}
+
+	if p.curTokenIs(TOKEN_INT) {
+		n := p.cur.Literal
+		p.nextToken()
+		if p.curTokenIs(TOKEN_PRECEDING) {
+			p.nextToken()
+			return n + " PRECEDING", nil
+		} else if p.curTokenIs(TOKEN_FOLLOWING) {
+			p.nextToken()
+			return n + " FOLLOWING", nil
+		}
+		return "", fmt.Errorf("expected PRECEDING or FOLLOWING after number")
+	}
+
+	return "", fmt.Errorf("invalid frame bound: %v", p.cur.Type)
 }

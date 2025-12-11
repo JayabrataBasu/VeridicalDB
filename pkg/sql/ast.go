@@ -354,3 +354,26 @@ type ExistsExpr struct {
 }
 
 func (e *ExistsExpr) exprNode() {}
+
+// WindowSpec defines the OVER clause specification for window functions.
+type WindowSpec struct {
+	PartitionBy []string        // PARTITION BY columns
+	OrderBy     []OrderByClause // ORDER BY within the window
+	// Frame specification (optional)
+	FrameType  string // "ROWS" or "RANGE" (empty if not specified)
+	FrameStart string // "UNBOUNDED PRECEDING", "CURRENT ROW", "n PRECEDING", etc.
+	FrameEnd   string // "UNBOUNDED FOLLOWING", "CURRENT ROW", "n FOLLOWING", etc. (empty for single-bound)
+}
+
+// WindowFuncExpr represents a window function call.
+// Examples:
+//   - ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC)
+//   - SUM(amount) OVER (PARTITION BY customer_id)
+//   - LAG(value, 1) OVER (ORDER BY date)
+type WindowFuncExpr struct {
+	Function string       // ROW_NUMBER, RANK, DENSE_RANK, SUM, COUNT, AVG, etc.
+	Args     []Expression // function arguments (e.g., column for SUM, offset for LAG)
+	Over     *WindowSpec  // the OVER clause
+}
+
+func (e *WindowFuncExpr) exprNode() {}

@@ -209,6 +209,26 @@ const (
 	TOKEN_REPEAT
 	TOKEN_LPAD
 	TOKEN_RPAD
+
+	// Window functions
+	TOKEN_OVER
+	TOKEN_PARTITION
+	TOKEN_ROW_NUMBER
+	TOKEN_RANK
+	TOKEN_DENSE_RANK
+	TOKEN_NTILE
+	TOKEN_LAG
+	TOKEN_LEAD
+	TOKEN_FIRST_VALUE
+	TOKEN_LAST_VALUE
+	TOKEN_NTH_VALUE
+	TOKEN_ROWS
+	TOKEN_RANGE
+	TOKEN_UNBOUNDED
+	TOKEN_PRECEDING
+	TOKEN_FOLLOWING
+	TOKEN_CURRENT
+	TOKEN_ROW
 )
 
 var keywords = map[string]TokenType{
@@ -342,6 +362,24 @@ var keywords = map[string]TokenType{
 	"REPEAT":            TOKEN_REPEAT,
 	"LPAD":              TOKEN_LPAD,
 	"RPAD":              TOKEN_RPAD,
+	"OVER":              TOKEN_OVER,
+	"PARTITION":         TOKEN_PARTITION,
+	"ROW_NUMBER":        TOKEN_ROW_NUMBER,
+	"RANK":              TOKEN_RANK,
+	"DENSE_RANK":        TOKEN_DENSE_RANK,
+	"NTILE":             TOKEN_NTILE,
+	"LAG":               TOKEN_LAG,
+	"LEAD":              TOKEN_LEAD,
+	"FIRST_VALUE":       TOKEN_FIRST_VALUE,
+	"LAST_VALUE":        TOKEN_LAST_VALUE,
+	"NTH_VALUE":         TOKEN_NTH_VALUE,
+	"ROWS":              TOKEN_ROWS,
+	"RANGE":             TOKEN_RANGE,
+	"UNBOUNDED":         TOKEN_UNBOUNDED,
+	"PRECEDING":         TOKEN_PRECEDING,
+	"FOLLOWING":         TOKEN_FOLLOWING,
+	"CURRENT":           TOKEN_CURRENT,
+	"ROW":               TOKEN_ROW,
 }
 
 // Token represents a lexical token.

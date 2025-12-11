@@ -3924,3 +3924,201 @@ func TestDistinctOnExecution(t *testing.T) {
 		t.Errorf("Expected 2 rows from DISTINCT ON (category), got %d", len(result.Rows))
 	}
 }
+
+// TestParseWindowFunctions verifies window function parsing.
+func TestParseWindowFunctions(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "ROW_NUMBER basic",
+			input:   "SELECT ROW_NUMBER() OVER () FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "ROW_NUMBER with PARTITION BY",
+			input:   "SELECT ROW_NUMBER() OVER (PARTITION BY dept) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "ROW_NUMBER with ORDER BY",
+			input:   "SELECT ROW_NUMBER() OVER (ORDER BY salary DESC) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "ROW_NUMBER with PARTITION BY and ORDER BY",
+			input:   "SELECT ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary DESC) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "RANK function",
+			input:   "SELECT RANK() OVER (ORDER BY score) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "DENSE_RANK function",
+			input:   "SELECT DENSE_RANK() OVER (ORDER BY score) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "SUM as window function",
+			input:   "SELECT SUM(amount) OVER (PARTITION BY customer_id) FROM orders;",
+			wantErr: false,
+		},
+		{
+			name:    "COUNT as window function",
+			input:   "SELECT COUNT(*) OVER (ORDER BY date) FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "Window function with column alias",
+			input:   "SELECT ROW_NUMBER() OVER (ORDER BY id) AS row_num FROM t;",
+			wantErr: false,
+		},
+		{
+			name:    "Window function without OVER - should fail",
+			input:   "SELECT ROW_NUMBER() FROM t;",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestWindowFunctionExecution verifies window function execution.
+func TestWindowFunctionExecution(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, executor, "CREATE TABLE window_test (dept TEXT, emp TEXT, salary INT);")
+
+	executeSQL(t, executor, "INSERT INTO window_test VALUES ('Sales', 'Alice', 50000);")
+	executeSQL(t, executor, "INSERT INTO window_test VALUES ('Sales', 'Bob', 60000);")
+	executeSQL(t, executor, "INSERT INTO window_test VALUES ('Sales', 'Carol', 55000);")
+	executeSQL(t, executor, "INSERT INTO window_test VALUES ('Engineering', 'Dave', 70000);")
+	executeSQL(t, executor, "INSERT INTO window_test VALUES ('Engineering', 'Eve', 80000);")
+
+	// Test ROW_NUMBER with ORDER BY
+	result := executeSQL(t, executor, "SELECT emp, ROW_NUMBER() OVER (ORDER BY salary) FROM window_test;")
+
+	if len(result.Rows) != 5 {
+		t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+	}
+
+	// Each row should have a row number from 1 to 5
+	for i, row := range result.Rows {
+		if len(row) != 2 {
+			t.Errorf("Row %d: Expected 2 columns, got %d", i, len(row))
+		}
+	}
+}
+
+// TestWindowFunctionPartitionBy tests PARTITION BY functionality.
+func TestWindowFunctionPartitionBy(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, executor, "CREATE TABLE partition_test (dept TEXT, emp TEXT, salary INT);")
+
+	executeSQL(t, executor, "INSERT INTO partition_test VALUES ('Sales', 'Alice', 50000);")
+	executeSQL(t, executor, "INSERT INTO partition_test VALUES ('Sales', 'Bob', 60000);")
+	executeSQL(t, executor, "INSERT INTO partition_test VALUES ('Engineering', 'Dave', 70000);")
+	executeSQL(t, executor, "INSERT INTO partition_test VALUES ('Engineering', 'Eve', 80000);")
+
+	// Test ROW_NUMBER with PARTITION BY - each dept should have its own numbering
+	result := executeSQL(t, executor, "SELECT dept, emp, ROW_NUMBER() OVER (PARTITION BY dept ORDER BY salary) FROM partition_test;")
+
+	if len(result.Rows) != 4 {
+		t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+	}
+
+	// Verify row numbers reset per partition
+	// Should have row numbers 1, 2 for Sales and 1, 2 for Engineering
+	rowNumCounts := make(map[int64]int)
+	for _, row := range result.Rows {
+		if len(row) >= 3 {
+			if row[2].Type == catalog.TypeInt64 {
+				rowNumCounts[row[2].Int64]++
+			}
+		}
+	}
+
+	// Should have two 1s and two 2s
+	if rowNumCounts[1] != 2 || rowNumCounts[2] != 2 {
+		t.Errorf("Expected two 1s and two 2s in row numbers, got %v", rowNumCounts)
+	}
+}
+
+// TestWindowFunctionRank tests RANK and DENSE_RANK.
+func TestWindowFunctionRank(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE rank_test (name TEXT, score INT);")
+
+	executeSQL(t, executor, "INSERT INTO rank_test VALUES ('Alice', 100);")
+	executeSQL(t, executor, "INSERT INTO rank_test VALUES ('Bob', 90);")
+	executeSQL(t, executor, "INSERT INTO rank_test VALUES ('Carol', 90);")
+	executeSQL(t, executor, "INSERT INTO rank_test VALUES ('Dave', 80);")
+
+	// Test RANK - ties get same rank, gaps after
+	result := executeSQL(t, executor, "SELECT name, RANK() OVER (ORDER BY score DESC) FROM rank_test;")
+
+	if len(result.Rows) != 4 {
+		t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+	}
+
+	// With RANK: Alice=1, Bob=2, Carol=2, Dave=4 (gap after tie)
+
+	// Test DENSE_RANK - ties get same rank, no gaps
+	result = executeSQL(t, executor, "SELECT name, DENSE_RANK() OVER (ORDER BY score DESC) FROM rank_test;")
+
+	if len(result.Rows) != 4 {
+		t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+	}
+
+	// With DENSE_RANK: Alice=1, Bob=2, Carol=2, Dave=3 (no gap)
+}
+
+// TestWindowFunctionAggregate tests aggregate functions as window functions.
+func TestWindowFunctionAggregate(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE agg_window_test (id INT, amount INT);")
+
+	executeSQL(t, executor, "INSERT INTO agg_window_test VALUES (1, 100);")
+	executeSQL(t, executor, "INSERT INTO agg_window_test VALUES (2, 200);")
+	executeSQL(t, executor, "INSERT INTO agg_window_test VALUES (3, 300);")
+
+	// Test SUM as window function (running sum)
+	result := executeSQL(t, executor, "SELECT id, amount, SUM(amount) OVER (ORDER BY id) FROM agg_window_test;")
+
+	if len(result.Rows) != 3 {
+		t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+	}
+
+	// Verify running sums: 100, 300, 600
+	expectedSums := []int64{100, 300, 600}
+	for i, row := range result.Rows {
+		if len(row) >= 3 {
+			if row[2].Type == catalog.TypeInt64 {
+				if row[2].Int64 != expectedSums[i] {
+					t.Errorf("Row %d: Expected running sum %d, got %d", i, expectedSums[i], row[2].Int64)
+				}
+			}
+		}
+	}
+}

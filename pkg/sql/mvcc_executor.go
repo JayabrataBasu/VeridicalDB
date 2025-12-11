@@ -215,6 +215,21 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return e.executeSelectWithJoins(stmt, tx)
 	}
 
+	// Check if query contains window functions
+	hasWindowFunctions := false
+	for _, col := range stmt.Columns {
+		if col.Expression != nil {
+			if _, ok := col.Expression.(*WindowFuncExpr); ok {
+				hasWindowFunctions = true
+				break
+			}
+		}
+	}
+
+	if hasWindowFunctions {
+		return e.executeSelectWithWindowFunctions(stmt, tx)
+	}
+
 	// Try to use an index scan first
 	result, used, err := e.executeSelectWithIndex(stmt, tx)
 	if err != nil {
@@ -2096,4 +2111,384 @@ func compareValuesForSortMVCC(left, right catalog.Value) int {
 		return 0
 	}
 	return 0
+}
+
+// executeSelectWithWindowFunctions handles SELECT with window functions using MVCC.
+func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+	cat := e.mtm.Catalog()
+	meta, err := cat.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// First, scan all rows that match WHERE clause
+	var allRows [][]catalog.Value
+
+	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, evalErr := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			if evalErr != nil {
+				return false, evalErr
+			}
+			if !match {
+				return true, nil // continue scanning
+			}
+		}
+
+		rowCopy := make([]catalog.Value, len(row.Values))
+		copy(rowCopy, row.Values)
+		allRows = append(allRows, rowCopy)
+		return true, nil // continue
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine output columns
+	var outputCols []string
+	for _, col := range stmt.Columns {
+		if col.Star {
+			for _, c := range meta.Schema.Columns {
+				outputCols = append(outputCols, c.Name)
+			}
+		} else if col.Alias != "" {
+			outputCols = append(outputCols, col.Alias)
+		} else if col.Name != "" {
+			outputCols = append(outputCols, col.Name)
+		} else if col.Expression != nil {
+			if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+				outputCols = append(outputCols, wf.Function)
+			} else {
+				outputCols = append(outputCols, "expr")
+			}
+		}
+	}
+
+	// Build output rows with window function results
+	outputRows := make([][]catalog.Value, len(allRows))
+	for i := range outputRows {
+		outputRows[i] = make([]catalog.Value, len(stmt.Columns))
+	}
+
+	// Process each column
+	for colIdx, col := range stmt.Columns {
+		if col.Star {
+			continue // handled separately
+		}
+
+		if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+			// This is a window function - compute values for all rows
+			windowValues, err := e.computeWindowFunction(wf, allRows, meta.Schema)
+			if err != nil {
+				return nil, err
+			}
+			for rowIdx, val := range windowValues {
+				outputRows[rowIdx][colIdx] = val
+			}
+		} else if col.Name != "" {
+			// Regular column
+			_, idx := meta.Schema.ColumnByName(col.Name)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", col.Name)
+			}
+			for rowIdx, row := range allRows {
+				outputRows[rowIdx][colIdx] = row[idx]
+			}
+		} else if col.Expression != nil {
+			// Other expression
+			for rowIdx, row := range allRows {
+				val, err := e.evalExpr(col.Expression, meta.Schema, row)
+				if err != nil {
+					return nil, err
+				}
+				outputRows[rowIdx][colIdx] = val
+			}
+		}
+	}
+
+	// Handle SELECT * expansion
+	starOffset := 0
+	for colIdx, col := range stmt.Columns {
+		if col.Star {
+			for rowIdx, row := range allRows {
+				for i := range meta.Schema.Columns {
+					if colIdx+starOffset+i < len(outputRows[rowIdx]) {
+						outputRows[rowIdx][colIdx+starOffset+i] = row[i]
+					}
+				}
+			}
+			starOffset += len(meta.Schema.Columns) - 1
+		}
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			_, idx := meta.Schema.ColumnByName(ob.Column)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+			orderByIndices[i] = idx
+		}
+
+		type indexedRow struct {
+			origIdx   int
+			outputRow []catalog.Value
+			sortRow   []catalog.Value
+		}
+		indexed := make([]indexedRow, len(allRows))
+		for i := range allRows {
+			indexed[i] = indexedRow{origIdx: i, outputRow: outputRows[i], sortRow: allRows[i]}
+		}
+
+		sort.SliceStable(indexed, func(i, j int) bool {
+			for k, ob := range stmt.OrderBy {
+				idx := orderByIndices[k]
+				cmp := compareValuesForSortMVCC(indexed[i].sortRow[idx], indexed[j].sortRow[idx])
+				if cmp != 0 {
+					if ob.Desc {
+						return cmp > 0
+					}
+					return cmp < 0
+				}
+			}
+			return false
+		})
+
+		for i, ir := range indexed {
+			outputRows[i] = ir.outputRow
+		}
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		if int(*stmt.Offset) >= len(outputRows) {
+			outputRows = nil
+		} else {
+			outputRows = outputRows[*stmt.Offset:]
+		}
+	}
+	if stmt.Limit != nil && *stmt.Limit >= 0 {
+		if int(*stmt.Limit) < len(outputRows) {
+			outputRows = outputRows[:*stmt.Limit]
+		}
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    outputRows,
+	}, nil
+}
+
+// computeWindowFunction computes window function values for all rows (MVCC version).
+func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
+	result := make([]catalog.Value, len(rows))
+
+	// Get partition column indices
+	partitionIndices := make([]int, len(wf.Over.PartitionBy))
+	for i, colName := range wf.Over.PartitionBy {
+		_, idx := schema.ColumnByName(colName)
+		if idx < 0 {
+			return nil, fmt.Errorf("unknown column in PARTITION BY: %s", colName)
+		}
+		partitionIndices[i] = idx
+	}
+
+	// Get order by column indices
+	orderByIndices := make([]int, len(wf.Over.OrderBy))
+	for i, ob := range wf.Over.OrderBy {
+		_, idx := schema.ColumnByName(ob.Column)
+		if idx < 0 {
+			return nil, fmt.Errorf("unknown column in window ORDER BY: %s", ob.Column)
+		}
+		orderByIndices[i] = idx
+	}
+
+	// Group rows by partition
+	partitions := make(map[string][]int)
+	partitionOrder := []string{}
+
+	for i, row := range rows {
+		key := mvccMakePartitionKey(row, partitionIndices)
+		if _, exists := partitions[key]; !exists {
+			partitionOrder = append(partitionOrder, key)
+		}
+		partitions[key] = append(partitions[key], i)
+	}
+
+	// Process each partition
+	for _, partKey := range partitionOrder {
+		rowIndices := partitions[partKey]
+
+		// Sort within partition
+		if len(wf.Over.OrderBy) > 0 {
+			sort.SliceStable(rowIndices, func(i, j int) bool {
+				for k, ob := range wf.Over.OrderBy {
+					idx := orderByIndices[k]
+					cmp := compareValuesForSortMVCC(rows[rowIndices[i]][idx], rows[rowIndices[j]][idx])
+					if cmp != 0 {
+						if ob.Desc {
+							return cmp > 0
+						}
+						return cmp < 0
+					}
+				}
+				return false
+			})
+		}
+
+		// Compute function
+		switch strings.ToUpper(wf.Function) {
+		case "ROW_NUMBER":
+			for rank, rowIdx := range rowIndices {
+				result[rowIdx] = catalog.NewInt64(int64(rank + 1))
+			}
+
+		case "RANK":
+			var prevVals []catalog.Value
+			rank := 1
+			for i, rowIdx := range rowIndices {
+				currVals := mvccGetOrderByValues(rows[rowIdx], orderByIndices)
+				if i == 0 || !mvccWindowValuesEqual(currVals, prevVals) {
+					rank = i + 1
+				}
+				result[rowIdx] = catalog.NewInt64(int64(rank))
+				prevVals = currVals
+			}
+
+		case "DENSE_RANK":
+			var prevVals []catalog.Value
+			rank := 0
+			for i, rowIdx := range rowIndices {
+				currVals := mvccGetOrderByValues(rows[rowIdx], orderByIndices)
+				if i == 0 || !mvccWindowValuesEqual(currVals, prevVals) {
+					rank++
+				}
+				result[rowIdx] = catalog.NewInt64(int64(rank))
+				prevVals = currVals
+			}
+
+		case "SUM":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("SUM requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("SUM argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			var runningSum int64
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if val.Type == catalog.TypeInt32 {
+						runningSum += int64(val.Int32)
+					} else if val.Type == catalog.TypeInt64 {
+						runningSum += val.Int64
+					}
+				}
+				result[rowIdx] = catalog.NewInt64(runningSum)
+			}
+
+		case "COUNT":
+			for i, rowIdx := range rowIndices {
+				result[rowIdx] = catalog.NewInt64(int64(i + 1))
+			}
+
+		case "AVG":
+			if len(wf.Args) != 1 {
+				return nil, fmt.Errorf("AVG requires exactly 1 argument")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("AVG argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			var runningSum int64
+			count := 0
+			for _, rowIdx := range rowIndices {
+				val := rows[rowIdx][colIdx]
+				if !val.IsNull {
+					if val.Type == catalog.TypeInt32 {
+						runningSum += int64(val.Int32)
+					} else if val.Type == catalog.TypeInt64 {
+						runningSum += val.Int64
+					}
+					count++
+				}
+				if count > 0 {
+					result[rowIdx] = catalog.NewInt64(runningSum / int64(count))
+				} else {
+					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				}
+			}
+
+		default:
+			return nil, fmt.Errorf("unsupported window function: %s", wf.Function)
+		}
+	}
+
+	return result, nil
+}
+
+// Helper functions for MVCC window function processing
+func mvccMakePartitionKey(row []catalog.Value, indices []int) string {
+	if len(indices) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, idx := range indices {
+		parts = append(parts, mvccValueToString(row[idx]))
+	}
+	return strings.Join(parts, "|")
+}
+
+func mvccGetOrderByValues(row []catalog.Value, indices []int) []catalog.Value {
+	vals := make([]catalog.Value, len(indices))
+	for i, idx := range indices {
+		vals[i] = row[idx]
+	}
+	return vals
+}
+
+func mvccWindowValuesEqual(a, b []catalog.Value) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if compareValuesForSortMVCC(a[i], b[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func mvccValueToString(v catalog.Value) string {
+	if v.IsNull {
+		return "NULL"
+	}
+	switch v.Type {
+	case catalog.TypeInt32:
+		return fmt.Sprintf("%d", v.Int32)
+	case catalog.TypeInt64:
+		return fmt.Sprintf("%d", v.Int64)
+	case catalog.TypeText:
+		return v.Text
+	case catalog.TypeBool:
+		return fmt.Sprintf("%t", v.Bool)
+	case catalog.TypeTimestamp:
+		return v.Timestamp.String()
+	default:
+		return "?"
+	}
 }
