@@ -606,6 +606,15 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 
 		found := false
+
+		// Check if this is a subquery IN
+		if ex.Subquery != nil {
+			// Subqueries in MVCC executor are not yet supported in evalCondition context
+			// They would need transaction context to be passed through
+			return false, fmt.Errorf("IN subquery not yet supported in MVCC executor")
+		}
+
+		// Value list IN
 		for _, valExpr := range ex.Values {
 			rightVal, err := e.evalExpr(valExpr, schema, row)
 			if err != nil {
@@ -704,6 +713,14 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return !result, nil // IS NOT NULL
 		}
 		return result, nil // IS NULL
+
+	case *SubqueryExpr:
+		// Subqueries in MVCC executor need transaction context
+		return false, fmt.Errorf("subqueries not yet supported in MVCC executor")
+
+	case *ExistsExpr:
+		// EXISTS subqueries in MVCC executor need transaction context
+		return false, fmt.Errorf("EXISTS subqueries not yet supported in MVCC executor")
 
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
@@ -1030,7 +1047,7 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 	}
 
 	join := stmt.Joins[0]
-	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" {
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" {
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
@@ -1166,6 +1183,50 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 		// Add unmatched right rows
 		for i, rightRow := range rightRows {
 			if !rightRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, nullLeftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+
+	case "FULL":
+		// Track which left and right rows have been matched
+		leftRowMatches := make(map[int]bool)
+		rightRowMatches := make(map[int]bool)
+
+		// Match left with right
+		for i, leftRow := range leftRows {
+			for j, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinConditionMVCC(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					leftRowMatches[i] = true
+					rightRowMatches[j] = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+		}
+
+		// Add unmatched left rows with NULLs for right side
+		for i, leftRow := range leftRows {
+			if !leftRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], nullRightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+
+		// Add unmatched right rows with NULLs for left side
+		for j, rightRow := range rightRows {
+			if !rightRowMatches[j] {
 				combinedRow := make([]catalog.Value, leftLen+rightLen)
 				copy(combinedRow, nullLeftRow)
 				copy(combinedRow[leftLen:], rightRow)

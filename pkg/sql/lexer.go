@@ -109,6 +109,7 @@ const (
 	TOKEN_INNER
 	TOKEN_LEFT
 	TOKEN_RIGHT
+	TOKEN_FULL
 	TOKEN_OUTER
 
 	// IN / BETWEEN / AS keywords
@@ -268,6 +269,7 @@ var keywords = map[string]TokenType{
 	"INNER":             TOKEN_INNER,
 	"LEFT":              TOKEN_LEFT,
 	"RIGHT":             TOKEN_RIGHT,
+	"FULL":              TOKEN_FULL,
 	"OUTER":             TOKEN_OUTER,
 	"IN":                TOKEN_IN,
 	"BETWEEN":           TOKEN_BETWEEN,

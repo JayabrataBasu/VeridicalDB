@@ -3368,6 +3368,88 @@ func TestLeftOuterJoinSyntax(t *testing.T) {
 	}
 }
 
+// TestFullOuterJoin tests FULL OUTER JOIN functionality.
+func TestFullOuterJoin(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create employees table
+	executeSQL(t, executor, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (1, 'Alice');")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (2, 'Bob');")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (3, 'Charlie');")
+
+	// Create departments table - includes dept with no employees and employees with no dept
+	executeSQL(t, executor, "CREATE TABLE departments (id INT PRIMARY KEY, emp_id INT, dept_name TEXT);")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (10, 1, 'Engineering');")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (20, 2, 'Sales');")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (30, 99, 'Marketing');") // No matching employee
+
+	// FULL OUTER JOIN - should return:
+	// - Alice with Engineering (matched)
+	// - Bob with Sales (matched)
+	// - Charlie with NULL (no matching dept)
+	// - NULL with Marketing (no matching employee)
+	result := executeSQL(t, executor, "SELECT employees.name, departments.dept_name FROM employees FULL OUTER JOIN departments ON employees.id = departments.emp_id;")
+
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows from FULL OUTER JOIN, got %d", len(result.Rows))
+	}
+
+	// Verify we have:
+	// 1. At least one matched row (Alice+Engineering)
+	// 2. An unmatched left row (Charlie+NULL)
+	// 3. An unmatched right row (NULL+Marketing)
+	foundAlice := false
+	foundCharlieNull := false
+	foundNullMarketing := false
+
+	for _, row := range result.Rows {
+		if !row[0].IsNull && row[0].Text == "Alice" && !row[1].IsNull && row[1].Text == "Engineering" {
+			foundAlice = true
+		}
+		if !row[0].IsNull && row[0].Text == "Charlie" && row[1].IsNull {
+			foundCharlieNull = true
+		}
+		if row[0].IsNull && !row[1].IsNull && row[1].Text == "Marketing" {
+			foundNullMarketing = true
+		}
+	}
+
+	if !foundAlice {
+		t.Error("expected matched row Alice+Engineering in FULL OUTER JOIN")
+	}
+	if !foundCharlieNull {
+		t.Error("expected Charlie with NULL department in FULL OUTER JOIN")
+	}
+	if !foundNullMarketing {
+		t.Error("expected NULL employee with Marketing in FULL OUTER JOIN")
+	}
+}
+
+// TestFullJoinSyntax tests FULL JOIN without OUTER keyword.
+func TestFullJoinSyntax(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create simple tables
+	executeSQL(t, executor, "CREATE TABLE t1 (x INT PRIMARY KEY);")
+	executeSQL(t, executor, "INSERT INTO t1 VALUES (1);")
+	executeSQL(t, executor, "INSERT INTO t1 VALUES (2);")
+
+	executeSQL(t, executor, "CREATE TABLE t2 (y INT PRIMARY KEY);")
+	executeSQL(t, executor, "INSERT INTO t2 VALUES (1);")
+	executeSQL(t, executor, "INSERT INTO t2 VALUES (3);")
+
+	// FULL JOIN without OUTER keyword
+	result := executeSQL(t, executor, "SELECT t1.x, t2.y FROM t1 FULL JOIN t2 ON t1.x = t2.y;")
+
+	// Expected: (1,1), (2,NULL), (NULL,3)
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows from FULL JOIN, got %d", len(result.Rows))
+	}
+}
+
 // TestHavingClause tests HAVING clause filtering on aggregates.
 func TestHavingClause(t *testing.T) {
 	tm := setupTestTableManager(t)
@@ -3436,7 +3518,7 @@ func TestHavingWithWhere(t *testing.T) {
 	}
 }
 
-// TestParseLeftRightJoin verifies LEFT/RIGHT JOIN parsing.
+// TestParseLeftRightJoin verifies LEFT/RIGHT/FULL JOIN parsing.
 func TestParseLeftRightJoin(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -3466,6 +3548,18 @@ func TestParseLeftRightJoin(t *testing.T) {
 			name:     "RIGHT OUTER JOIN",
 			input:    "SELECT * FROM a RIGHT OUTER JOIN b ON a.id = b.id;",
 			joinType: "RIGHT",
+			wantErr:  false,
+		},
+		{
+			name:     "FULL JOIN",
+			input:    "SELECT * FROM a FULL JOIN b ON a.id = b.id;",
+			joinType: "FULL",
+			wantErr:  false,
+		},
+		{
+			name:     "FULL OUTER JOIN",
+			input:    "SELECT * FROM a FULL OUTER JOIN b ON a.id = b.id;",
+			joinType: "FULL",
 			wantErr:  false,
 		},
 	}
@@ -3515,6 +3609,164 @@ func TestParseHaving(t *testing.T) {
 			name:    "HAVING without GROUP BY should fail",
 			input:   "SELECT * FROM orders HAVING COUNT(*) > 5;",
 			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestSubqueryIN tests IN subquery functionality.
+func TestSubqueryIN(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create departments table
+	executeSQL(t, executor, "CREATE TABLE departments (id INT PRIMARY KEY, name TEXT);")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (1, 'Engineering');")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (2, 'Sales');")
+
+	// Create employees table
+	executeSQL(t, executor, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept_id INT);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (1, 'Alice', 1);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (2, 'Bob', 1);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (3, 'Charlie', 2);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (4, 'David', 3);") // Non-existent dept
+
+	// Test IN subquery - find employees in existing departments
+	result := executeSQL(t, executor, "SELECT name FROM employees WHERE dept_id IN (SELECT id FROM departments);")
+
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 employees in existing departments, got %d", len(result.Rows))
+	}
+
+	// Test NOT IN subquery
+	result = executeSQL(t, executor, "SELECT name FROM employees WHERE dept_id NOT IN (SELECT id FROM departments);")
+
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 employee not in any department, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0].Text != "David" {
+		t.Errorf("expected David (orphan employee), got %s", result.Rows[0][0].Text)
+	}
+}
+
+// TestScalarSubquery tests scalar subqueries in expressions.
+func TestScalarSubquery(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create products table
+	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (1, 'Widget', 100);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (2, 'Gadget', 200);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (3, 'Gizmo', 150);")
+
+	// Test scalar subquery in WHERE - find products with max price
+	result := executeSQL(t, executor, "SELECT name FROM products WHERE price = (SELECT MAX(price) FROM products);")
+
+	if len(result.Rows) != 1 {
+		t.Fatalf("expected 1 product with max price, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0].Text != "Gadget" {
+		t.Errorf("expected Gadget (most expensive), got %s", result.Rows[0][0].Text)
+	}
+}
+
+// TestExistsSubquery tests EXISTS subquery functionality.
+func TestExistsSubquery(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create products table
+	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, in_stock INT);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (1, 'Widget', 10);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (2, 'Gadget', 0);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (3, 'Gizmo', 5);")
+
+	// Test EXISTS - check if any products exist with stock > 0
+	// This is a non-correlated subquery (doesn't reference outer query)
+	result := executeSQL(t, executor, "SELECT name FROM products WHERE EXISTS (SELECT 1 FROM products WHERE in_stock > 0);")
+
+	// EXISTS returns true because there are products with stock > 0, so all products are returned
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 products (EXISTS is true), got %d", len(result.Rows))
+	}
+
+	// Test EXISTS with empty result - no products with stock > 100
+	result = executeSQL(t, executor, "SELECT name FROM products WHERE EXISTS (SELECT 1 FROM products WHERE in_stock > 100);")
+
+	// EXISTS returns false because no products have stock > 100, so no rows returned
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 products (EXISTS is false), got %d", len(result.Rows))
+	}
+}
+
+// TestNotExistsSubquery tests NOT EXISTS subquery functionality.
+func TestNotExistsSubquery(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create products table
+	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (1, 'Widget', 100);")
+	executeSQL(t, executor, "INSERT INTO products VALUES (2, 'Gadget', 200);")
+
+	// Test NOT EXISTS - check if no products exist with price > 1000
+	result := executeSQL(t, executor, "SELECT name FROM products WHERE NOT EXISTS (SELECT 1 FROM products WHERE price > 1000);")
+
+	// NOT EXISTS returns true because no products have price > 1000, so all rows returned
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 products (NOT EXISTS is true), got %d", len(result.Rows))
+	}
+
+	// Test NOT EXISTS with non-empty result
+	result = executeSQL(t, executor, "SELECT name FROM products WHERE NOT EXISTS (SELECT 1 FROM products WHERE price > 50);")
+
+	// NOT EXISTS returns false because there are products with price > 50, so no rows returned
+	if len(result.Rows) != 0 {
+		t.Fatalf("expected 0 products (NOT EXISTS is false), got %d", len(result.Rows))
+	}
+}
+
+// TestParseSubqueries verifies subquery parsing.
+func TestParseSubqueries(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "IN subquery",
+			input:   "SELECT * FROM t WHERE x IN (SELECT y FROM t2);",
+			wantErr: false,
+		},
+		{
+			name:    "NOT IN subquery",
+			input:   "SELECT * FROM t WHERE x NOT IN (SELECT y FROM t2);",
+			wantErr: false,
+		},
+		{
+			name:    "EXISTS subquery",
+			input:   "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t2);",
+			wantErr: false,
+		},
+		{
+			name:    "NOT EXISTS subquery",
+			input:   "SELECT * FROM t WHERE NOT EXISTS (SELECT 1 FROM t2);",
+			wantErr: false,
+		},
+		{
+			name:    "Scalar subquery",
+			input:   "SELECT * FROM t WHERE x = (SELECT MAX(y) FROM t2);",
+			wantErr: false,
 		},
 	}
 

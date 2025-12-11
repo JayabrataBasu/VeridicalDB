@@ -88,7 +88,7 @@ func (s *SelectStmt) statementNode() {}
 
 // JoinClause represents a JOIN clause in SELECT.
 type JoinClause struct {
-	JoinType   string     // "INNER", "LEFT", "RIGHT"
+	JoinType   string     // "INNER", "LEFT", "RIGHT", "FULL"
 	TableName  string     // table to join
 	TableAlias string     // optional table alias
 	Condition  Expression // ON condition
@@ -171,11 +171,12 @@ type UnaryExpr struct {
 
 func (e *UnaryExpr) exprNode() {}
 
-// InExpr represents an IN expression (e.g., col IN (1, 2, 3)).
+// InExpr represents an IN expression (e.g., col IN (1, 2, 3) or col IN (SELECT ...)).
 type InExpr struct {
-	Left   Expression   // column or expression being tested
-	Values []Expression // list of values to check against
-	Not    bool         // true for NOT IN
+	Left     Expression   // column or expression being tested
+	Values   []Expression // list of values to check against (if not subquery)
+	Subquery *SelectStmt  // subquery to check against (if not values)
+	Not      bool         // true for NOT IN
 }
 
 func (e *InExpr) exprNode() {}
@@ -333,3 +334,21 @@ type DropViewStmt struct {
 }
 
 func (s *DropViewStmt) statementNode() {}
+
+// SubqueryExpr represents a subquery in an expression context.
+// Used for scalar subqueries: SELECT * FROM t WHERE x = (SELECT MAX(y) FROM t2)
+// and subqueries in IN: SELECT * FROM t WHERE x IN (SELECT y FROM t2)
+type SubqueryExpr struct {
+	Query *SelectStmt
+}
+
+func (e *SubqueryExpr) exprNode() {}
+
+// ExistsExpr represents an EXISTS subquery.
+// SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.id = t.id)
+type ExistsExpr struct {
+	Query *SelectStmt
+	Not   bool // true for NOT EXISTS
+}
+
+func (e *ExistsExpr) exprNode() {}

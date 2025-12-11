@@ -145,7 +145,7 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 	}
 
 	// Optional JOIN clauses
-	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) {
+	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) {
 		join, err := p.parseJoinClause()
 		if err != nil {
 			return nil, err
@@ -309,6 +309,12 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		if p.curTokenIs(TOKEN_OUTER) {
 			p.nextToken() // optional OUTER
 		}
+	} else if p.curTokenIs(TOKEN_FULL) {
+		join.JoinType = "FULL"
+		p.nextToken()
+		if p.curTokenIs(TOKEN_OUTER) {
+			p.nextToken() // optional OUTER
+		}
 	}
 
 	// Expect JOIN keyword
@@ -366,7 +372,7 @@ func (p *Parser) isKeyword() bool {
 	switch p.cur.Type {
 	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
 		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
-		TOKEN_RIGHT, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
+		TOKEN_RIGHT, TOKEN_FULL, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
 		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON:
 		return true
 	}
@@ -537,6 +543,30 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 			cols = append(cols, col)
 		} else if p.isFunctionToken() {
 			// Parse general function expression (CAST, EXTRACT, string functions, math functions)
+			expr, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, err
+			}
+
+			col := SelectColumn{Expression: expr}
+
+			// Check for alias: AS name or just name
+			if p.curTokenIs(TOKEN_AS) {
+				p.nextToken() // consume AS
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected alias name after AS")
+				}
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				// Implicit alias (without AS)
+				col.Alias = p.cur.Literal
+				p.nextToken()
+			}
+
+			cols = append(cols, col)
+		} else if p.curTokenIs(TOKEN_INT) || p.curTokenIs(TOKEN_STRING) || p.curTokenIs(TOKEN_TRUE) || p.curTokenIs(TOKEN_FALSE) || p.curTokenIs(TOKEN_NULL) {
+			// Parse literal as expression (e.g., SELECT 1 FROM dual)
 			expr, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, err
@@ -1258,6 +1288,19 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 			return nil, fmt.Errorf("expected '(' after IN")
 		}
 
+		// Check if it's a subquery: IN (SELECT ...)
+		if p.curTokenIs(TOKEN_SELECT) {
+			subquery, err := p.parseSelect()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing IN subquery: %v", err)
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after IN subquery")
+			}
+			return &InExpr{Left: left, Subquery: subquery, Not: isNot}, nil
+		}
+
+		// Parse value list: IN (1, 2, 3)
 		var values []Expression
 		for {
 			val, err := p.parsePrimaryExpression()
@@ -1494,6 +1537,17 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 
 	case TOKEN_LPAREN:
 		p.nextToken()
+		// Check if this is a subquery (SELECT inside parentheses)
+		if p.curTokenIs(TOKEN_SELECT) {
+			subquery, err := p.parseSelect()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing subquery: %v", err)
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after subquery")
+			}
+			return &SubqueryExpr{Query: subquery}, nil
+		}
 		expr, err := p.parseExpression()
 		if err != nil {
 			return nil, err
@@ -1502,6 +1556,50 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 			return nil, err
 		}
 		return expr, nil
+
+	case TOKEN_EXISTS:
+		p.nextToken() // consume EXISTS
+		if err := p.expect(TOKEN_LPAREN); err != nil {
+			return nil, fmt.Errorf("expected '(' after EXISTS")
+		}
+		if !p.curTokenIs(TOKEN_SELECT) {
+			return nil, fmt.Errorf("expected SELECT after EXISTS (")
+		}
+		subquery, err := p.parseSelect()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing EXISTS subquery: %v", err)
+		}
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after EXISTS subquery")
+		}
+		return &ExistsExpr{Query: subquery, Not: false}, nil
+
+	case TOKEN_NOT:
+		p.nextToken() // consume NOT
+		// Handle NOT EXISTS
+		if p.curTokenIs(TOKEN_EXISTS) {
+			p.nextToken() // consume EXISTS
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, fmt.Errorf("expected '(' after NOT EXISTS")
+			}
+			if !p.curTokenIs(TOKEN_SELECT) {
+				return nil, fmt.Errorf("expected SELECT after NOT EXISTS (")
+			}
+			subquery, err := p.parseSelect()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing NOT EXISTS subquery: %v", err)
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after NOT EXISTS subquery")
+			}
+			return &ExistsExpr{Query: subquery, Not: true}, nil
+		}
+		// Handle other NOT expressions (NOT expr)
+		expr, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+		return &UnaryExpr{Op: TOKEN_NOT, Expr: expr}, nil
 
 	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
 		// Aggregate functions in expressions (e.g., in HAVING clause)

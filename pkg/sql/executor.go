@@ -476,7 +476,7 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 	}
 
 	join := stmt.Joins[0]
-	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" {
+	if join.JoinType != "INNER" && join.JoinType != "LEFT" && join.JoinType != "RIGHT" && join.JoinType != "FULL" {
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
@@ -616,6 +616,75 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		// Add unmatched right rows with NULLs for left side
 		for i, rightRow := range rightRows {
 			if !rightRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, nullLeftRow)
+				copy(combinedRow[leftLen:], rightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+		err = nil // Reset err since we handled it above
+
+	case "FULL":
+		// Track which left and right rows have been matched
+		leftRowMatches := make(map[int]bool)
+		rightRowMatches := make(map[int]bool)
+		var leftRows [][]catalog.Value
+		var rightRows [][]catalog.Value
+
+		// First collect all left rows
+		err = e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+			rowCopy := make([]catalog.Value, len(leftRow))
+			copy(rowCopy, leftRow)
+			leftRows = append(leftRows, rowCopy)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Collect all right rows
+		err = e.scanTable(join.TableName, rightMeta.Schema, func(rightRID storage.RID, rightRow []catalog.Value) (bool, error) {
+			rowCopy := make([]catalog.Value, len(rightRow))
+			copy(rowCopy, rightRow)
+			rightRows = append(rightRows, rowCopy)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Match left with right
+		for i, leftRow := range leftRows {
+			for j, rightRow := range rightRows {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], rightRow)
+
+				match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if match {
+					leftRowMatches[i] = true
+					rightRowMatches[j] = true
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+		}
+
+		// Add unmatched left rows with NULLs for right side
+		for i, leftRow := range leftRows {
+			if !leftRowMatches[i] {
+				combinedRow := make([]catalog.Value, leftLen+rightLen)
+				copy(combinedRow, leftRow)
+				copy(combinedRow[leftLen:], nullRightRow)
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+
+		// Add unmatched right rows with NULLs for left side
+		for j, rightRow := range rightRows {
+			if !rightRowMatches[j] {
 				combinedRow := make([]catalog.Value, leftLen+rightLen)
 				copy(combinedRow, nullLeftRow)
 				copy(combinedRow[leftLen:], rightRow)
@@ -1677,6 +1746,23 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return catalog.NewBool(result), nil
 
+	case *SubqueryExpr:
+		// Scalar subquery - must return exactly one row with one column
+		result, err := e.executeSelect(ex.Query)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("scalar subquery error: %v", err)
+		}
+		if len(result.Rows) == 0 {
+			return catalog.Null(catalog.TypeUnknown), nil // Empty result returns NULL
+		}
+		if len(result.Rows) > 1 {
+			return catalog.Value{}, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) != 1 {
+			return catalog.Value{}, fmt.Errorf("scalar subquery must return exactly one column, got %d", len(result.Rows[0]))
+		}
+		return result.Rows[0][0], nil
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -1739,21 +1825,49 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 
 		found := false
-		for _, valExpr := range ex.Values {
-			rightVal, err := e.evalExpr(valExpr, schema, row)
+
+		// Check if this is a subquery IN
+		if ex.Subquery != nil {
+			// Execute the subquery
+			result, err := e.executeSelect(ex.Subquery)
 			if err != nil {
-				return false, err
+				return false, fmt.Errorf("IN subquery error: %v", err)
 			}
-			if rightVal.IsNull {
-				continue // Skip NULL values in the list
+			// Subquery must return single column
+			if len(result.Columns) != 1 {
+				return false, fmt.Errorf("IN subquery must return exactly one column, got %d", len(result.Columns))
 			}
-			eq, err := compareValues(leftVal, rightVal, TOKEN_EQ)
-			if err != nil {
-				return false, err
+			// Check if leftVal is in the subquery results
+			for _, subRow := range result.Rows {
+				if len(subRow) > 0 && !subRow[0].IsNull {
+					eq, err := compareValues(leftVal, subRow[0], TOKEN_EQ)
+					if err != nil {
+						return false, err
+					}
+					if eq {
+						found = true
+						break
+					}
+				}
 			}
-			if eq {
-				found = true
-				break
+		} else {
+			// Value list IN
+			for _, valExpr := range ex.Values {
+				rightVal, err := e.evalExpr(valExpr, schema, row)
+				if err != nil {
+					return false, err
+				}
+				if rightVal.IsNull {
+					continue // Skip NULL values in the list
+				}
+				eq, err := compareValues(leftVal, rightVal, TOKEN_EQ)
+				if err != nil {
+					return false, err
+				}
+				if eq {
+					found = true
+					break
+				}
 			}
 		}
 
@@ -1837,6 +1951,38 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			return !result, nil // IS NOT NULL
 		}
 		return result, nil // IS NULL
+
+	case *SubqueryExpr:
+		// Execute the subquery and check if it returns exactly one scalar value
+		result, err := e.executeSelect(ex.Query)
+		if err != nil {
+			return false, fmt.Errorf("subquery error: %v", err)
+		}
+		// For scalar subqueries in boolean context, check if result is non-empty
+		if len(result.Rows) == 0 {
+			return false, nil
+		}
+		// If single column, single row, try to interpret as boolean
+		if len(result.Rows) == 1 && len(result.Rows[0]) == 1 {
+			val := result.Rows[0][0]
+			if val.Type == catalog.TypeBool {
+				return val.Bool, nil
+			}
+		}
+		// Non-empty result in boolean context is true
+		return true, nil
+
+	case *ExistsExpr:
+		// Execute the subquery and check if it returns any rows
+		result, err := e.executeSelect(ex.Query)
+		if err != nil {
+			return false, fmt.Errorf("EXISTS subquery error: %v", err)
+		}
+		exists := len(result.Rows) > 0
+		if ex.Not {
+			return !exists, nil
+		}
+		return exists, nil
 
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
