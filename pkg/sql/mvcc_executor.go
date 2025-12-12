@@ -59,6 +59,8 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 		return e.executeShow(s)
 	case *ExplainStmt:
 		return e.executeExplain(s, tx)
+	case *MergeStmt:
+		return e.executeMerge(s, tx)
 	case *BeginStmt, *CommitStmt, *RollbackStmt:
 		// These are handled by the session, not the executor
 		return nil, fmt.Errorf("transaction statements should be handled by session")
@@ -1071,6 +1073,12 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 	if err != nil {
 		return nil, err
 	}
+
+	// Handle LATERAL joins with subquery
+	if join.Lateral && join.Subquery != nil {
+		return e.executeSelectWithLateralJoin(stmt, tx, leftMeta, join)
+	}
+
 	rightMeta, err := cat.GetTable(join.TableName)
 	if err != nil {
 		return nil, err
@@ -2490,5 +2498,597 @@ func mvccValueToString(v catalog.Value) string {
 		return v.Timestamp.String()
 	default:
 		return "?"
+	}
+}
+
+// executeSelectWithLateralJoin handles SELECT with a LATERAL join for MVCC.
+func (e *MVCCExecutor) executeSelectWithLateralJoin(stmt *SelectStmt, tx *txn.Transaction, leftMeta *catalog.TableMeta, join JoinClause) (*Result, error) {
+	var joinedRows [][]catalog.Value
+	var combinedSchema *catalog.Schema
+	var colTableMap map[string]int
+	leftLen := len(leftMeta.Schema.Columns)
+	var rightLen int
+	schemaInitialized := false
+
+	// Collect all left rows first
+	var leftRows [][]catalog.Value
+	err := e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		rowCopy := make([]catalog.Value, len(row.Values))
+		copy(rowCopy, row.Values)
+		leftRows = append(leftRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Process each left row with the lateral subquery
+	for _, leftRow := range leftRows {
+		// Create a correlated subquery with substituted values
+		correlatedQuery := e.substituteCorrelatedColumnsMVCC(join.Subquery, leftMeta, leftRow, stmt.TableName, stmt.TableAlias)
+
+		// Execute the lateral subquery
+		subResult, err := e.Execute(correlatedQuery, tx)
+		if err != nil {
+			return nil, fmt.Errorf("error executing LATERAL subquery: %w", err)
+		}
+
+		// Initialize schema on first successful subquery execution
+		if !schemaInitialized && subResult != nil {
+			rightLen = len(subResult.Columns)
+
+			combinedSchema = &catalog.Schema{
+				Columns: make([]catalog.Column, 0, leftLen+rightLen),
+			}
+			colTableMap = make(map[string]int)
+
+			// Add left table columns
+			for i, col := range leftMeta.Schema.Columns {
+				combinedSchema.Columns = append(combinedSchema.Columns, col)
+				colTableMap[stmt.TableName+"."+col.Name] = i
+				if stmt.TableAlias != "" {
+					colTableMap[stmt.TableAlias+"."+col.Name] = i
+				}
+				colTableMap[col.Name] = i
+			}
+
+			// Add right (subquery) columns
+			alias := join.TableAlias
+			for i, colName := range subResult.Columns {
+				newCol := catalog.Column{Name: colName, Type: catalog.TypeText}
+				combinedSchema.Columns = append(combinedSchema.Columns, newCol)
+				if alias != "" {
+					colTableMap[alias+"."+colName] = leftLen + i
+				}
+				if _, exists := colTableMap[colName]; !exists {
+					colTableMap[colName] = leftLen + i
+				}
+			}
+
+			schemaInitialized = true
+		}
+
+		if subResult == nil || len(subResult.Rows) == 0 {
+			if join.JoinType == "LEFT" || join.JoinType == "CROSS" {
+				if schemaInitialized {
+					nullRightRow := make([]catalog.Value, rightLen)
+					for i := 0; i < rightLen; i++ {
+						nullRightRow[i] = catalog.Null(catalog.TypeText)
+					}
+					combinedRow := make([]catalog.Value, leftLen+rightLen)
+					copy(combinedRow, leftRow)
+					copy(combinedRow[leftLen:], nullRightRow)
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+			continue
+		}
+
+		for _, rightRow := range subResult.Rows {
+			combinedRow := make([]catalog.Value, leftLen+rightLen)
+			copy(combinedRow, leftRow)
+			copy(combinedRow[leftLen:], rightRow)
+
+			if join.Condition != nil {
+				match, err := e.evalJoinConditionMVCC(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if !match {
+					continue
+				}
+			}
+			joinedRows = append(joinedRows, combinedRow)
+		}
+	}
+
+	if combinedSchema == nil {
+		combinedSchema = &catalog.Schema{
+			Columns: make([]catalog.Column, 0, leftLen),
+		}
+		colTableMap = make(map[string]int)
+		for i, col := range leftMeta.Schema.Columns {
+			combinedSchema.Columns = append(combinedSchema.Columns, col)
+			colTableMap[col.Name] = i
+		}
+	}
+
+	// Apply WHERE filter
+	var filteredRows [][]catalog.Value
+	for _, row := range joinedRows {
+		if stmt.Where != nil {
+			match, err := e.evalJoinConditionMVCC(stmt.Where, combinedSchema, row, colTableMap)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filteredRows = append(filteredRows, row)
+	}
+
+	// Determine output columns
+	var outputCols []string
+	var colIndices []int
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		for i, c := range combinedSchema.Columns {
+			outputCols = append(outputCols, c.Name)
+			colIndices = append(colIndices, i)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			idx, ok := colTableMap[sc.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			if sc.Alias != "" {
+				outputCols = append(outputCols, sc.Alias)
+			} else {
+				outputCols = append(outputCols, sc.Name)
+			}
+			colIndices = append(colIndices, idx)
+		}
+	}
+
+	// Project columns
+	resultRows := make([][]catalog.Value, len(filteredRows))
+	for i, row := range filteredRows {
+		projectedRow := make([]catalog.Value, len(colIndices))
+		for j, idx := range colIndices {
+			projectedRow[j] = row[idx]
+		}
+		resultRows[i] = projectedRow
+	}
+
+	// Apply ORDER BY, LIMIT, OFFSET, DISTINCT as in regular executor
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(resultRows) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	if stmt.Distinct {
+		resultRows = deduplicateRows(resultRows)
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// substituteCorrelatedColumnsMVCC replaces column references from the left table with actual values.
+func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *SelectStmt {
+	newQuery := &SelectStmt{
+		Distinct:   subquery.Distinct,
+		DistinctOn: append([]string{}, subquery.DistinctOn...),
+		TableName:  subquery.TableName,
+		TableAlias: subquery.TableAlias,
+		GroupBy:    append([]string{}, subquery.GroupBy...),
+		Limit:      subquery.Limit,
+		Offset:     subquery.Offset,
+	}
+
+	newQuery.Columns = make([]SelectColumn, len(subquery.Columns))
+	copy(newQuery.Columns, subquery.Columns)
+
+	newQuery.OrderBy = make([]OrderByClause, len(subquery.OrderBy))
+	copy(newQuery.OrderBy, subquery.OrderBy)
+
+	if subquery.Where != nil {
+		newQuery.Where = e.substituteExpressionValuesMVCC(subquery.Where, leftMeta, leftRow, leftTableName, leftTableAlias)
+	}
+
+	if subquery.Having != nil {
+		newQuery.Having = e.substituteExpressionValuesMVCC(subquery.Having, leftMeta, leftRow, leftTableName, leftTableAlias)
+	}
+
+	return newQuery
+}
+
+// substituteExpressionValuesMVCC substitutes column references from the left table with actual values.
+func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) Expression {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		colName := ex.Name
+		parts := splitQualifiedName(colName)
+		var lookupName string
+		if len(parts) == 2 {
+			tablePart := parts[0]
+			columnPart := parts[1]
+			if tablePart == leftTableName || tablePart == leftTableAlias {
+				lookupName = columnPart
+			}
+		} else {
+			lookupName = colName
+		}
+
+		for i, col := range leftMeta.Schema.Columns {
+			if col.Name == lookupName {
+				return &LiteralExpr{Value: leftRow[i]}
+			}
+		}
+		return ex
+
+	case *BinaryExpr:
+		return &BinaryExpr{
+			Left:  e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Op:    ex.Op,
+			Right: e.substituteExpressionValuesMVCC(ex.Right, leftMeta, leftRow, leftTableName, leftTableAlias),
+		}
+
+	case *UnaryExpr:
+		return &UnaryExpr{
+			Op:   ex.Op,
+			Expr: e.substituteExpressionValuesMVCC(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
+		}
+
+	case *InExpr:
+		newValues := make([]Expression, len(ex.Values))
+		for i, v := range ex.Values {
+			newValues[i] = e.substituteExpressionValuesMVCC(v, leftMeta, leftRow, leftTableName, leftTableAlias)
+		}
+		return &InExpr{
+			Left:   e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Values: newValues,
+			Not:    ex.Not,
+		}
+
+	default:
+		return expr
+	}
+}
+
+// executeMerge handles MERGE statements for MVCC executor.
+func (e *MVCCExecutor) executeMerge(stmt *MergeStmt, tx *txn.Transaction) (*Result, error) {
+	cat := e.mtm.Catalog()
+
+	targetMeta, err := cat.GetTable(stmt.TargetTable)
+	if err != nil {
+		return nil, fmt.Errorf("target table %q does not exist: %w", stmt.TargetTable, err)
+	}
+
+	// Get source data
+	var sourceRows [][]catalog.Value
+	var sourceCols []string
+	var sourceSchema *catalog.Schema
+
+	if stmt.SourceQuery != nil {
+		result, err := e.Execute(stmt.SourceQuery, tx)
+		if err != nil {
+			return nil, fmt.Errorf("error executing source query: %w", err)
+		}
+		sourceRows = result.Rows
+		sourceCols = result.Columns
+		sourceSchema = &catalog.Schema{
+			Columns: make([]catalog.Column, len(sourceCols)),
+		}
+		for i, col := range sourceCols {
+			sourceSchema.Columns[i] = catalog.Column{Name: col, Type: catalog.TypeText}
+		}
+	} else {
+		sourceMeta, err := cat.GetTable(stmt.SourceTable)
+		if err != nil {
+			return nil, fmt.Errorf("source table %q does not exist: %w", stmt.SourceTable, err)
+		}
+		sourceSchema = sourceMeta.Schema
+		for _, col := range sourceSchema.Columns {
+			sourceCols = append(sourceCols, col.Name)
+		}
+		err = e.mtm.Scan(stmt.SourceTable, tx, func(row *catalog.MVCCRow) (bool, error) {
+			rowCopy := make([]catalog.Value, len(row.Values))
+			copy(rowCopy, row.Values)
+			sourceRows = append(sourceRows, rowCopy)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build combined schema
+	combinedSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, 0, len(targetMeta.Schema.Columns)+len(sourceSchema.Columns)),
+	}
+	colMap := make(map[string]int)
+
+	targetAlias := stmt.TargetAlias
+	if targetAlias == "" {
+		targetAlias = stmt.TargetTable
+	}
+	for i, col := range targetMeta.Schema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colMap[targetAlias+"."+col.Name] = i
+		colMap[col.Name] = i
+	}
+
+	targetLen := len(targetMeta.Schema.Columns)
+	sourceAlias := stmt.SourceAlias
+	if sourceAlias == "" {
+		sourceAlias = stmt.SourceTable
+	}
+	for i, col := range sourceSchema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colMap[sourceAlias+"."+col.Name] = targetLen + i
+		if _, exists := colMap[col.Name]; !exists {
+			colMap[col.Name] = targetLen + i
+		}
+	}
+
+	var rowsInserted, rowsUpdated, rowsDeleted int
+
+	for _, sourceRow := range sourceRows {
+		// Collect target rows with their RIDs
+		type targetRowInfo struct {
+			rid    storage.RID
+			values []catalog.Value
+		}
+		var targetRowsInfo []targetRowInfo
+
+		err := e.mtm.Scan(stmt.TargetTable, tx, func(row *catalog.MVCCRow) (bool, error) {
+			rowCopy := make([]catalog.Value, len(row.Values))
+			copy(rowCopy, row.Values)
+			targetRowsInfo = append(targetRowsInfo, targetRowInfo{rid: row.RID, values: rowCopy})
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		foundMatch := false
+		for _, targetInfo := range targetRowsInfo {
+			combinedRow := make([]catalog.Value, targetLen+len(sourceRow))
+			copy(combinedRow, targetInfo.values)
+			copy(combinedRow[targetLen:], sourceRow)
+
+			match, err := e.evalJoinConditionMVCC(stmt.Condition, combinedSchema, combinedRow, colMap)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating MERGE condition: %w", err)
+			}
+
+			if match {
+				foundMatch = true
+				for _, when := range stmt.WhenClauses {
+					if !when.Matched {
+						continue
+					}
+
+					if when.Condition != nil {
+						condMatch, err := e.evalJoinConditionMVCC(when.Condition, combinedSchema, combinedRow, colMap)
+						if err != nil {
+							return nil, err
+						}
+						if !condMatch {
+							continue
+						}
+					}
+
+					switch when.Action.ActionType {
+					case "UPDATE":
+						newRow := make([]catalog.Value, len(targetInfo.values))
+						copy(newRow, targetInfo.values)
+
+						for _, assign := range when.Action.Assignments {
+							colIdx := -1
+							for j, col := range targetMeta.Schema.Columns {
+								if strings.EqualFold(col.Name, assign.Column) {
+									colIdx = j
+									break
+								}
+							}
+							if colIdx == -1 {
+								return nil, fmt.Errorf("unknown column in UPDATE: %s", assign.Column)
+							}
+
+							val, err := e.evalMergeExprMVCC(assign.Value, combinedSchema, combinedRow, colMap)
+							if err != nil {
+								return nil, err
+							}
+							newRow[colIdx] = val
+						}
+
+						if err := e.mtm.MarkDeleted(targetInfo.rid, tx); err != nil {
+							return nil, err
+						}
+						if _, err := e.mtm.Insert(stmt.TargetTable, newRow, tx); err != nil {
+							return nil, err
+						}
+						rowsUpdated++
+
+					case "DELETE":
+						if err := e.mtm.MarkDeleted(targetInfo.rid, tx); err != nil {
+							return nil, err
+						}
+						rowsDeleted++
+
+					case "DO NOTHING":
+						// Do nothing
+					}
+					break
+				}
+				break
+			}
+		}
+
+		if !foundMatch {
+			for _, when := range stmt.WhenClauses {
+				if when.Matched {
+					continue
+				}
+
+				if when.Condition != nil {
+					combinedRow := make([]catalog.Value, targetLen+len(sourceRow))
+					for j := 0; j < targetLen; j++ {
+						combinedRow[j] = catalog.Null(targetMeta.Schema.Columns[j].Type)
+					}
+					copy(combinedRow[targetLen:], sourceRow)
+
+					condMatch, err := e.evalJoinConditionMVCC(when.Condition, combinedSchema, combinedRow, colMap)
+					if err != nil {
+						return nil, err
+					}
+					if !condMatch {
+						continue
+					}
+				}
+
+				switch when.Action.ActionType {
+				case "INSERT":
+					newRow := make([]catalog.Value, len(targetMeta.Schema.Columns))
+
+					evalRow := make([]catalog.Value, targetLen+len(sourceRow))
+					for j := 0; j < targetLen; j++ {
+						evalRow[j] = catalog.Null(targetMeta.Schema.Columns[j].Type)
+					}
+					copy(evalRow[targetLen:], sourceRow)
+
+					if len(when.Action.Columns) > 0 {
+						if len(when.Action.Columns) != len(when.Action.Values) {
+							return nil, fmt.Errorf("INSERT column count does not match value count")
+						}
+
+						for j, col := range targetMeta.Schema.Columns {
+							if col.HasDefault && col.DefaultValue != nil {
+								newRow[j] = *col.DefaultValue
+							} else {
+								newRow[j] = catalog.Null(col.Type)
+							}
+						}
+
+						for j, colName := range when.Action.Columns {
+							colIdx := -1
+							for k, col := range targetMeta.Schema.Columns {
+								if strings.EqualFold(col.Name, colName) {
+									colIdx = k
+									break
+								}
+							}
+							if colIdx == -1 {
+								return nil, fmt.Errorf("unknown column in INSERT: %s", colName)
+							}
+
+							val, err := e.evalMergeExprMVCC(when.Action.Values[j], combinedSchema, evalRow, colMap)
+							if err != nil {
+								return nil, err
+							}
+							newRow[colIdx] = val
+						}
+					} else {
+						if len(when.Action.Values) != len(targetMeta.Schema.Columns) {
+							return nil, fmt.Errorf("INSERT value count does not match target column count")
+						}
+
+						for j, valExpr := range when.Action.Values {
+							val, err := e.evalMergeExprMVCC(valExpr, combinedSchema, evalRow, colMap)
+							if err != nil {
+								return nil, err
+							}
+							newRow[j] = val
+						}
+					}
+
+					if _, err := e.mtm.Insert(stmt.TargetTable, newRow, tx); err != nil {
+						return nil, err
+					}
+					rowsInserted++
+
+				case "DO NOTHING":
+					// Do nothing
+				}
+				break
+			}
+		}
+	}
+
+	return &Result{
+		Message:      fmt.Sprintf("MERGE: %d row(s) inserted, %d row(s) updated, %d row(s) deleted.", rowsInserted, rowsUpdated, rowsDeleted),
+		RowsAffected: rowsInserted + rowsUpdated + rowsDeleted,
+	}, nil
+}
+
+// evalMergeExprMVCC evaluates an expression in MERGE context for MVCC.
+func (e *MVCCExecutor) evalMergeExprMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *ColumnRef:
+		idx, ok := colMap[ex.Name]
+		if !ok {
+			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		return row[idx], nil
+
+	case *BinaryExpr:
+		left, err := e.evalMergeExprMVCC(ex.Left, schema, row, colMap)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		right, err := e.evalMergeExprMVCC(ex.Right, schema, row, colMap)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		return evalBinaryExprValueMVCC(left, ex.Op, right)
+
+	default:
+		return catalog.Value{}, fmt.Errorf("unsupported expression type in MERGE: %T", expr)
+	}
+}
+
+func evalBinaryExprValueMVCC(left catalog.Value, op TokenType, right catalog.Value) (catalog.Value, error) {
+	leftNum := valueToInt64MVCC(left)
+	rightNum := valueToInt64MVCC(right)
+
+	switch op {
+	case TOKEN_PLUS:
+		return catalog.NewInt64(leftNum + rightNum), nil
+	case TOKEN_MINUS:
+		return catalog.NewInt64(leftNum - rightNum), nil
+	case TOKEN_STAR:
+		return catalog.NewInt64(leftNum * rightNum), nil
+	case TOKEN_SLASH:
+		if rightNum == 0 {
+			return catalog.Value{}, fmt.Errorf("division by zero")
+		}
+		return catalog.NewInt64(leftNum / rightNum), nil
+	default:
+		return catalog.Value{}, fmt.Errorf("unsupported operator: %v", op)
+	}
+}
+
+func valueToInt64MVCC(v catalog.Value) int64 {
+	if v.IsNull {
+		return 0
+	}
+	switch v.Type {
+	case catalog.TypeInt32:
+		return int64(v.Int32)
+	case catalog.TypeInt64:
+		return v.Int64
+	default:
+		return 0
 	}
 }

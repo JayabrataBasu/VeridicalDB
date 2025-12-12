@@ -64,6 +64,8 @@ func (e *Executor) Execute(stmt Statement) (*Result, error) {
 		return e.executeShow(s)
 	case *ExplainStmt:
 		return e.executeExplain(s)
+	case *MergeStmt:
+		return e.executeMerge(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -511,6 +513,11 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
+	// Handle LATERAL joins with subquery
+	if join.Lateral && join.Subquery != nil {
+		return e.executeSelectWithLateralJoin(stmt, leftMeta, join)
+	}
+
 	// Get the right table metadata
 	rightMeta, err := e.tm.Catalog().GetTable(join.TableName)
 	if err != nil {
@@ -847,9 +854,390 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 	}, nil
 }
 
+// executeSelectWithLateralJoin handles SELECT with a LATERAL join.
+// LATERAL allows the subquery to reference columns from the left side.
+func (e *Executor) executeSelectWithLateralJoin(stmt *SelectStmt, leftMeta *catalog.TableMeta, join JoinClause) (*Result, error) {
+	var joinedRows [][]catalog.Value
+	var combinedSchema *catalog.Schema
+	var colTableMap map[string]int
+	leftLen := len(leftMeta.Schema.Columns)
+	var rightLen int
+	schemaInitialized := false
+
+	// Collect all left rows first
+	var leftRows [][]catalog.Value
+	err := e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+		rowCopy := make([]catalog.Value, len(leftRow))
+		copy(rowCopy, leftRow)
+		leftRows = append(leftRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Process each left row with the lateral subquery
+	for _, leftRow := range leftRows {
+		// Create a correlated subquery with substituted values
+		correlatedQuery := e.substituteCorrelatedColumns(join.Subquery, leftMeta, leftRow, stmt.TableName, stmt.TableAlias)
+
+		// Execute the lateral subquery
+		subResult, err := e.Execute(correlatedQuery)
+		if err != nil {
+			return nil, fmt.Errorf("error executing LATERAL subquery: %w", err)
+		}
+
+		// Initialize schema on first successful subquery execution
+		if !schemaInitialized && subResult != nil {
+			rightLen = len(subResult.Columns)
+
+			combinedSchema = &catalog.Schema{
+				Columns: make([]catalog.Column, 0, leftLen+rightLen),
+			}
+			colTableMap = make(map[string]int)
+
+			// Add left table columns
+			for i, col := range leftMeta.Schema.Columns {
+				combinedSchema.Columns = append(combinedSchema.Columns, col)
+				colTableMap[stmt.TableName+"."+col.Name] = i
+				if stmt.TableAlias != "" {
+					colTableMap[stmt.TableAlias+"."+col.Name] = i
+				}
+				colTableMap[col.Name] = i
+			}
+
+			// Add right (subquery) columns
+			alias := join.TableAlias
+			for i, colName := range subResult.Columns {
+				newCol := catalog.Column{Name: colName, Type: catalog.TypeText} // Default type
+				combinedSchema.Columns = append(combinedSchema.Columns, newCol)
+				if alias != "" {
+					colTableMap[alias+"."+colName] = leftLen + i
+				}
+				if _, exists := colTableMap[colName]; !exists {
+					colTableMap[colName] = leftLen + i
+				}
+			}
+
+			schemaInitialized = true
+		}
+
+		if subResult == nil || len(subResult.Rows) == 0 {
+			// No results from lateral subquery
+			if join.JoinType == "LEFT" || join.JoinType == "CROSS" {
+				// For LEFT LATERAL or CROSS LATERAL with no results, emit left row with NULLs
+				if schemaInitialized {
+					nullRightRow := make([]catalog.Value, rightLen)
+					for i := 0; i < rightLen; i++ {
+						nullRightRow[i] = catalog.Null(catalog.TypeText)
+					}
+					combinedRow := make([]catalog.Value, leftLen+rightLen)
+					copy(combinedRow, leftRow)
+					copy(combinedRow[leftLen:], nullRightRow)
+					joinedRows = append(joinedRows, combinedRow)
+				}
+			}
+			continue
+		}
+
+		// Combine left row with each row from lateral subquery
+		for _, rightRow := range subResult.Rows {
+			combinedRow := make([]catalog.Value, leftLen+rightLen)
+			copy(combinedRow, leftRow)
+			copy(combinedRow[leftLen:], rightRow)
+
+			// For INNER LATERAL, all matches are included
+			// For CROSS LATERAL, all combinations are included (no condition)
+			if join.Condition != nil {
+				match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+				if err != nil {
+					return nil, err
+				}
+				if !match {
+					continue
+				}
+			}
+			joinedRows = append(joinedRows, combinedRow)
+		}
+	}
+
+	// If no rows produced (empty left table or all filtered out)
+	if combinedSchema == nil {
+		// Create empty schema
+		combinedSchema = &catalog.Schema{
+			Columns: make([]catalog.Column, 0, leftLen),
+		}
+		colTableMap = make(map[string]int)
+		for i, col := range leftMeta.Schema.Columns {
+			combinedSchema.Columns = append(combinedSchema.Columns, col)
+			colTableMap[col.Name] = i
+		}
+	}
+
+	// Apply WHERE filter
+	var filteredRows [][]catalog.Value
+	for _, row := range joinedRows {
+		if stmt.Where != nil {
+			match, err := e.evalJoinCondition(stmt.Where, combinedSchema, row, colTableMap)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filteredRows = append(filteredRows, row)
+	}
+
+	// Determine output columns
+	var outputCols []string
+	var colIndices []int
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		// SELECT *
+		for i, c := range combinedSchema.Columns {
+			outputCols = append(outputCols, c.Name)
+			colIndices = append(colIndices, i)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			idx, ok := colTableMap[sc.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			if sc.Alias != "" {
+				outputCols = append(outputCols, sc.Alias)
+			} else {
+				outputCols = append(outputCols, sc.Name)
+			}
+			colIndices = append(colIndices, idx)
+		}
+	}
+
+	// Project columns
+	resultRows := make([][]catalog.Value, len(filteredRows))
+	for i, row := range filteredRows {
+		projectedRow := make([]catalog.Value, len(colIndices))
+		for j, idx := range colIndices {
+			projectedRow[j] = row[idx]
+		}
+		resultRows[i] = projectedRow
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			idx, ok := colTableMap[ob.Column]
+			if !ok {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+			orderByIndices[i] = idx
+		}
+		sortJoinedRows(filteredRows, orderByIndices, stmt.OrderBy)
+
+		// Re-project after sorting
+		resultRows = make([][]catalog.Value, len(filteredRows))
+		for i, row := range filteredRows {
+			projectedRow := make([]catalog.Value, len(colIndices))
+			for j, idx := range colIndices {
+				projectedRow[j] = row[idx]
+			}
+			resultRows[i] = projectedRow
+		}
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Offset != nil {
+		offset := int(*stmt.Offset)
+		if offset >= len(resultRows) {
+			resultRows = nil
+		} else {
+			resultRows = resultRows[offset:]
+		}
+	}
+
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(resultRows) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	// Apply DISTINCT
+	if stmt.Distinct {
+		if len(stmt.DistinctOn) > 0 {
+			resultRows = deduplicateRowsOn(resultRows, stmt.DistinctOn, outputCols)
+		} else {
+			resultRows = deduplicateRows(resultRows)
+		}
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// substituteCorrelatedColumns replaces column references in the subquery with
+// the actual values from the current left row (for LATERAL).
+func (e *Executor) substituteCorrelatedColumns(subquery *SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *SelectStmt {
+	// Create a deep copy of the subquery to avoid modifying the original
+	newQuery := &SelectStmt{
+		Distinct:   subquery.Distinct,
+		DistinctOn: append([]string{}, subquery.DistinctOn...),
+		TableName:  subquery.TableName,
+		TableAlias: subquery.TableAlias,
+		GroupBy:    append([]string{}, subquery.GroupBy...),
+		Limit:      subquery.Limit,
+		Offset:     subquery.Offset,
+	}
+
+	// Copy columns
+	newQuery.Columns = make([]SelectColumn, len(subquery.Columns))
+	copy(newQuery.Columns, subquery.Columns)
+
+	// Copy OrderBy
+	newQuery.OrderBy = make([]OrderByClause, len(subquery.OrderBy))
+	copy(newQuery.OrderBy, subquery.OrderBy)
+
+	// Copy and substitute WHERE clause
+	if subquery.Where != nil {
+		newQuery.Where = e.substituteExpressionValues(subquery.Where, leftMeta, leftRow, leftTableName, leftTableAlias)
+	}
+
+	// Copy and substitute HAVING clause
+	if subquery.Having != nil {
+		newQuery.Having = e.substituteExpressionValues(subquery.Having, leftMeta, leftRow, leftTableName, leftTableAlias)
+	}
+
+	return newQuery
+}
+
+// substituteExpressionValues substitutes column references from the left table with actual values.
+func (e *Executor) substituteExpressionValues(expr Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) Expression {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		// Check if this column reference is from the left table
+		colName := ex.Name
+		// Handle qualified names like "t.col" or "table.col"
+		parts := splitQualifiedName(colName)
+		var lookupName string
+		if len(parts) == 2 {
+			tablePart := parts[0]
+			columnPart := parts[1]
+			if tablePart == leftTableName || tablePart == leftTableAlias {
+				lookupName = columnPart
+			}
+		} else {
+			lookupName = colName
+		}
+
+		// Look up the column in the left table schema
+		for i, col := range leftMeta.Schema.Columns {
+			if col.Name == lookupName {
+				// Found a matching column from left table, substitute with literal value
+				return &LiteralExpr{Value: leftRow[i]}
+			}
+		}
+		return ex
+
+	case *BinaryExpr:
+		return &BinaryExpr{
+			Left:  e.substituteExpressionValues(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Op:    ex.Op,
+			Right: e.substituteExpressionValues(ex.Right, leftMeta, leftRow, leftTableName, leftTableAlias),
+		}
+
+	case *UnaryExpr:
+		return &UnaryExpr{
+			Op:   ex.Op,
+			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
+		}
+
+	case *InExpr:
+		newValues := make([]Expression, len(ex.Values))
+		for i, v := range ex.Values {
+			newValues[i] = e.substituteExpressionValues(v, leftMeta, leftRow, leftTableName, leftTableAlias)
+		}
+		return &InExpr{
+			Left:   e.substituteExpressionValues(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Values: newValues,
+			Not:    ex.Not,
+		}
+
+	case *BetweenExpr:
+		return &BetweenExpr{
+			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Low:  e.substituteExpressionValues(ex.Low, leftMeta, leftRow, leftTableName, leftTableAlias),
+			High: e.substituteExpressionValues(ex.High, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Not:  ex.Not,
+		}
+
+	case *FunctionExpr:
+		newArgs := make([]Expression, len(ex.Args))
+		for i, arg := range ex.Args {
+			newArgs[i] = e.substituteExpressionValues(arg, leftMeta, leftRow, leftTableName, leftTableAlias)
+		}
+		return &FunctionExpr{
+			Name: ex.Name,
+			Args: newArgs,
+		}
+
+	case *IsNullExpr:
+		return &IsNullExpr{
+			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
+			Not:  ex.Not,
+		}
+
+	case *CaseExpr:
+		var newOperand Expression
+		if ex.Operand != nil {
+			newOperand = e.substituteExpressionValues(ex.Operand, leftMeta, leftRow, leftTableName, leftTableAlias)
+		}
+		newWhens := make([]WhenClause, len(ex.Whens))
+		for i, w := range ex.Whens {
+			newWhens[i] = WhenClause{
+				Condition: e.substituteExpressionValues(w.Condition, leftMeta, leftRow, leftTableName, leftTableAlias),
+				Result:    e.substituteExpressionValues(w.Result, leftMeta, leftRow, leftTableName, leftTableAlias),
+			}
+		}
+		var newElse Expression
+		if ex.Else != nil {
+			newElse = e.substituteExpressionValues(ex.Else, leftMeta, leftRow, leftTableName, leftTableAlias)
+		}
+		return &CaseExpr{
+			Operand: newOperand,
+			Whens:   newWhens,
+			Else:    newElse,
+		}
+
+	default:
+		return expr
+	}
+}
+
+// splitQualifiedName splits "table.column" into ["table", "column"]
+func splitQualifiedName(name string) []string {
+	for i := len(name) - 1; i >= 0; i-- {
+		if name[i] == '.' {
+			return []string{name[:i], name[i+1:]}
+		}
+	}
+	return []string{name}
+}
+
 // evalJoinCondition evaluates a join condition against a combined row.
 func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
 	switch ex := expr.(type) {
+	case *LiteralExpr:
+		// Handle literal boolean values like TRUE or FALSE
+		if ex.Value.Type == catalog.TypeBool {
+			return ex.Value.Bool, nil
+		}
+		// For other literals, treat non-null/non-zero as true
+		return !ex.Value.IsNull, nil
+
 	case *BinaryExpr:
 		switch ex.Op {
 		case TOKEN_AND:
@@ -970,7 +1358,12 @@ func (e *Executor) executeSelectWithAggregates(stmt *SelectStmt, meta *catalog.T
 			agg := col.Aggregate
 			columnInfos[i].isAggregate = true
 			columnInfos[i].aggregate = agg
-			outputCols[i] = fmt.Sprintf("%s(%s)", agg.Function, agg.Arg)
+			// Use alias if provided, otherwise generate name from function
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = fmt.Sprintf("%s(%s)", agg.Function, agg.Arg)
+			}
 
 			if agg.Arg != "*" {
 				_, idx := meta.Schema.ColumnByName(agg.Arg)
@@ -980,7 +1373,12 @@ func (e *Executor) executeSelectWithAggregates(stmt *SelectStmt, meta *catalog.T
 			}
 		} else if col.Name != "" {
 			columnInfos[i].colName = col.Name
-			outputCols[i] = col.Name
+			// Use alias if provided
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = col.Name
+			}
 
 			// Verify column is in GROUP BY
 			found := false
@@ -1577,6 +1975,471 @@ func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 		Message:      fmt.Sprintf("%d row(s) deleted.", len(ridsToDelete)),
 		RowsAffected: len(ridsToDelete),
 	}, nil
+}
+
+// executeMerge handles MERGE statements (SQL:2008).
+// MERGE INTO target USING source ON condition
+// WHEN MATCHED THEN UPDATE/DELETE
+// WHEN NOT MATCHED THEN INSERT
+func (e *Executor) executeMerge(stmt *MergeStmt) (*Result, error) {
+	// Get target table metadata
+	targetMeta, err := e.tm.Catalog().GetTable(stmt.TargetTable)
+	if err != nil {
+		return nil, fmt.Errorf("target table %q does not exist: %w", stmt.TargetTable, err)
+	}
+
+	// Get source data (either from table or subquery)
+	var sourceRows [][]catalog.Value
+	var sourceCols []string
+	var sourceSchema *catalog.Schema
+
+	if stmt.SourceQuery != nil {
+		// Execute the source query
+		result, err := e.Execute(stmt.SourceQuery)
+		if err != nil {
+			return nil, fmt.Errorf("error executing source query: %w", err)
+		}
+		sourceRows = result.Rows
+		sourceCols = result.Columns
+		// Create a schema for the source query results
+		sourceSchema = &catalog.Schema{
+			Columns: make([]catalog.Column, len(sourceCols)),
+		}
+		for i, col := range sourceCols {
+			sourceSchema.Columns[i] = catalog.Column{Name: col, Type: catalog.TypeText}
+		}
+	} else {
+		// Get source table metadata
+		sourceMeta, err := e.tm.Catalog().GetTable(stmt.SourceTable)
+		if err != nil {
+			return nil, fmt.Errorf("source table %q does not exist: %w", stmt.SourceTable, err)
+		}
+		sourceSchema = sourceMeta.Schema
+		for _, col := range sourceSchema.Columns {
+			sourceCols = append(sourceCols, col.Name)
+		}
+		// Collect all source rows
+		err = e.scanTable(stmt.SourceTable, sourceSchema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+			rowCopy := make([]catalog.Value, len(row))
+			copy(rowCopy, row)
+			sourceRows = append(sourceRows, rowCopy)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Build combined schema for evaluating the ON condition
+	combinedSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, 0, len(targetMeta.Schema.Columns)+len(sourceSchema.Columns)),
+	}
+	colMap := make(map[string]int)
+
+	// Add target columns
+	targetAlias := stmt.TargetAlias
+	if targetAlias == "" {
+		targetAlias = stmt.TargetTable
+	}
+	for i, col := range targetMeta.Schema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colMap[targetAlias+"."+col.Name] = i
+		colMap[col.Name] = i
+	}
+
+	// Add source columns
+	targetLen := len(targetMeta.Schema.Columns)
+	sourceAlias := stmt.SourceAlias
+	if sourceAlias == "" {
+		sourceAlias = stmt.SourceTable
+	}
+	for i, col := range sourceSchema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colMap[sourceAlias+"."+col.Name] = targetLen + i
+		if _, exists := colMap[col.Name]; !exists {
+			colMap[col.Name] = targetLen + i
+		}
+	}
+
+	// Track statistics
+	var rowsInserted, rowsUpdated, rowsDeleted int
+
+	// For each source row, check if it matches any target row
+	for _, sourceRow := range sourceRows {
+		// Collect target rows and their RIDs
+		var targetRows [][]catalog.Value
+		var targetRIDs []storage.RID
+
+		err := e.scanTable(stmt.TargetTable, targetMeta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+			rowCopy := make([]catalog.Value, len(row))
+			copy(rowCopy, row)
+			targetRows = append(targetRows, rowCopy)
+			targetRIDs = append(targetRIDs, rid)
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		foundMatch := false
+		for i, targetRow := range targetRows {
+			// Combine target row with source row for condition evaluation
+			combinedRow := make([]catalog.Value, targetLen+len(sourceRow))
+			copy(combinedRow, targetRow)
+			copy(combinedRow[targetLen:], sourceRow)
+
+			// Evaluate the ON condition
+			match, err := e.evalJoinCondition(stmt.Condition, combinedSchema, combinedRow, colMap)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating MERGE condition: %w", err)
+			}
+
+			if match {
+				foundMatch = true
+				// Find and execute the appropriate WHEN MATCHED clause
+				for _, when := range stmt.WhenClauses {
+					if !when.Matched {
+						continue
+					}
+
+					// Check optional AND condition
+					if when.Condition != nil {
+						condMatch, err := e.evalJoinCondition(when.Condition, combinedSchema, combinedRow, colMap)
+						if err != nil {
+							return nil, fmt.Errorf("error evaluating WHEN condition: %w", err)
+						}
+						if !condMatch {
+							continue
+						}
+					}
+
+					// Execute the action
+					switch when.Action.ActionType {
+					case "UPDATE":
+						// Build new row with updated values
+						newRow := make([]catalog.Value, len(targetRow))
+						copy(newRow, targetRow)
+
+						for _, assign := range when.Action.Assignments {
+							// Find the column index
+							colIdx := -1
+							var targetCol catalog.Column
+							for j, col := range targetMeta.Schema.Columns {
+								if strings.EqualFold(col.Name, assign.Column) {
+									colIdx = j
+									targetCol = col
+									break
+								}
+							}
+							if colIdx == -1 {
+								return nil, fmt.Errorf("unknown column in UPDATE: %s", assign.Column)
+							}
+
+							// Evaluate the value expression
+							val, err := e.evalMergeExpr(assign.Value, combinedSchema, combinedRow, colMap)
+							if err != nil {
+								return nil, fmt.Errorf("error evaluating UPDATE value: %w", err)
+							}
+							// Coerce value to target column type
+							val = e.coerceValue(val, targetCol.Type)
+							newRow[colIdx] = val
+						}
+
+						// Delete old row and insert new one
+						if err := e.tm.Delete(targetRIDs[i]); err != nil {
+							return nil, fmt.Errorf("error deleting during MERGE UPDATE: %w", err)
+						}
+						if _, err := e.tm.Insert(stmt.TargetTable, newRow); err != nil {
+							return nil, fmt.Errorf("error inserting during MERGE UPDATE: %w", err)
+						}
+						rowsUpdated++
+
+					case "DELETE":
+						if err := e.tm.Delete(targetRIDs[i]); err != nil {
+							return nil, fmt.Errorf("error deleting during MERGE DELETE: %w", err)
+						}
+						rowsDeleted++
+
+					case "DO NOTHING":
+						// Do nothing
+					}
+					break // Only execute first matching WHEN clause
+				}
+				break // Only match first matching target row
+			}
+		}
+
+		if !foundMatch {
+			// Find and execute the appropriate WHEN NOT MATCHED clause
+			for _, when := range stmt.WhenClauses {
+				if when.Matched {
+					continue
+				}
+
+				// For WHEN NOT MATCHED, evaluate condition against source row only
+				if when.Condition != nil {
+					// Create a row with NULL target values
+					combinedRow := make([]catalog.Value, targetLen+len(sourceRow))
+					for j := 0; j < targetLen; j++ {
+						combinedRow[j] = catalog.Null(targetMeta.Schema.Columns[j].Type)
+					}
+					copy(combinedRow[targetLen:], sourceRow)
+
+					condMatch, err := e.evalJoinCondition(when.Condition, combinedSchema, combinedRow, colMap)
+					if err != nil {
+						return nil, fmt.Errorf("error evaluating WHEN NOT MATCHED condition: %w", err)
+					}
+					if !condMatch {
+						continue
+					}
+				}
+
+				// Execute the action
+				switch when.Action.ActionType {
+				case "INSERT":
+					// Build the new row
+					newRow := make([]catalog.Value, len(targetMeta.Schema.Columns))
+
+					// Create evaluation context with source values
+					evalRow := make([]catalog.Value, targetLen+len(sourceRow))
+					for j := 0; j < targetLen; j++ {
+						evalRow[j] = catalog.Null(targetMeta.Schema.Columns[j].Type)
+					}
+					copy(evalRow[targetLen:], sourceRow)
+
+					if len(when.Action.Columns) > 0 {
+						// Specific columns specified
+						if len(when.Action.Columns) != len(when.Action.Values) {
+							return nil, fmt.Errorf("INSERT column count (%d) does not match value count (%d)",
+								len(when.Action.Columns), len(when.Action.Values))
+						}
+
+						// Initialize with NULL/defaults
+						for j, col := range targetMeta.Schema.Columns {
+							if col.HasDefault && col.DefaultValue != nil {
+								newRow[j] = *col.DefaultValue
+							} else {
+								newRow[j] = catalog.Null(col.Type)
+							}
+						}
+
+						// Set specified columns
+						for j, colName := range when.Action.Columns {
+							colIdx := -1
+							var targetCol catalog.Column
+							for k, col := range targetMeta.Schema.Columns {
+								if strings.EqualFold(col.Name, colName) {
+									colIdx = k
+									targetCol = col
+									break
+								}
+							}
+							if colIdx == -1 {
+								return nil, fmt.Errorf("unknown column in INSERT: %s", colName)
+							}
+
+							val, err := e.evalMergeExpr(when.Action.Values[j], combinedSchema, evalRow, colMap)
+							if err != nil {
+								return nil, fmt.Errorf("error evaluating INSERT value: %w", err)
+							}
+							// Coerce value to target column type
+							val = e.coerceValue(val, targetCol.Type)
+							newRow[colIdx] = val
+						}
+					} else {
+						// All columns (values must match target column count)
+						if len(when.Action.Values) != len(targetMeta.Schema.Columns) {
+							return nil, fmt.Errorf("INSERT value count (%d) does not match target column count (%d)",
+								len(when.Action.Values), len(targetMeta.Schema.Columns))
+						}
+
+						for j, valExpr := range when.Action.Values {
+							val, err := e.evalMergeExpr(valExpr, combinedSchema, evalRow, colMap)
+							if err != nil {
+								return nil, fmt.Errorf("error evaluating INSERT value: %w", err)
+							}
+							// Coerce value to target column type
+							val = e.coerceValue(val, targetMeta.Schema.Columns[j].Type)
+							newRow[j] = val
+						}
+					}
+
+					if _, err := e.tm.Insert(stmt.TargetTable, newRow); err != nil {
+						return nil, fmt.Errorf("error inserting during MERGE INSERT: %w", err)
+					}
+					rowsInserted++
+
+				case "DO NOTHING":
+					// Do nothing
+				}
+				break // Only execute first matching WHEN clause
+			}
+		}
+	}
+
+	return &Result{
+		Message:      fmt.Sprintf("MERGE: %d row(s) inserted, %d row(s) updated, %d row(s) deleted.", rowsInserted, rowsUpdated, rowsDeleted),
+		RowsAffected: rowsInserted + rowsUpdated + rowsDeleted,
+	}, nil
+}
+
+// evalMergeExpr evaluates an expression in the context of a MERGE statement.
+func (e *Executor) evalMergeExpr(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *ColumnRef:
+		idx, ok := colMap[ex.Name]
+		if !ok {
+			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		return row[idx], nil
+
+	case *BinaryExpr:
+		left, err := e.evalMergeExpr(ex.Left, schema, row, colMap)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		right, err := e.evalMergeExpr(ex.Right, schema, row, colMap)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		return e.evalBinaryExprValue(left, ex.Op, right)
+
+	case *FunctionExpr:
+		// Evaluate function arguments
+		args := make([]catalog.Value, len(ex.Args))
+		for i, arg := range ex.Args {
+			val, err := e.evalMergeExpr(arg, schema, row, colMap)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+			args[i] = val
+		}
+		return e.evalFunctionCallValue(ex.Name, args)
+
+	default:
+		return catalog.Value{}, fmt.Errorf("unsupported expression type in MERGE: %T", expr)
+	}
+}
+
+// evalBinaryExprValue evaluates a binary expression with values.
+func (e *Executor) evalBinaryExprValue(left catalog.Value, op TokenType, right catalog.Value) (catalog.Value, error) {
+	// Get numeric values
+	leftNum := e.valueToInt64(left)
+	rightNum := e.valueToInt64(right)
+
+	var result int64
+	switch op {
+	case TOKEN_PLUS:
+		result = leftNum + rightNum
+
+	case TOKEN_MINUS:
+		result = leftNum - rightNum
+
+	case TOKEN_STAR:
+		result = leftNum * rightNum
+
+	case TOKEN_SLASH:
+		if rightNum == 0 {
+			return catalog.Value{}, fmt.Errorf("division by zero")
+		}
+		result = leftNum / rightNum
+
+	default:
+		return catalog.Value{}, fmt.Errorf("unsupported binary operator in MERGE: %v", op)
+	}
+
+	// If both operands are INT32 and the result fits, return INT32
+	if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 &&
+		result >= -2147483648 && result <= 2147483647 {
+		return catalog.NewInt32(int32(result)), nil
+	}
+
+	return catalog.NewInt64(result), nil
+}
+
+// valueToInt64 extracts an int64 from a Value.
+func (e *Executor) valueToInt64(v catalog.Value) int64 {
+	if v.IsNull {
+		return 0
+	}
+	switch v.Type {
+	case catalog.TypeInt32:
+		return int64(v.Int32)
+	case catalog.TypeInt64:
+		return v.Int64
+	default:
+		return 0
+	}
+}
+
+// coerceValue attempts to convert a value to the target type.
+func (e *Executor) coerceValue(v catalog.Value, targetType catalog.DataType) catalog.Value {
+	if v.IsNull {
+		return catalog.Null(targetType)
+	}
+
+	// If already the same type, return as-is
+	if v.Type == targetType {
+		return v
+	}
+
+	// Handle numeric conversions
+	switch targetType {
+	case catalog.TypeInt32:
+		// Convert Int64 to Int32 if it fits
+		if v.Type == catalog.TypeInt64 {
+			if v.Int64 >= -2147483648 && v.Int64 <= 2147483647 {
+				return catalog.NewInt32(int32(v.Int64))
+			}
+			// Truncate if doesn't fit (could also error here)
+			return catalog.NewInt32(int32(v.Int64))
+		}
+	case catalog.TypeInt64:
+		// Convert Int32 to Int64
+		if v.Type == catalog.TypeInt32 {
+			return catalog.NewInt64(int64(v.Int32))
+		}
+	}
+
+	// Return original value if no conversion applies
+	return v
+}
+
+// evalFunctionCallValue evaluates a function call with provided arguments.
+func (e *Executor) evalFunctionCallValue(name string, args []catalog.Value) (catalog.Value, error) {
+	switch strings.ToUpper(name) {
+	case "COALESCE":
+		for _, arg := range args {
+			if !arg.IsNull {
+				return arg, nil
+			}
+		}
+		return catalog.Null(catalog.TypeText), nil
+
+	case "UPPER":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("UPPER requires 1 argument")
+		}
+		if args[0].Type == catalog.TypeText {
+			return catalog.NewText(strings.ToUpper(args[0].Text)), nil
+		}
+		return args[0], nil
+
+	case "LOWER":
+		if len(args) != 1 {
+			return catalog.Value{}, fmt.Errorf("LOWER requires 1 argument")
+		}
+		if args[0].Type == catalog.TypeText {
+			return catalog.NewText(strings.ToLower(args[0].Text)), nil
+		}
+		return args[0], nil
+
+	default:
+		return catalog.Value{}, fmt.Errorf("unsupported function in MERGE: %s", name)
+	}
 }
 
 // executeAlter handles ALTER TABLE statements.

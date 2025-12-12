@@ -90,10 +90,12 @@ func (s *SelectStmt) statementNode() {}
 
 // JoinClause represents a JOIN clause in SELECT.
 type JoinClause struct {
-	JoinType   string     // "INNER", "LEFT", "RIGHT", "FULL", "CROSS"
-	TableName  string     // table to join
-	TableAlias string     // optional table alias
-	Condition  Expression // ON condition (nil for CROSS JOIN)
+	JoinType   string      // "INNER", "LEFT", "RIGHT", "FULL", "CROSS"
+	TableName  string      // table to join (for regular joins)
+	TableAlias string      // optional table alias
+	Condition  Expression  // ON condition (nil for CROSS JOIN)
+	Lateral    bool        // true for LATERAL joins
+	Subquery   *SelectStmt // subquery for derived table joins (especially LATERAL)
 }
 
 // SelectColumn represents a column in SELECT.
@@ -377,3 +379,34 @@ type WindowFuncExpr struct {
 }
 
 func (e *WindowFuncExpr) exprNode() {}
+
+// MergeStmt represents MERGE statement (SQL:2008).
+// MERGE INTO target USING source ON condition
+// WHEN MATCHED THEN UPDATE SET ...
+// WHEN NOT MATCHED THEN INSERT (...) VALUES (...)
+type MergeStmt struct {
+	TargetTable string            // target table to merge into
+	TargetAlias string            // optional alias for target table
+	SourceTable string            // source table name (mutually exclusive with SourceQuery)
+	SourceQuery *SelectStmt       // source query (mutually exclusive with SourceTable)
+	SourceAlias string            // alias for source table/query
+	Condition   Expression        // ON condition for matching
+	WhenClauses []MergeWhenClause // WHEN MATCHED/NOT MATCHED clauses
+}
+
+func (s *MergeStmt) statementNode() {}
+
+// MergeWhenClause represents a WHEN clause in MERGE statement.
+type MergeWhenClause struct {
+	Matched   bool        // true for WHEN MATCHED, false for WHEN NOT MATCHED
+	Condition Expression  // optional AND condition after MATCHED/NOT MATCHED
+	Action    MergeAction // UPDATE, DELETE, or INSERT action
+}
+
+// MergeAction represents the action in a MERGE WHEN clause.
+type MergeAction struct {
+	ActionType  string       // "UPDATE", "DELETE", "INSERT", "DO NOTHING"
+	Assignments []Assignment // SET assignments for UPDATE
+	Columns     []string     // column names for INSERT
+	Values      []Expression // values for INSERT
+}

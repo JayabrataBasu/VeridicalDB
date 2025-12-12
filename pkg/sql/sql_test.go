@@ -4122,3 +4122,340 @@ func TestWindowFunctionAggregate(t *testing.T) {
 		}
 	}
 }
+
+// TestLateralJoin tests LATERAL join functionality.
+func TestLateralJoin(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create test tables
+	executeSQL(t, executor, "CREATE TABLE departments (dept_id INT, dept_name TEXT);")
+	executeSQL(t, executor, "CREATE TABLE employees (emp_id INT, emp_name TEXT, dept_id INT, salary INT);")
+
+	// Insert test data
+	executeSQL(t, executor, "INSERT INTO departments VALUES (1, 'Engineering');")
+	executeSQL(t, executor, "INSERT INTO departments VALUES (2, 'Sales');")
+
+	executeSQL(t, executor, "INSERT INTO employees VALUES (1, 'Alice', 1, 80000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (2, 'Bob', 1, 90000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (3, 'Carol', 2, 60000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (4, 'Dave', 2, 70000);")
+
+	// Test basic LATERAL join - get top employee for each department
+	// Note: LATERAL allows the subquery to reference columns from the left table
+	result := executeSQL(t, executor, `
+		SELECT d.dept_name, e.emp_name, e.salary
+		FROM departments d
+		CROSS JOIN LATERAL (
+			SELECT emp_name, salary FROM employees WHERE dept_id = d.dept_id ORDER BY salary DESC LIMIT 1
+		) AS e;
+	`)
+
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 rows (one per department), got %d", len(result.Rows))
+		for _, row := range result.Rows {
+			t.Logf("Row: %v", row)
+		}
+	}
+}
+
+// TestLateralJoinWithLeftJoin tests LEFT LATERAL join.
+func TestLateralJoinWithLeftJoin(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE products (product_id INT, product_name TEXT);")
+	executeSQL(t, executor, "CREATE TABLE orders (order_id INT, product_id INT, quantity INT);")
+
+	executeSQL(t, executor, "INSERT INTO products VALUES (1, 'Widget');")
+	executeSQL(t, executor, "INSERT INTO products VALUES (2, 'Gadget');")
+	executeSQL(t, executor, "INSERT INTO products VALUES (3, 'Gizmo');")
+
+	executeSQL(t, executor, "INSERT INTO orders VALUES (1, 1, 5);")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (2, 1, 3);")
+	executeSQL(t, executor, "INSERT INTO orders VALUES (3, 2, 2);")
+	// No orders for product 3 (Gizmo)
+
+	// Test LEFT LATERAL - products with no orders should still appear
+	result := executeSQL(t, executor, `
+		SELECT p.product_name, o.quantity
+		FROM products p
+		LEFT JOIN LATERAL (
+			SELECT quantity FROM orders WHERE product_id = p.product_id LIMIT 1
+		) AS o ON TRUE;
+	`)
+
+	if len(result.Rows) < 3 {
+		t.Errorf("Expected at least 3 rows, got %d", len(result.Rows))
+	}
+}
+
+// TestMergeBasic tests basic MERGE statement functionality.
+func TestMergeBasic(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create target and source tables
+	executeSQL(t, executor, "CREATE TABLE inventory (product_id INT, quantity INT);")
+	executeSQL(t, executor, "CREATE TABLE shipment (product_id INT, quantity INT);")
+
+	// Insert initial inventory
+	executeSQL(t, executor, "INSERT INTO inventory VALUES (1, 100);")
+	executeSQL(t, executor, "INSERT INTO inventory VALUES (2, 50);")
+
+	// Insert shipment data
+	executeSQL(t, executor, "INSERT INTO shipment VALUES (1, 25);") // Existing product, should update
+	executeSQL(t, executor, "INSERT INTO shipment VALUES (3, 75);") // New product, should insert
+
+	// Execute MERGE
+	result := executeSQL(t, executor, `
+		MERGE INTO inventory AS i
+		USING shipment AS s
+		ON i.product_id = s.product_id
+		WHEN MATCHED THEN UPDATE SET quantity = i.quantity + s.quantity
+		WHEN NOT MATCHED THEN INSERT (product_id, quantity) VALUES (s.product_id, s.quantity);
+	`)
+
+	if result.RowsAffected < 2 {
+		t.Errorf("Expected at least 2 rows affected, got %d", result.RowsAffected)
+	}
+
+	// Verify results
+	verifyResult := executeSQL(t, executor, "SELECT product_id, quantity FROM inventory ORDER BY product_id;")
+
+	if len(verifyResult.Rows) != 3 {
+		t.Errorf("Expected 3 products in inventory, got %d", len(verifyResult.Rows))
+	}
+
+	// Product 1 should have quantity 125 (100 + 25)
+	if len(verifyResult.Rows) >= 1 {
+		val := verifyResult.Rows[0][1]
+		var qty int64
+		if val.Type == catalog.TypeInt32 {
+			qty = int64(val.Int32)
+		} else {
+			qty = val.Int64
+		}
+		if qty != 125 {
+			t.Errorf("Expected product 1 quantity 125, got %d (type: %v)", qty, val.Type)
+		}
+	}
+
+	// Product 3 should have quantity 75 (newly inserted)
+	if len(verifyResult.Rows) >= 3 {
+		val := verifyResult.Rows[2][1]
+		var qty int64
+		if val.Type == catalog.TypeInt32 {
+			qty = int64(val.Int32)
+		} else {
+			qty = val.Int64
+		}
+		if qty != 75 {
+			t.Errorf("Expected product 3 quantity 75, got %d (type: %v)", qty, val.Type)
+		}
+	}
+}
+
+// TestMergeDelete tests MERGE with DELETE action.
+func TestMergeDelete(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE target (id INT, status TEXT);")
+	executeSQL(t, executor, "CREATE TABLE remove_list (id INT);")
+
+	executeSQL(t, executor, "INSERT INTO target VALUES (1, 'active');")
+	executeSQL(t, executor, "INSERT INTO target VALUES (2, 'active');")
+	executeSQL(t, executor, "INSERT INTO target VALUES (3, 'active');")
+
+	executeSQL(t, executor, "INSERT INTO remove_list VALUES (2);")
+
+	// Use MERGE to delete matching records
+	result := executeSQL(t, executor, `
+		MERGE INTO target AS t
+		USING remove_list AS r
+		ON t.id = r.id
+		WHEN MATCHED THEN DELETE;
+	`)
+
+	if result.RowsAffected != 1 {
+		t.Errorf("Expected 1 row deleted, got %d rows affected", result.RowsAffected)
+	}
+
+	// Verify id=2 was deleted
+	verifyResult := executeSQL(t, executor, "SELECT id FROM target ORDER BY id;")
+
+	if len(verifyResult.Rows) != 2 {
+		t.Errorf("Expected 2 rows remaining, got %d", len(verifyResult.Rows))
+	}
+}
+
+// TestMergeWithSubquery tests MERGE using a subquery as the source.
+func TestMergeWithSubquery(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE accounts (account_id INT, balance INT);")
+	executeSQL(t, executor, "CREATE TABLE transactions (account_id INT, amount INT);")
+
+	executeSQL(t, executor, "INSERT INTO accounts VALUES (1, 1000);")
+	executeSQL(t, executor, "INSERT INTO accounts VALUES (2, 2000);")
+
+	executeSQL(t, executor, "INSERT INTO transactions VALUES (1, 100);")
+	executeSQL(t, executor, "INSERT INTO transactions VALUES (1, 50);")
+	executeSQL(t, executor, "INSERT INTO transactions VALUES (3, 500);")
+
+	// MERGE with subquery source
+	result := executeSQL(t, executor, `
+		MERGE INTO accounts AS a
+		USING (SELECT account_id, SUM(amount) AS total FROM transactions GROUP BY account_id) AS t
+		ON a.account_id = t.account_id
+		WHEN MATCHED THEN UPDATE SET balance = a.balance + t.total
+		WHEN NOT MATCHED THEN INSERT (account_id, balance) VALUES (t.account_id, t.total);
+	`)
+
+	if result.RowsAffected < 2 {
+		t.Errorf("Expected at least 2 rows affected, got %d", result.RowsAffected)
+	}
+}
+
+// TestMergeDoNothing tests MERGE with DO NOTHING action.
+func TestMergeDoNothing(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE data (id INT, value INT);")
+	executeSQL(t, executor, "CREATE TABLE updates (id INT, value INT);")
+
+	executeSQL(t, executor, "INSERT INTO data VALUES (1, 10);")
+	executeSQL(t, executor, "INSERT INTO updates VALUES (1, 20);")
+	executeSQL(t, executor, "INSERT INTO updates VALUES (2, 30);")
+
+	// Use DO NOTHING for matched, INSERT for not matched
+	result := executeSQL(t, executor, `
+		MERGE INTO data AS d
+		USING updates AS u
+		ON d.id = u.id
+		WHEN MATCHED THEN DO NOTHING
+		WHEN NOT MATCHED THEN INSERT (id, value) VALUES (u.id, u.value);
+	`)
+
+	// Should only insert id=2
+	if result.RowsAffected != 1 {
+		t.Errorf("Expected 1 row inserted, got %d rows affected", result.RowsAffected)
+	}
+
+	// Verify id=1 was not updated
+	verifyResult := executeSQL(t, executor, "SELECT id, value FROM data ORDER BY id;")
+
+	if len(verifyResult.Rows) != 2 {
+		t.Errorf("Expected 2 rows, got %d", len(verifyResult.Rows))
+	}
+
+	// id=1 should still have value 10
+	if len(verifyResult.Rows) >= 1 {
+		val := verifyResult.Rows[0][1]
+		var v int64
+		if val.Type == catalog.TypeInt32 {
+			v = int64(val.Int32)
+		} else {
+			v = val.Int64
+		}
+		if v != 10 {
+			t.Errorf("Expected id=1 value to be 10, got %d", v)
+		}
+	}
+}
+
+// TestMergeParsing tests MERGE statement parsing.
+func TestMergeParsing(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name: "basic merge",
+			input: `MERGE INTO target USING source ON target.id = source.id
+				WHEN MATCHED THEN UPDATE SET value = source.value`,
+		},
+		{
+			name: "merge with aliases",
+			input: `MERGE INTO target AS t USING source AS s ON t.id = s.id
+				WHEN MATCHED THEN DELETE`,
+		},
+		{
+			name: "merge with insert",
+			input: `MERGE INTO target USING source ON target.id = source.id
+				WHEN NOT MATCHED THEN INSERT (id, name) VALUES (source.id, source.name)`,
+		},
+		{
+			name: "merge with multiple when clauses",
+			input: `MERGE INTO target USING source ON target.id = source.id
+				WHEN MATCHED THEN UPDATE SET value = 1
+				WHEN NOT MATCHED THEN INSERT (id, value) VALUES (source.id, 0)`,
+		},
+		{
+			name: "merge with do nothing",
+			input: `MERGE INTO target USING source ON target.id = source.id
+				WHEN MATCHED THEN DO NOTHING
+				WHEN NOT MATCHED THEN DO NOTHING`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Errorf("Failed to parse MERGE: %v", err)
+			}
+			if _, ok := stmt.(*MergeStmt); !ok {
+				t.Errorf("Expected *MergeStmt, got %T", stmt)
+			}
+		})
+	}
+}
+
+// TestLateralParsing tests LATERAL join parsing.
+func TestLateralParsing(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "cross join lateral",
+			input: "SELECT * FROM t1 CROSS JOIN LATERAL (SELECT * FROM t2 WHERE t2.id = t1.id) AS sub",
+		},
+		{
+			name:  "left join lateral",
+			input: "SELECT * FROM t1 LEFT JOIN LATERAL (SELECT * FROM t2 WHERE t2.ref = t1.id LIMIT 1) AS sub ON TRUE",
+		},
+		{
+			name:  "inner join lateral",
+			input: "SELECT * FROM t1 INNER JOIN LATERAL (SELECT * FROM t2) AS sub ON t1.id = sub.id",
+		},
+		{
+			name:  "lateral with alias",
+			input: "SELECT * FROM t1, LATERAL (SELECT * FROM t2 WHERE t2.id = t1.id) AS derived",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Errorf("Failed to parse LATERAL: %v", err)
+			}
+			selectStmt, ok := stmt.(*SelectStmt)
+			if !ok {
+				t.Errorf("Expected *SelectStmt, got %T", stmt)
+			}
+			if len(selectStmt.Joins) == 0 {
+				t.Error("Expected at least one join clause")
+			} else if !selectStmt.Joins[0].Lateral {
+				t.Error("Expected Lateral flag to be true")
+			}
+		})
+	}
+}

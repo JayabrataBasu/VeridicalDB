@@ -229,6 +229,17 @@ const (
 	TOKEN_FOLLOWING
 	TOKEN_CURRENT
 	TOKEN_ROW
+
+	// LATERAL join
+	TOKEN_LATERAL
+
+	// MERGE statement
+	TOKEN_MERGE
+	TOKEN_MATCHED
+	TOKEN_TARGET
+	TOKEN_SOURCE
+	TOKEN_DO
+	TOKEN_NOTHING
 )
 
 var keywords = map[string]TokenType{
@@ -380,6 +391,13 @@ var keywords = map[string]TokenType{
 	"FOLLOWING":         TOKEN_FOLLOWING,
 	"CURRENT":           TOKEN_CURRENT,
 	"ROW":               TOKEN_ROW,
+	"LATERAL":           TOKEN_LATERAL,
+	"MERGE":             TOKEN_MERGE,
+	"MATCHED":           TOKEN_MATCHED,
+	"TARGET":            TOKEN_TARGET,
+	"SOURCE":            TOKEN_SOURCE,
+	"DO":                TOKEN_DO,
+	"NOTHING":           TOKEN_NOTHING,
 }
 
 // Token represents a lexical token.

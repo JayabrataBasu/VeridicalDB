@@ -94,6 +94,8 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseShow()
 	case TOKEN_EXPLAIN:
 		return p.parseExplain()
+	case TOKEN_MERGE:
+		return p.parseMerge()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -152,29 +154,113 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 		return nil, err
 	}
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	// Table name (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
-	stmt.TableName = p.cur.Literal
-	p.nextToken()
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	// Optional table alias: AS alias or just alias
 	if p.curTokenIs(TOKEN_AS) {
 		p.nextToken() // consume AS
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS")
 		}
-		stmt.TableAlias = p.cur.Literal
-		p.nextToken()
-	} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
+	} else if p.isIdentifierOrContextualKeyword() && !p.isKeyword() {
 		// Implicit alias without AS
-		stmt.TableAlias = p.cur.Literal
-		p.nextToken()
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
 	}
 
-	// Optional JOIN clauses
-	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) || p.curTokenIs(TOKEN_CROSS) {
+	// Optional JOIN clauses (including LATERAL)
+	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) || p.curTokenIs(TOKEN_CROSS) || p.curTokenIs(TOKEN_LATERAL) || p.curTokenIs(TOKEN_COMMA) {
+		// Handle comma-separated LATERAL subquery: FROM t, LATERAL (SELECT ...)
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+			if p.curTokenIs(TOKEN_LATERAL) {
+				// Comma + LATERAL: treat as implicit CROSS JOIN LATERAL
+				p.nextToken() // consume LATERAL
+				if !p.curTokenIs(TOKEN_LPAREN) {
+					return nil, fmt.Errorf("expected '(' after LATERAL, got %v", p.cur.Type)
+				}
+				p.nextToken() // consume '('
+
+				if !p.curTokenIs(TOKEN_SELECT) {
+					return nil, fmt.Errorf("expected SELECT after LATERAL '(', got %v", p.cur.Type)
+				}
+				subquery, err := p.parseSelectStatement()
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse LATERAL subquery: %w", err)
+				}
+				selectStmt, ok := subquery.(*SelectStmt)
+				if !ok {
+					return nil, fmt.Errorf("expected SELECT statement in LATERAL subquery")
+				}
+
+				if err := p.expect(TOKEN_RPAREN); err != nil {
+					return nil, fmt.Errorf("expected ')' after LATERAL subquery: %w", err)
+				}
+
+				join := JoinClause{
+					JoinType: "CROSS",
+					Lateral:  true,
+					Subquery: selectStmt,
+				}
+
+				// Subquery alias (required)
+				if p.curTokenIs(TOKEN_AS) {
+					p.nextToken() // consume AS
+				}
+				if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+					join.TableAlias = p.cur.Literal
+					p.nextToken()
+				} else {
+					return nil, fmt.Errorf("LATERAL subquery requires an alias")
+				}
+
+				stmt.Joins = append(stmt.Joins, join)
+				continue
+			} else {
+				// Regular comma-separated table - treat as implicit CROSS JOIN
+				if !p.curTokenIs(TOKEN_IDENT) {
+					return nil, fmt.Errorf("expected table name after comma, got %v", p.cur.Type)
+				}
+				join := JoinClause{
+					JoinType:  "CROSS",
+					TableName: p.cur.Literal,
+				}
+				p.nextToken()
+
+				// Optional alias
+				if p.curTokenIs(TOKEN_AS) {
+					p.nextToken()
+					if !p.curTokenIs(TOKEN_IDENT) {
+						return nil, fmt.Errorf("expected alias after AS")
+					}
+					join.TableAlias = p.cur.Literal
+					p.nextToken()
+				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+					join.TableAlias = p.cur.Literal
+					p.nextToken()
+				}
+
+				stmt.Joins = append(stmt.Joins, join)
+				continue
+			}
+		}
+
 		join, err := p.parseJoinClause()
 		if err != nil {
 			return nil, err
@@ -329,7 +415,7 @@ func (p *Parser) parseGroupByList() ([]string, error) {
 	return groupBy, nil
 }
 
-// parseJoinClause parses: [INNER|LEFT|RIGHT|FULL|CROSS] JOIN table [ON condition]
+// parseJoinClause parses: [INNER|LEFT|RIGHT|FULL|CROSS] [LATERAL] JOIN table|subquery [ON condition]
 func (p *Parser) parseJoinClause() (JoinClause, error) {
 	join := JoinClause{JoinType: "INNER"} // default
 	isCrossJoin := false
@@ -359,6 +445,16 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		join.JoinType = "CROSS"
 		isCrossJoin = true
 		p.nextToken()
+	} else if p.curTokenIs(TOKEN_LATERAL) {
+		// LATERAL without explicit join type defaults to INNER
+		join.Lateral = true
+		p.nextToken()
+	}
+
+	// Check for LATERAL after join type (e.g., LEFT LATERAL JOIN, CROSS LATERAL JOIN)
+	if p.curTokenIs(TOKEN_LATERAL) {
+		join.Lateral = true
+		p.nextToken()
 	}
 
 	// Expect JOIN keyword
@@ -366,33 +462,78 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		return join, err
 	}
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
-		return join, fmt.Errorf("expected table name after JOIN, got %v", p.cur.Type)
+	// Check for LATERAL after JOIN keyword (e.g., JOIN LATERAL)
+	if p.curTokenIs(TOKEN_LATERAL) {
+		join.Lateral = true
+		p.nextToken()
 	}
-	join.TableName = p.cur.Literal
-	p.nextToken()
 
-	// Optional table alias: AS alias or just alias (before ON)
-	if p.curTokenIs(TOKEN_AS) {
-		p.nextToken() // consume AS
-		if !p.curTokenIs(TOKEN_IDENT) {
-			return join, fmt.Errorf("expected alias after AS")
+	// Check if joining a subquery (derived table)
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume '('
+
+		// Parse the subquery
+		if !p.curTokenIs(TOKEN_SELECT) {
+			return join, fmt.Errorf("expected SELECT after '(' in JOIN, got %v", p.cur.Type)
 		}
-		join.TableAlias = p.cur.Literal
+		subquery, err := p.parseSelectStatement()
+		if err != nil {
+			return join, fmt.Errorf("failed to parse subquery in JOIN: %w", err)
+		}
+		selectStmt, ok := subquery.(*SelectStmt)
+		if !ok {
+			return join, fmt.Errorf("expected SELECT statement in JOIN subquery")
+		}
+		join.Subquery = selectStmt
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return join, fmt.Errorf("expected ')' after subquery in JOIN: %w", err)
+		}
+
+		// Subquery alias (required for derived tables)
+		if p.curTokenIs(TOKEN_AS) {
+			p.nextToken() // consume AS
+		}
+		if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			join.TableAlias = p.cur.Literal
+			p.nextToken()
+		} else if join.Subquery != nil && join.TableAlias == "" {
+			return join, fmt.Errorf("derived table (subquery) requires an alias")
+		}
+	} else {
+		// Table name
+		if !p.curTokenIs(TOKEN_IDENT) {
+			return join, fmt.Errorf("expected table name after JOIN, got %v", p.cur.Type)
+		}
+		join.TableName = p.cur.Literal
 		p.nextToken()
-	} else if p.curTokenIs(TOKEN_IDENT) && !p.curTokenIs(TOKEN_ON) && !p.isKeyword() {
-		// Implicit alias without AS
-		join.TableAlias = p.cur.Literal
-		p.nextToken()
+
+		// Optional table alias: AS alias or just alias (before ON)
+		if p.curTokenIs(TOKEN_AS) {
+			p.nextToken() // consume AS
+			if !p.curTokenIs(TOKEN_IDENT) {
+				return join, fmt.Errorf("expected alias after AS")
+			}
+			join.TableAlias = p.cur.Literal
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_IDENT) && !p.curTokenIs(TOKEN_ON) && !p.isKeyword() {
+			// Implicit alias without AS
+			join.TableAlias = p.cur.Literal
+			p.nextToken()
+		}
 	}
 
-	// CROSS JOIN has no ON condition
+	// CROSS JOIN has no ON condition (LATERAL CROSS JOIN also)
 	if isCrossJoin {
 		return join, nil
 	}
 
-	// ON keyword (required for non-CROSS joins)
+	// For LATERAL without ON clause (implicit join), condition is optional
+	if join.Lateral && !p.curTokenIs(TOKEN_ON) {
+		return join, nil
+	}
+
+	// ON keyword (required for non-CROSS, non-implicit-LATERAL joins)
 	if err := p.expect(TOKEN_ON); err != nil {
 		return join, err
 	}
@@ -457,10 +598,47 @@ func (p *Parser) isKeyword() bool {
 	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
 		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
 		TOKEN_RIGHT, TOKEN_FULL, TOKEN_CROSS, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
-		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON, TOKEN_OVER, TOKEN_PARTITION:
+		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON, TOKEN_OVER, TOKEN_PARTITION,
+		TOKEN_WHEN, TOKEN_THEN, TOKEN_MATCHED:
 		return true
 	}
 	return false
+}
+
+// isIdentifierOrContextualKeyword returns true if the current token is an identifier
+// or a contextual keyword that can be used as an identifier in certain positions.
+// This allows table/column names like "target", "source", "matched" etc.
+func (p *Parser) isIdentifierOrContextualKeyword() bool {
+	if p.curTokenIs(TOKEN_IDENT) {
+		return true
+	}
+	// Contextual keywords that can be used as identifiers
+	switch p.cur.Type {
+	case TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING,
+		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+		return true
+	}
+	return false
+}
+
+// parseIdentifier parses an identifier, which can be either a regular identifier
+// or a contextual keyword being used as an identifier.
+func (p *Parser) parseIdentifier() (string, error) {
+	if p.isIdentifierOrContextualKeyword() {
+		name := p.cur.Literal
+		p.nextToken()
+		return name, nil
+	}
+	return "", fmt.Errorf("expected identifier, got %v (%q)", p.cur.Type, p.cur.Literal)
+}
+
+// parseSelectStatement parses a SELECT statement when the cursor is on TOKEN_SELECT.
+// This is a helper for parsing subqueries.
+func (p *Parser) parseSelectStatement() (Statement, error) {
+	if !p.curTokenIs(TOKEN_SELECT) {
+		return nil, fmt.Errorf("expected SELECT, got %v", p.cur.Type)
+	}
+	return p.parseSelect()
 }
 
 // aggregateName returns the name of the current aggregate function token.
@@ -827,22 +1005,28 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 		return nil, err
 	}
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	// Table name (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
-	stmt.TableName = p.cur.Literal
-	p.nextToken()
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	// Optional column list
 	if p.curTokenIs(TOKEN_LPAREN) {
 		p.nextToken()
 		for {
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
 			}
-			stmt.Columns = append(stmt.Columns, p.cur.Literal)
-			p.nextToken()
+			colName, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Columns = append(stmt.Columns, colName)
 
 			if !p.curTokenIs(TOKEN_COMMA) {
 				break
@@ -890,12 +1074,15 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 
 	p.nextToken() // consume UPDATE
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	// Table name (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
-	stmt.TableName = p.cur.Literal
-	p.nextToken()
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	// SET
 	if err := p.expect(TOKEN_SET); err != nil {
@@ -904,11 +1091,13 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 
 	// Assignments
 	for {
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
 		}
-		colName := p.cur.Literal
-		p.nextToken()
+		colName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
 
 		if err := p.expect(TOKEN_EQ); err != nil {
 			return nil, err
@@ -950,12 +1139,15 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 		return nil, err
 	}
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	// Table name (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
-	stmt.TableName = p.cur.Literal
-	p.nextToken()
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	// Optional WHERE
 	if p.curTokenIs(TOKEN_WHERE) {
@@ -968,6 +1160,309 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	}
 
 	return stmt, nil
+}
+
+// parseMerge parses: MERGE INTO target USING source ON condition
+//
+//	WHEN MATCHED [AND condition] THEN UPDATE SET ... / DELETE / DO NOTHING
+//	WHEN NOT MATCHED [AND condition] THEN INSERT (...) VALUES (...) / DO NOTHING
+func (p *Parser) parseMerge() (*MergeStmt, error) {
+	stmt := &MergeStmt{}
+
+	p.nextToken() // consume MERGE
+
+	// INTO keyword
+	if err := p.expect(TOKEN_INTO); err != nil {
+		return nil, fmt.Errorf("expected INTO after MERGE: %w", err)
+	}
+
+	// Target table (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected target table name after MERGE INTO, got %v", p.cur.Type)
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TargetTable = tableName
+
+	// Optional target alias
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected alias after AS")
+		}
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TargetAlias = alias
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_USING) {
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TargetAlias = alias
+	}
+
+	// USING keyword
+	if err := p.expect(TOKEN_USING); err != nil {
+		return nil, fmt.Errorf("expected USING after target table: %w", err)
+	}
+
+	// Source: can be a table name or subquery
+	if p.curTokenIs(TOKEN_LPAREN) {
+		// Subquery source
+		p.nextToken() // consume '('
+		if !p.curTokenIs(TOKEN_SELECT) {
+			return nil, fmt.Errorf("expected SELECT after '(' in USING, got %v", p.cur.Type)
+		}
+		subquery, err := p.parseSelectStatement()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse source subquery: %w", err)
+		}
+		selectStmt, ok := subquery.(*SelectStmt)
+		if !ok {
+			return nil, fmt.Errorf("expected SELECT statement in USING subquery")
+		}
+		stmt.SourceQuery = selectStmt
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after source subquery: %w", err)
+		}
+	} else if p.isIdentifierOrContextualKeyword() {
+		// Table name source
+		tableName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.SourceTable = tableName
+	} else {
+		return nil, fmt.Errorf("expected table name or subquery after USING, got %v", p.cur.Type)
+	}
+
+	// Optional source alias
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected alias after AS")
+		}
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.SourceAlias = alias
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_ON) {
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.SourceAlias = alias
+	}
+
+	// ON keyword
+	if err := p.expect(TOKEN_ON); err != nil {
+		return nil, fmt.Errorf("expected ON after source: %w", err)
+	}
+
+	// Match condition
+	condition, err := p.parseExpression()
+	if err != nil {
+		return nil, fmt.Errorf("expected match condition: %w", err)
+	}
+	stmt.Condition = condition
+
+	// Parse WHEN clauses
+	for p.curTokenIs(TOKEN_WHEN) {
+		whenClause, err := p.parseMergeWhenClause()
+		if err != nil {
+			return nil, err
+		}
+		stmt.WhenClauses = append(stmt.WhenClauses, whenClause)
+	}
+
+	if len(stmt.WhenClauses) == 0 {
+		return nil, fmt.Errorf("MERGE statement requires at least one WHEN clause")
+	}
+
+	return stmt, nil
+}
+
+// parseMergeWhenClause parses: WHEN [NOT] MATCHED [AND condition] THEN action
+func (p *Parser) parseMergeWhenClause() (MergeWhenClause, error) {
+	clause := MergeWhenClause{}
+
+	p.nextToken() // consume WHEN
+
+	// Check for NOT MATCHED
+	if p.curTokenIs(TOKEN_NOT) {
+		clause.Matched = false
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_MATCHED); err != nil {
+			return clause, fmt.Errorf("expected MATCHED after NOT: %w", err)
+		}
+	} else if p.curTokenIs(TOKEN_MATCHED) {
+		clause.Matched = true
+		p.nextToken() // consume MATCHED
+	} else {
+		return clause, fmt.Errorf("expected MATCHED or NOT MATCHED after WHEN, got %v", p.cur.Type)
+	}
+
+	// Optional AND condition
+	if p.curTokenIs(TOKEN_AND) {
+		p.nextToken() // consume AND
+		cond, err := p.parseExpression()
+		if err != nil {
+			return clause, fmt.Errorf("expected condition after AND: %w", err)
+		}
+		clause.Condition = cond
+	}
+
+	// THEN keyword
+	if err := p.expect(TOKEN_THEN); err != nil {
+		return clause, fmt.Errorf("expected THEN: %w", err)
+	}
+
+	// Parse action
+	action, err := p.parseMergeAction(clause.Matched)
+	if err != nil {
+		return clause, err
+	}
+	clause.Action = action
+
+	return clause, nil
+}
+
+// parseMergeAction parses: UPDATE SET ... / DELETE / INSERT (...) VALUES (...) / DO NOTHING
+func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
+	action := MergeAction{}
+
+	if p.curTokenIs(TOKEN_UPDATE) {
+		if !matched {
+			return action, fmt.Errorf("UPDATE action is only valid for WHEN MATCHED clause")
+		}
+		action.ActionType = "UPDATE"
+		p.nextToken() // consume UPDATE
+
+		if err := p.expect(TOKEN_SET); err != nil {
+			return action, fmt.Errorf("expected SET after UPDATE: %w", err)
+		}
+
+		// Parse assignments
+		assignments, err := p.parseAssignments()
+		if err != nil {
+			return action, err
+		}
+		action.Assignments = assignments
+
+	} else if p.curTokenIs(TOKEN_DELETE) {
+		if !matched {
+			return action, fmt.Errorf("DELETE action is only valid for WHEN MATCHED clause")
+		}
+		action.ActionType = "DELETE"
+		p.nextToken() // consume DELETE
+
+	} else if p.curTokenIs(TOKEN_INSERT) {
+		if matched {
+			return action, fmt.Errorf("INSERT action is only valid for WHEN NOT MATCHED clause")
+		}
+		action.ActionType = "INSERT"
+		p.nextToken() // consume INSERT
+
+		// Optional column list
+		if p.curTokenIs(TOKEN_LPAREN) {
+			p.nextToken() // consume '('
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return action, fmt.Errorf("expected column name in INSERT, got %v", p.cur.Type)
+				}
+				colName, err := p.parseIdentifier()
+				if err != nil {
+					return action, err
+				}
+				action.Columns = append(action.Columns, colName)
+
+				if p.curTokenIs(TOKEN_RPAREN) {
+					p.nextToken() // consume ')'
+					break
+				}
+				if err := p.expect(TOKEN_COMMA); err != nil {
+					return action, fmt.Errorf("expected ',' or ')' in column list: %w", err)
+				}
+			}
+		}
+
+		// VALUES keyword
+		if err := p.expect(TOKEN_VALUES); err != nil {
+			return action, fmt.Errorf("expected VALUES after INSERT: %w", err)
+		}
+
+		// Value list
+		if err := p.expect(TOKEN_LPAREN); err != nil {
+			return action, fmt.Errorf("expected '(' after VALUES: %w", err)
+		}
+
+		for {
+			expr, err := p.parseExpression()
+			if err != nil {
+				return action, fmt.Errorf("expected value expression: %w", err)
+			}
+			action.Values = append(action.Values, expr)
+
+			if p.curTokenIs(TOKEN_RPAREN) {
+				p.nextToken() // consume ')'
+				break
+			}
+			if err := p.expect(TOKEN_COMMA); err != nil {
+				return action, fmt.Errorf("expected ',' or ')' in VALUES list: %w", err)
+			}
+		}
+
+	} else if p.curTokenIs(TOKEN_DO) {
+		p.nextToken() // consume DO
+		if err := p.expect(TOKEN_NOTHING); err != nil {
+			return action, fmt.Errorf("expected NOTHING after DO: %w", err)
+		}
+		action.ActionType = "DO NOTHING"
+
+	} else {
+		return action, fmt.Errorf("expected UPDATE, DELETE, INSERT, or DO NOTHING after THEN, got %v", p.cur.Type)
+	}
+
+	return action, nil
+}
+
+// parseAssignments parses: col1 = expr1, col2 = expr2, ...
+func (p *Parser) parseAssignments() ([]Assignment, error) {
+	var assignments []Assignment
+
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected column name in SET, got %v", p.cur.Type)
+		}
+		colName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+
+		if err := p.expect(TOKEN_EQ); err != nil {
+			return nil, fmt.Errorf("expected '=' after column name: %w", err)
+		}
+
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("expected value expression: %w", err)
+		}
+
+		assignments = append(assignments, Assignment{Column: colName, Value: expr})
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume ','
+	}
+
+	return assignments, nil
 }
 
 // parseCreate parses: CREATE TABLE name (columns) or CREATE [UNIQUE] INDEX name ON table (columns)
@@ -1013,12 +1508,15 @@ func (p *Parser) parseCreate() (Statement, error) {
 
 	stmt := &CreateTableStmt{}
 
-	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	// Table name (can be a keyword like "target" used as identifier)
+	if !p.isIdentifierOrContextualKeyword() {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
-	stmt.TableName = p.cur.Literal
-	p.nextToken()
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	// (columns)
 	if err := p.expect(TOKEN_LPAREN); err != nil {
@@ -1674,14 +2172,16 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 		p.nextToken()
 		return &LiteralExpr{Value: catalog.Null(catalog.TypeUnknown)}, nil
 
-	case TOKEN_IDENT:
+	case TOKEN_IDENT,
+		// Contextual keywords that can be used as identifiers
+		TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING:
 		name := p.cur.Literal
 		p.nextToken()
 
 		// Check for qualified name (table.column)
 		if p.cur.Literal == "." {
 			p.nextToken() // consume .
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(TOKEN_IDENT) && !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name after '.', got %v", p.cur.Type)
 			}
 			name = name + "." + p.cur.Literal
