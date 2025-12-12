@@ -4709,3 +4709,205 @@ func TestGroupingSetsParsing(t *testing.T) {
 		})
 	}
 }
+
+// TestCTEBasic tests basic CTE (WITH clause) functionality.
+func TestCTEBasic(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create a table
+	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept TEXT, salary INT)")
+
+	// Insert test data
+	executeSQL(t, exec, "INSERT INTO employees VALUES (1, 'Alice', 'Engineering', 100000)")
+	executeSQL(t, exec, "INSERT INTO employees VALUES (2, 'Bob', 'Engineering', 90000)")
+	executeSQL(t, exec, "INSERT INTO employees VALUES (3, 'Carol', 'Sales', 80000)")
+	executeSQL(t, exec, "INSERT INTO employees VALUES (4, 'Dave', 'Sales', 85000)")
+	executeSQL(t, exec, "INSERT INTO employees VALUES (5, 'Eve', 'HR', 70000)")
+
+	t.Run("simple CTE select all", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH eng AS (SELECT id, name, salary FROM employees WHERE dept = 'Engineering')
+			SELECT * FROM eng
+		`)
+
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("CTE with column selection", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH eng AS (SELECT id, name, salary FROM employees WHERE dept = 'Engineering')
+			SELECT name, salary FROM eng
+		`)
+
+		if len(result.Columns) != 2 {
+			t.Errorf("Expected 2 columns, got %d", len(result.Columns))
+		}
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("CTE with aggregation", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH eng AS (SELECT salary FROM employees WHERE dept = 'Engineering')
+			SELECT SUM(salary) AS total FROM eng
+		`)
+
+		if len(result.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result.Rows))
+		}
+		if !result.Rows[0][0].IsNull && result.Rows[0][0].Int64 != 190000 {
+			t.Errorf("Expected sum 190000, got %v", result.Rows[0][0])
+		}
+	})
+
+	t.Run("CTE with ORDER BY and LIMIT", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH all_emp AS (SELECT name, salary FROM employees)
+			SELECT name, salary FROM all_emp ORDER BY salary DESC LIMIT 3
+		`)
+
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+		// First row should be highest salary (Alice, 100000)
+		salaryVal := result.Rows[0][1]
+		var salary int64
+		if salaryVal.Type == catalog.TypeInt32 {
+			salary = int64(salaryVal.Int32)
+		} else {
+			salary = salaryVal.Int64
+		}
+		if salary != 100000 {
+			t.Errorf("Expected highest salary 100000, got %d", salary)
+		}
+	})
+}
+
+// TestCTEParsing tests CTE parsing.
+func TestCTEParsing(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		cteCount  int
+		recursive bool
+		firstCTE  string
+	}{
+		{
+			name:      "single CTE",
+			input:     "WITH cte AS (SELECT * FROM t) SELECT * FROM cte",
+			cteCount:  1,
+			recursive: false,
+			firstCTE:  "cte",
+		},
+		{
+			name:      "multiple CTEs",
+			input:     "WITH cte1 AS (SELECT a FROM t), cte2 AS (SELECT b FROM t) SELECT * FROM cte1",
+			cteCount:  2,
+			recursive: false,
+			firstCTE:  "cte1",
+		},
+		{
+			name:      "CTE with column aliases",
+			input:     "WITH cte (x, y) AS (SELECT a, b FROM t) SELECT * FROM cte",
+			cteCount:  1,
+			recursive: false,
+			firstCTE:  "cte",
+		},
+		{
+			name:      "recursive CTE",
+			input:     "WITH RECURSIVE cte AS (SELECT * FROM t) SELECT * FROM cte",
+			cteCount:  1,
+			recursive: true,
+			firstCTE:  "cte",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+
+			selectStmt, ok := stmt.(*SelectStmt)
+			if !ok {
+				t.Fatalf("Expected *SelectStmt, got %T", stmt)
+			}
+
+			if selectStmt.With == nil {
+				t.Fatal("Expected WITH clause")
+			}
+
+			if len(selectStmt.With.CTEs) != tt.cteCount {
+				t.Errorf("Expected %d CTEs, got %d", tt.cteCount, len(selectStmt.With.CTEs))
+			}
+
+			if selectStmt.With.Recursive != tt.recursive {
+				t.Errorf("Expected recursive=%v, got %v", tt.recursive, selectStmt.With.Recursive)
+			}
+
+			if len(selectStmt.With.CTEs) > 0 && selectStmt.With.CTEs[0].Name != tt.firstCTE {
+				t.Errorf("Expected first CTE name %q, got %q", tt.firstCTE, selectStmt.With.CTEs[0].Name)
+			}
+		})
+	}
+}
+
+// TestCTEWithColumnAliases tests CTE with explicit column aliases.
+func TestCTEWithColumnAliases(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create a table
+	executeSQL(t, exec, "CREATE TABLE nums (a INT, b INT)")
+	executeSQL(t, exec, "INSERT INTO nums VALUES (1, 10)")
+	executeSQL(t, exec, "INSERT INTO nums VALUES (2, 20)")
+
+	t.Run("CTE with column aliases", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH cte (x, y) AS (SELECT a, b FROM nums)
+			SELECT x, y FROM cte
+		`)
+
+		if len(result.Columns) != 2 {
+			t.Errorf("Expected 2 columns, got %d", len(result.Columns))
+		}
+		if result.Columns[0] != "x" || result.Columns[1] != "y" {
+			t.Errorf("Expected columns [x, y], got %v", result.Columns)
+		}
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+}
+
+// TestCTEMultiple tests queries with multiple CTEs.
+func TestCTEMultiple(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create tables
+	executeSQL(t, exec, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT)")
+	executeSQL(t, exec, "INSERT INTO products VALUES (1, 'Widget', 100)")
+	executeSQL(t, exec, "INSERT INTO products VALUES (2, 'Gadget', 200)")
+	executeSQL(t, exec, "INSERT INTO products VALUES (3, 'Gizmo', 150)")
+
+	t.Run("multiple CTEs", func(t *testing.T) {
+		result := executeSQL(t, exec, `
+			WITH 
+				cheap AS (SELECT name, price FROM products WHERE price < 160),
+				expensive AS (SELECT name, price FROM products WHERE price >= 160)
+			SELECT * FROM cheap
+		`)
+
+		// cheap: Widget (100), Gizmo (150) = 2 products
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+}

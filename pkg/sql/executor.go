@@ -17,6 +17,7 @@ type Executor struct {
 	tm              *catalog.TableManager
 	autoIncCounters map[string]int64 // table.column -> next value
 	autoIncMu       sync.Mutex
+	cteData         map[string]*Result // CTE name -> result (for WITH clause)
 }
 
 // NewExecutor creates a new Executor.
@@ -315,8 +316,19 @@ func (e *Executor) getNextAutoIncrement(tableName, colName string, schema *catal
 }
 
 func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
+	// Handle CTEs (WITH clause)
+	if stmt.With != nil {
+		return e.executeSelectWithCTEs(stmt)
+	}
+
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
+		// Check if it's a CTE reference
+		if e.cteData != nil {
+			if cteResult, ok := e.cteData[stmt.TableName]; ok {
+				return e.executeSelectFromCTE(stmt, cteResult)
+			}
+		}
 		return nil, err
 	}
 
@@ -359,6 +371,456 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 	}
 
 	return e.executeSelectNormal(stmt, meta)
+}
+
+// executeSelectWithCTEs handles SELECT with WITH clause (Common Table Expressions).
+func (e *Executor) executeSelectWithCTEs(stmt *SelectStmt) (*Result, error) {
+	// Save any existing CTE data (for nested CTEs)
+	oldCTEData := e.cteData
+
+	// Initialize CTE data map
+	e.cteData = make(map[string]*Result)
+
+	// Execute each CTE and store results
+	for _, cte := range stmt.With.CTEs {
+		// Execute CTE query
+		cteResult, err := e.executeSelect(cte.Query)
+		if err != nil {
+			e.cteData = oldCTEData // Restore on error
+			return nil, fmt.Errorf("error executing CTE '%s': %w", cte.Name, err)
+		}
+
+		// If CTE has explicit column aliases, rename the result columns
+		if len(cte.Columns) > 0 {
+			if len(cte.Columns) != len(cteResult.Columns) {
+				e.cteData = oldCTEData
+				return nil, fmt.Errorf("CTE '%s' column count mismatch: expected %d, got %d",
+					cte.Name, len(cte.Columns), len(cteResult.Columns))
+			}
+			cteResult.Columns = cte.Columns
+		}
+
+		e.cteData[cte.Name] = cteResult
+	}
+
+	// Execute the main query (without the WITH clause)
+	mainStmt := *stmt
+	mainStmt.With = nil
+	result, err := e.executeSelect(&mainStmt)
+
+	// Restore previous CTE data
+	e.cteData = oldCTEData
+
+	return result, err
+}
+
+// executeSelectFromCTE executes a SELECT against a CTE result set.
+func (e *Executor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*Result, error) {
+	// Build a schema from the CTE result
+	cteSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, len(cteResult.Columns)),
+	}
+	for i, colName := range cteResult.Columns {
+		// Infer type from first row if possible, otherwise use Text as default
+		colType := catalog.TypeText
+		if len(cteResult.Rows) > 0 {
+			colType = cteResult.Rows[0][i].Type
+		}
+		cteSchema.Columns[i] = catalog.Column{
+			Name: colName,
+			Type: colType,
+		}
+	}
+
+	// Build column index map
+	colIndexMap := make(map[string]int)
+	for i, col := range cteResult.Columns {
+		colIndexMap[col] = i
+		if stmt.TableAlias != "" {
+			colIndexMap[stmt.TableAlias+"."+col] = i
+		}
+		colIndexMap[stmt.TableName+"."+col] = i
+	}
+
+	// Determine output columns
+	var outputCols []string
+	var colIndices []int
+	var colExpressions []Expression
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		// SELECT *
+		for i, col := range cteResult.Columns {
+			outputCols = append(outputCols, col)
+			colIndices = append(colIndices, i)
+			colExpressions = append(colExpressions, nil)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			if sc.Expression != nil {
+				alias := sc.Alias
+				if alias == "" {
+					alias = "expr"
+				}
+				outputCols = append(outputCols, alias)
+				colIndices = append(colIndices, -1) // expression
+				colExpressions = append(colExpressions, sc.Expression)
+			} else if sc.Aggregate != nil {
+				alias := sc.Alias
+				if alias == "" {
+					alias = fmt.Sprintf("%s(%s)", sc.Aggregate.Function, sc.Aggregate.Arg)
+				}
+				outputCols = append(outputCols, alias)
+				colIndices = append(colIndices, -2) // aggregate
+				colExpressions = append(colExpressions, nil)
+			} else {
+				idx, ok := colIndexMap[sc.Name]
+				if !ok {
+					return nil, fmt.Errorf("column %q not found in CTE", sc.Name)
+				}
+				alias := sc.Alias
+				if alias == "" {
+					alias = sc.Name
+				}
+				outputCols = append(outputCols, alias)
+				colIndices = append(colIndices, idx)
+				colExpressions = append(colExpressions, nil)
+			}
+		}
+	}
+
+	// Filter rows based on WHERE clause
+	var filteredRows [][]catalog.Value
+	for _, row := range cteResult.Rows {
+		// Evaluate WHERE clause
+		if stmt.Where != nil {
+			match, err := e.evalCondition(stmt.Where, cteSchema, row)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating WHERE clause: %w", err)
+			}
+			if !match {
+				continue
+			}
+		}
+		filteredRows = append(filteredRows, row)
+	}
+
+	// Check for aggregates
+	hasAggregates := false
+	for _, sc := range stmt.Columns {
+		if sc.Aggregate != nil {
+			hasAggregates = true
+			break
+		}
+	}
+
+	// Handle GROUP BY and aggregates
+	if hasAggregates || len(stmt.GroupBy) > 0 {
+		return e.executeSelectFromCTEWithAggregates(stmt, cteResult, cteSchema, filteredRows, colIndexMap, outputCols)
+	}
+
+	// Build output rows
+	var resultRows [][]catalog.Value
+	for _, row := range filteredRows {
+		var outRow []catalog.Value
+		for i, idx := range colIndices {
+			if idx == -1 {
+				// Expression
+				val, err := e.evalExpr(colExpressions[i], cteSchema, row)
+				if err != nil {
+					return nil, fmt.Errorf("error evaluating expression: %w", err)
+				}
+				outRow = append(outRow, val)
+			} else {
+				outRow = append(outRow, row[idx])
+			}
+		}
+		resultRows = append(resultRows, outRow)
+	}
+
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		e.sortRowsForCTE(resultRows, stmt.OrderBy, outputCols)
+	}
+
+	// Apply LIMIT and OFFSET
+	if stmt.Offset != nil {
+		offset := int(*stmt.Offset)
+		if offset > len(resultRows) {
+			resultRows = nil
+		} else {
+			resultRows = resultRows[offset:]
+		}
+	}
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(resultRows) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	// Handle DISTINCT
+	if stmt.Distinct {
+		resultRows = deduplicateRows(resultRows)
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// sortRowsForCTE sorts rows based on ORDER BY clause for CTE results.
+func (e *Executor) sortRowsForCTE(rows [][]catalog.Value, orderBy []OrderByClause, cols []string) {
+	colIndexMap := make(map[string]int)
+	for i, col := range cols {
+		colIndexMap[col] = i
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		for _, ob := range orderBy {
+			colIdx, ok := colIndexMap[ob.Column]
+			if !ok {
+				continue
+			}
+			cmp := compareValuesForSort(rows[i][colIdx], rows[j][colIdx])
+			if cmp == 0 {
+				continue
+			}
+			if ob.Desc {
+				return cmp > 0
+			}
+			return cmp < 0
+		}
+		return false
+	})
+}
+
+// executeSelectFromCTEWithAggregates handles aggregates when selecting from a CTE.
+func (e *Executor) executeSelectFromCTEWithAggregates(stmt *SelectStmt, cteResult *Result, cteSchema *catalog.Schema, rows [][]catalog.Value, colIndexMap map[string]int, outputCols []string) (*Result, error) {
+	// Group rows by GROUP BY columns
+	groups := make(map[string][][]catalog.Value)
+	var groupOrder []string
+
+	if len(stmt.GroupBy) == 0 {
+		// No GROUP BY - all rows in one group
+		groups[""] = rows
+		groupOrder = []string{""}
+	} else {
+		for _, row := range rows {
+			var keyParts []string
+			for _, groupCol := range stmt.GroupBy {
+				idx, ok := colIndexMap[groupCol]
+				if !ok {
+					return nil, fmt.Errorf("GROUP BY column %q not found", groupCol)
+				}
+				keyParts = append(keyParts, fmt.Sprintf("%v", row[idx]))
+			}
+			key := strings.Join(keyParts, "\x00")
+			if _, exists := groups[key]; !exists {
+				groupOrder = append(groupOrder, key)
+			}
+			groups[key] = append(groups[key], row)
+		}
+	}
+
+	// Process each group
+	var resultRows [][]catalog.Value
+	for _, key := range groupOrder {
+		groupRows := groups[key]
+		if len(groupRows) == 0 {
+			continue
+		}
+
+		var outRow []catalog.Value
+		for _, sc := range stmt.Columns {
+			if sc.Aggregate != nil {
+				val, err := e.computeAggregateForCTE(sc.Aggregate, groupRows, cteResult.Columns, colIndexMap)
+				if err != nil {
+					return nil, err
+				}
+				outRow = append(outRow, val)
+			} else if sc.Expression != nil {
+				val, err := e.evalExpr(sc.Expression, cteSchema, groupRows[0])
+				if err != nil {
+					return nil, err
+				}
+				outRow = append(outRow, val)
+			} else {
+				idx, ok := colIndexMap[sc.Name]
+				if !ok {
+					return nil, fmt.Errorf("column %q not found", sc.Name)
+				}
+				outRow = append(outRow, groupRows[0][idx])
+			}
+		}
+		resultRows = append(resultRows, outRow)
+	}
+
+	// Apply HAVING - build schema for aggregate results
+	if stmt.Having != nil {
+		havingSchema := &catalog.Schema{
+			Columns: make([]catalog.Column, len(outputCols)),
+		}
+		for i, col := range outputCols {
+			colType := catalog.TypeInt64 // default for aggregates
+			if len(resultRows) > 0 {
+				colType = resultRows[0][i].Type
+			}
+			havingSchema.Columns[i] = catalog.Column{Name: col, Type: colType}
+		}
+
+		var filteredRows [][]catalog.Value
+		for _, row := range resultRows {
+			match, err := e.evalCondition(stmt.Having, havingSchema, row)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating HAVING: %w", err)
+			}
+			if match {
+				filteredRows = append(filteredRows, row)
+			}
+		}
+		resultRows = filteredRows
+	}
+
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		e.sortRowsForCTE(resultRows, stmt.OrderBy, outputCols)
+	}
+
+	// Apply LIMIT and OFFSET
+	if stmt.Offset != nil {
+		offset := int(*stmt.Offset)
+		if offset > len(resultRows) {
+			resultRows = nil
+		} else {
+			resultRows = resultRows[offset:]
+		}
+	}
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(resultRows) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// computeAggregateForCTE computes an aggregate function over CTE rows.
+func (e *Executor) computeAggregateForCTE(agg *AggregateFunc, rows [][]catalog.Value, cols []string, colIndexMap map[string]int) (catalog.Value, error) {
+	switch strings.ToUpper(agg.Function) {
+	case "COUNT":
+		if agg.Arg == "*" {
+			return catalog.NewInt64(int64(len(rows))), nil
+		}
+		idx, ok := colIndexMap[agg.Arg]
+		if !ok {
+			return catalog.Null(catalog.TypeInt64), fmt.Errorf("column %q not found", agg.Arg)
+		}
+		count := int64(0)
+		for _, row := range rows {
+			if !row[idx].IsNull {
+				count++
+			}
+		}
+		return catalog.NewInt64(count), nil
+
+	case "SUM":
+		idx, ok := colIndexMap[agg.Arg]
+		if !ok {
+			return catalog.Null(catalog.TypeInt64), fmt.Errorf("column %q not found", agg.Arg)
+		}
+		var sum int64
+		hasValue := false
+		for _, row := range rows {
+			if !row[idx].IsNull {
+				switch row[idx].Type {
+				case catalog.TypeInt32:
+					sum += int64(row[idx].Int32)
+				case catalog.TypeInt64:
+					sum += row[idx].Int64
+				}
+				hasValue = true
+			}
+		}
+		if !hasValue {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		return catalog.NewInt64(sum), nil
+
+	case "AVG":
+		idx, ok := colIndexMap[agg.Arg]
+		if !ok {
+			return catalog.Null(catalog.TypeInt64), fmt.Errorf("column %q not found", agg.Arg)
+		}
+		var sum float64
+		count := 0
+		for _, row := range rows {
+			if !row[idx].IsNull {
+				switch row[idx].Type {
+				case catalog.TypeInt32:
+					sum += float64(row[idx].Int32)
+				case catalog.TypeInt64:
+					sum += float64(row[idx].Int64)
+				}
+				count++
+			}
+		}
+		if count == 0 {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		return catalog.NewInt64(int64(sum / float64(count))), nil
+
+	case "MIN":
+		idx, ok := colIndexMap[agg.Arg]
+		if !ok {
+			return catalog.Null(catalog.TypeInt64), fmt.Errorf("column %q not found", agg.Arg)
+		}
+		var minVal catalog.Value
+		first := true
+		for _, row := range rows {
+			if !row[idx].IsNull {
+				if first {
+					minVal = row[idx]
+					first = false
+				} else if compareValuesForSort(row[idx], minVal) < 0 {
+					minVal = row[idx]
+				}
+			}
+		}
+		if first {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		return minVal, nil
+
+	case "MAX":
+		idx, ok := colIndexMap[agg.Arg]
+		if !ok {
+			return catalog.Null(catalog.TypeInt64), fmt.Errorf("column %q not found", agg.Arg)
+		}
+		var maxVal catalog.Value
+		first := true
+		for _, row := range rows {
+			if !row[idx].IsNull {
+				if first {
+					maxVal = row[idx]
+					first = false
+				} else if compareValuesForSort(row[idx], maxVal) > 0 {
+					maxVal = row[idx]
+				}
+			}
+		}
+		if first {
+			return catalog.Null(catalog.TypeInt64), nil
+		}
+		return maxVal, nil
+
+	default:
+		return catalog.Null(catalog.TypeInt64), fmt.Errorf("unsupported aggregate function: %s", agg.Function)
+	}
 }
 
 // executeSelectNormal handles regular SELECT without aggregates.
@@ -4821,6 +5283,11 @@ func (e *Executor) executeDropView(stmt *DropViewStmt) (*Result, error) {
 
 // executeUnion executes a UNION/INTERSECT/EXCEPT operation.
 func (e *Executor) executeUnion(stmt *UnionStmt) (*Result, error) {
+	// Handle CTEs (WITH clause)
+	if stmt.With != nil {
+		return e.executeUnionWithCTEs(stmt)
+	}
+
 	// Execute left SELECT
 	leftResult, err := e.executeSelect(stmt.Left)
 	if err != nil {
@@ -4932,6 +5399,44 @@ func (e *Executor) executeUnion(stmt *UnionStmt) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+// executeUnionWithCTEs handles UNION with WITH clause.
+func (e *Executor) executeUnionWithCTEs(stmt *UnionStmt) (*Result, error) {
+	// Save any existing CTE data
+	oldCTEData := e.cteData
+
+	// Initialize CTE data map
+	e.cteData = make(map[string]*Result)
+
+	// Execute each CTE and store results
+	for _, cte := range stmt.With.CTEs {
+		cteResult, err := e.executeSelect(cte.Query)
+		if err != nil {
+			e.cteData = oldCTEData
+			return nil, fmt.Errorf("error executing CTE '%s': %w", cte.Name, err)
+		}
+
+		if len(cte.Columns) > 0 {
+			if len(cte.Columns) != len(cteResult.Columns) {
+				e.cteData = oldCTEData
+				return nil, fmt.Errorf("CTE '%s' column count mismatch", cte.Name)
+			}
+			cteResult.Columns = cte.Columns
+		}
+
+		e.cteData[cte.Name] = cteResult
+	}
+
+	// Execute the UNION without WITH clause
+	mainStmt := *stmt
+	mainStmt.With = nil
+	result, err := e.executeUnion(&mainStmt)
+
+	// Restore previous CTE data
+	e.cteData = oldCTEData
+
+	return result, err
 }
 
 // rowKey creates a unique string key for a row (used for duplicate detection in UNION)

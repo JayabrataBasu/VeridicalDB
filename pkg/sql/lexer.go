@@ -246,6 +246,10 @@ const (
 	TOKEN_SETS
 	TOKEN_CUBE
 	TOKEN_ROLLUP
+
+	// CTE (Common Table Expressions)
+	TOKEN_WITH
+	TOKEN_RECURSIVE
 )
 
 var keywords = map[string]TokenType{
@@ -408,6 +412,8 @@ var keywords = map[string]TokenType{
 	"SETS":              TOKEN_SETS,
 	"CUBE":              TOKEN_CUBE,
 	"ROLLUP":            TOKEN_ROLLUP,
+	"WITH":              TOKEN_WITH,
+	"RECURSIVE":         TOKEN_RECURSIVE,
 }
 
 // Token represents a lexical token.

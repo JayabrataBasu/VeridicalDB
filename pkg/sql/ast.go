@@ -71,8 +71,9 @@ func (s *InsertStmt) statementNode() {}
 
 // SelectStmt represents SELECT statement.
 type SelectStmt struct {
-	Distinct     bool     // SELECT DISTINCT
-	DistinctOn   []string // SELECT DISTINCT ON (col1, col2) - PostgreSQL style
+	With         *WithClause // CTE definitions (WITH clause)
+	Distinct     bool        // SELECT DISTINCT
+	DistinctOn   []string    // SELECT DISTINCT ON (col1, col2) - PostgreSQL style
 	Columns      []SelectColumn
 	TableName    string
 	TableAlias   string       // optional table alias (FROM table AS t)
@@ -328,6 +329,7 @@ func (e *CastExpr) exprNode() {}
 
 // UnionStmt represents UNION/INTERSECT/EXCEPT operations.
 type UnionStmt struct {
+	With    *WithClause // CTE definitions (WITH clause)
 	Left    *SelectStmt // left SELECT
 	Right   *SelectStmt // right SELECT
 	Op      string      // "UNION", "INTERSECT", "EXCEPT"
@@ -427,4 +429,20 @@ type MergeAction struct {
 	Assignments []Assignment // SET assignments for UPDATE
 	Columns     []string     // column names for INSERT
 	Values      []Expression // values for INSERT
+}
+
+// CTE represents a Common Table Expression definition.
+// WITH cte_name [(col1, col2, ...)] AS (SELECT ...)
+type CTE struct {
+	Name      string      // CTE name
+	Columns   []string    // optional column aliases
+	Query     *SelectStmt // the query that defines the CTE
+	Recursive bool        // true for recursive CTE
+}
+
+// WithClause represents the WITH clause containing one or more CTEs.
+// WITH [RECURSIVE] cte1 AS (...), cte2 AS (...) SELECT ...
+type WithClause struct {
+	CTEs      []CTE // list of CTE definitions
+	Recursive bool  // WITH RECURSIVE (applies to all CTEs)
 }

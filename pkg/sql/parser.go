@@ -60,6 +60,8 @@ func (p *Parser) expect(t TokenType) error {
 // Parse parses a single SQL statement.
 func (p *Parser) Parse() (Statement, error) {
 	switch p.cur.Type {
+	case TOKEN_WITH:
+		return p.parseWith()
 	case TOKEN_SELECT:
 		selectStmt, err := p.parseSelect()
 		if err != nil {
@@ -99,6 +101,117 @@ func (p *Parser) Parse() (Statement, error) {
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
+}
+
+// parseWith parses WITH clause (Common Table Expressions).
+// WITH [RECURSIVE] cte_name [(col1, col2)] AS (SELECT ...) [, cte_name2 AS (...)] SELECT ...
+func (p *Parser) parseWith() (Statement, error) {
+	p.nextToken() // consume WITH
+
+	withClause := &WithClause{}
+
+	// Check for RECURSIVE
+	if p.curTokenIs(TOKEN_RECURSIVE) {
+		withClause.Recursive = true
+		p.nextToken() // consume RECURSIVE
+	}
+
+	// Parse CTE definitions (at least one required)
+	for {
+		cte := CTE{}
+
+		// CTE name
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected CTE name, got %v", p.cur.Type)
+		}
+		name, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		cte.Name = name
+		cte.Recursive = withClause.Recursive
+
+		// Optional column list: (col1, col2, ...)
+		if p.curTokenIs(TOKEN_LPAREN) {
+			p.nextToken() // consume '('
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return nil, fmt.Errorf("expected column name in CTE column list, got %v", p.cur.Type)
+				}
+				col, err := p.parseIdentifier()
+				if err != nil {
+					return nil, err
+				}
+				cte.Columns = append(cte.Columns, col)
+
+				if p.curTokenIs(TOKEN_COMMA) {
+					p.nextToken() // consume comma
+				} else {
+					break
+				}
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after CTE column list: %w", err)
+			}
+		}
+
+		// AS
+		if err := p.expect(TOKEN_AS); err != nil {
+			return nil, fmt.Errorf("expected AS after CTE name: %w", err)
+		}
+
+		// (SELECT ...)
+		if err := p.expect(TOKEN_LPAREN); err != nil {
+			return nil, fmt.Errorf("expected '(' after AS: %w", err)
+		}
+
+		if !p.curTokenIs(TOKEN_SELECT) {
+			return nil, fmt.Errorf("expected SELECT in CTE definition, got %v", p.cur.Type)
+		}
+		cteQuery, err := p.parseSelect()
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse CTE query: %w", err)
+		}
+		cte.Query = cteQuery
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after CTE query: %w", err)
+		}
+
+		withClause.CTEs = append(withClause.CTEs, cte)
+
+		// Check for more CTEs
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+			continue
+		}
+		break
+	}
+
+	// Now parse the main query (SELECT or UNION/INTERSECT/EXCEPT)
+	if !p.curTokenIs(TOKEN_SELECT) {
+		return nil, fmt.Errorf("expected SELECT after WITH clause, got %v", p.cur.Type)
+	}
+
+	selectStmt, err := p.parseSelect()
+	if err != nil {
+		return nil, err
+	}
+	selectStmt.With = withClause
+
+	// Check for UNION/INTERSECT/EXCEPT
+	if p.curTokenIs(TOKEN_UNION) || p.curTokenIs(TOKEN_INTERSECT) || p.curTokenIs(TOKEN_EXCEPT) {
+		unionStmt, err := p.parseSetOperation(selectStmt)
+		if err != nil {
+			return nil, err
+		}
+		// Move WITH clause from SelectStmt to UnionStmt
+		unionStmt.With = withClause
+		selectStmt.With = nil // Clear from first select
+		return unionStmt, nil
+	}
+
+	return selectStmt, nil
 }
 
 // parseSelect parses: SELECT [DISTINCT [ON (cols)]] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
