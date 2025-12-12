@@ -4459,3 +4459,253 @@ func TestLateralParsing(t *testing.T) {
 		})
 	}
 }
+
+// TestGroupingSets tests GROUP BY GROUPING SETS functionality.
+func TestGroupingSets(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create a sales table
+	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
+
+	// Insert test data
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Widget', 100)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Widget', 150)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Gadget', 200)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('West', 'Widget', 300)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('West', 'Gadget', 250)")
+
+	t.Run("basic grouping sets", func(t *testing.T) {
+		// GROUPING SETS ((region), (product), ()) gives:
+		// - sum by region
+		// - sum by product
+		// - grand total
+		result := executeSQL(t, exec, "SELECT region, product, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((region), (product), ())")
+
+		// Should have 5 rows: 2 regions + 2 products + 1 grand total
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+			for _, row := range result.Rows {
+				t.Logf("Row: %v", row)
+			}
+		}
+	})
+
+	t.Run("single column grouping sets", func(t *testing.T) {
+		result := executeSQL(t, exec, "SELECT region, SUM(amount) AS total FROM sales GROUP BY GROUPING SETS ((region), ())")
+
+		// Should have 3 rows: 2 regions + 1 grand total
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+	})
+}
+
+// TestCube tests GROUP BY CUBE functionality.
+func TestCube(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
+
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Widget', 100)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Gadget', 200)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('West', 'Widget', 300)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('West', 'Gadget', 250)")
+
+	t.Run("cube two columns", func(t *testing.T) {
+		// CUBE(region, product) generates:
+		// (region, product), (region), (product), ()
+		// = 4 grouping sets
+		result := executeSQL(t, exec, "SELECT region, product, SUM(amount) AS total FROM sales GROUP BY CUBE(region, product)")
+
+		// 4 combinations * distinct values:
+		// (region, product): 4 rows (East/Widget, East/Gadget, West/Widget, West/Gadget)
+		// (region): 2 rows (East, West)
+		// (product): 2 rows (Widget, Gadget)
+		// (): 1 row (grand total)
+		// Total: 9 rows
+		if len(result.Rows) != 9 {
+			t.Errorf("Expected 9 rows for CUBE, got %d", len(result.Rows))
+			for _, row := range result.Rows {
+				t.Logf("Row: %v", row)
+			}
+		}
+	})
+
+	t.Run("cube single column", func(t *testing.T) {
+		// CUBE(region) = GROUP BY GROUPING SETS ((region), ())
+		result := executeSQL(t, exec, "SELECT region, SUM(amount) AS total FROM sales GROUP BY CUBE(region)")
+
+		// 2 regions + 1 grand total = 3 rows
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+	})
+}
+
+// TestRollup tests GROUP BY ROLLUP functionality.
+func TestRollup(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, exec, "CREATE TABLE sales (yr INT, quarter TEXT, amount INT)")
+
+	executeSQL(t, exec, "INSERT INTO sales VALUES (2023, 'Q1', 100)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES (2023, 'Q2', 150)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES (2023, 'Q3', 200)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES (2024, 'Q1', 250)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES (2024, 'Q2', 300)")
+
+	t.Run("rollup two columns", func(t *testing.T) {
+		// ROLLUP(yr, quarter) generates:
+		// (yr, quarter), (yr), ()
+		// = 3 grouping sets
+		result := executeSQL(t, exec, "SELECT yr, quarter, SUM(amount) AS total FROM sales GROUP BY ROLLUP(yr, quarter)")
+
+		// (yr, quarter): 5 rows (2023/Q1, 2023/Q2, 2023/Q3, 2024/Q1, 2024/Q2)
+		// (yr): 2 rows (2023, 2024)
+		// (): 1 row (grand total)
+		// Total: 8 rows
+		if len(result.Rows) != 8 {
+			t.Errorf("Expected 8 rows for ROLLUP, got %d", len(result.Rows))
+			for _, row := range result.Rows {
+				t.Logf("Row: %v", row)
+			}
+		}
+	})
+
+	t.Run("rollup verifies hierarchy", func(t *testing.T) {
+		// Check that subtotals exist
+		result := executeSQL(t, exec, "SELECT yr, quarter, SUM(amount) AS total FROM sales GROUP BY ROLLUP(yr, quarter) ORDER BY yr, quarter")
+
+		// Find the grand total (both yr and quarter are NULL)
+		foundGrandTotal := false
+		for _, row := range result.Rows {
+			if row[0].IsNull && row[1].IsNull {
+				foundGrandTotal = true
+				if row[2].Int64 != 1000 {
+					t.Errorf("Grand total should be 1000, got %d", row[2].Int64)
+				}
+				break
+			}
+		}
+		if !foundGrandTotal {
+			t.Error("Expected to find grand total row with NULL yr and quarter")
+		}
+	})
+}
+
+// TestGroupingFunction tests the GROUPING() function.
+func TestGroupingFunction(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create and populate table
+	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
+
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Widget', 100)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('East', 'Gadget', 200)")
+	executeSQL(t, exec, "INSERT INTO sales VALUES ('West', 'Widget', 300)")
+
+	t.Run("grouping function with rollup", func(t *testing.T) {
+		// GROUPING(col) returns 1 if column is rolled up (NULL in grouping), 0 otherwise
+		result := executeSQL(t, exec, "SELECT region, product, SUM(amount) AS total, GROUPING(region) AS gr, GROUPING(product) AS gp FROM sales GROUP BY ROLLUP(region, product)")
+
+		// Verify GROUPING function values
+		for _, row := range result.Rows {
+			regionIsNull := row[0].IsNull
+			productIsNull := row[1].IsNull
+			gr := row[3].Int64 // GROUPING(region)
+			gp := row[4].Int64 // GROUPING(product)
+
+			// When region is NULL in ROLLUP, GROUPING(region) should be 1
+			if regionIsNull {
+				if gr != 1 {
+					t.Errorf("GROUPING(region) should be 1 when region is NULL, got %d", gr)
+				}
+			} else {
+				if gr != 0 {
+					t.Errorf("GROUPING(region) should be 0 when region is not NULL, got %d", gr)
+				}
+			}
+
+			// When product is NULL in ROLLUP, GROUPING(product) should be 1
+			if productIsNull {
+				if gp != 1 {
+					t.Errorf("GROUPING(product) should be 1 when product is NULL, got %d", gp)
+				}
+			} else {
+				if gp != 0 {
+					t.Errorf("GROUPING(product) should be 0 when product is not NULL, got %d", gp)
+				}
+			}
+		}
+	})
+}
+
+// TestGroupingSetsParsing tests parsing of GROUPING SETS/CUBE/ROLLUP syntax.
+func TestGroupingSetsParsing(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		expectedSets  int
+		expectsNormal bool // if true, expect normal GROUP BY columns
+	}{
+		{
+			name:         "basic grouping sets",
+			input:        "SELECT region, SUM(amount) FROM sales GROUP BY GROUPING SETS ((region), ())",
+			expectedSets: 2,
+		},
+		{
+			name:         "cube",
+			input:        "SELECT region, product, SUM(amount) FROM sales GROUP BY CUBE(region, product)",
+			expectedSets: 4, // 2^2 = 4
+		},
+		{
+			name:         "rollup",
+			input:        "SELECT yr, quarter, SUM(amount) FROM sales GROUP BY ROLLUP(yr, quarter)",
+			expectedSets: 3, // n+1 = 3
+		},
+		{
+			name:         "grouping sets with multiple columns",
+			input:        "SELECT a, b, c FROM t GROUP BY GROUPING SETS ((a, b), (c), ())",
+			expectedSets: 3,
+		},
+		{
+			name:          "normal group by",
+			input:         "SELECT region, SUM(amount) FROM sales GROUP BY region",
+			expectsNormal: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+
+			selectStmt, ok := stmt.(*SelectStmt)
+			if !ok {
+				t.Fatalf("Expected *SelectStmt, got %T", stmt)
+			}
+
+			if tt.expectsNormal {
+				if len(selectStmt.GroupingSets) != 0 {
+					t.Errorf("Expected no grouping sets for normal GROUP BY, got %d", len(selectStmt.GroupingSets))
+				}
+				if len(selectStmt.GroupBy) == 0 {
+					t.Error("Expected GROUP BY columns for normal GROUP BY")
+				}
+			} else {
+				if len(selectStmt.GroupingSets) != tt.expectedSets {
+					t.Errorf("Expected %d grouping sets, got %d", tt.expectedSets, len(selectStmt.GroupingSets))
+				}
+			}
+		})
+	}
+}

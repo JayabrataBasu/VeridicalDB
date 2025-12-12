@@ -71,22 +71,40 @@ func (s *InsertStmt) statementNode() {}
 
 // SelectStmt represents SELECT statement.
 type SelectStmt struct {
-	Distinct   bool     // SELECT DISTINCT
-	DistinctOn []string // SELECT DISTINCT ON (col1, col2) - PostgreSQL style
-	Columns    []SelectColumn
-	TableName  string
-	TableAlias string       // optional table alias (FROM table AS t)
-	Joins      []JoinClause // JOIN clauses
-	Where      Expression
-	GroupBy    []string   // column names for GROUP BY
-	Having     Expression // HAVING condition
-	OrderBy    []OrderByClause
-	Limit      *int64     // nil means no limit (static value)
-	LimitExpr  Expression // LIMIT expression (for subqueries)
-	Offset     *int64     // nil means no offset
+	Distinct     bool     // SELECT DISTINCT
+	DistinctOn   []string // SELECT DISTINCT ON (col1, col2) - PostgreSQL style
+	Columns      []SelectColumn
+	TableName    string
+	TableAlias   string       // optional table alias (FROM table AS t)
+	Joins        []JoinClause // JOIN clauses
+	Where        Expression
+	GroupBy      []string      // column names for simple GROUP BY
+	GroupingSets []GroupingSet // GROUPING SETS, CUBE, ROLLUP
+	Having       Expression    // HAVING condition
+	OrderBy      []OrderByClause
+	Limit        *int64     // nil means no limit (static value)
+	LimitExpr    Expression // LIMIT expression (for subqueries)
+	Offset       *int64     // nil means no offset
 }
 
 func (s *SelectStmt) statementNode() {}
+
+// GroupingSet represents a single grouping set (list of columns to group by together).
+// For CUBE(a,b), this expands to: (), (a), (b), (a,b)
+// For ROLLUP(a,b), this expands to: (a,b), (a), ()
+type GroupingSet struct {
+	Columns []string // columns in this grouping set (empty for grand total)
+}
+
+// GroupingSetType indicates how grouping sets are specified.
+type GroupingSetType int
+
+const (
+	GroupingSetTypeSimple GroupingSetType = iota // Individual grouping set
+	GroupingSetTypeCube                          // CUBE expansion
+	GroupingSetTypeRollup                        // ROLLUP expansion
+	GroupingSetTypeSets                          // GROUPING SETS explicit list
+)
 
 // JoinClause represents a JOIN clause in SELECT.
 type JoinClause struct {

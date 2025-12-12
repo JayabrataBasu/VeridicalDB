@@ -240,6 +240,12 @@ const (
 	TOKEN_SOURCE
 	TOKEN_DO
 	TOKEN_NOTHING
+
+	// Grouping sets
+	TOKEN_GROUPING
+	TOKEN_SETS
+	TOKEN_CUBE
+	TOKEN_ROLLUP
 )
 
 var keywords = map[string]TokenType{
@@ -398,6 +404,10 @@ var keywords = map[string]TokenType{
 	"SOURCE":            TOKEN_SOURCE,
 	"DO":                TOKEN_DO,
 	"NOTHING":           TOKEN_NOTHING,
+	"GROUPING":          TOKEN_GROUPING,
+	"SETS":              TOKEN_SETS,
+	"CUBE":              TOKEN_CUBE,
+	"ROLLUP":            TOKEN_ROLLUP,
 }
 
 // Token represents a lexical token.

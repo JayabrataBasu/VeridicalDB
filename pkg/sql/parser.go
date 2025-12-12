@@ -284,16 +284,17 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 		if err := p.expect(TOKEN_BY); err != nil {
 			return nil, err
 		}
-		groupBy, err := p.parseGroupByList()
+		groupBy, groupingSets, err := p.parseGroupByClause()
 		if err != nil {
 			return nil, err
 		}
 		stmt.GroupBy = groupBy
+		stmt.GroupingSets = groupingSets
 	}
 
-	// Optional HAVING (only valid with GROUP BY)
+	// Optional HAVING (only valid with GROUP BY or GROUPING SETS)
 	if p.curTokenIs(TOKEN_HAVING) {
-		if len(stmt.GroupBy) == 0 {
+		if len(stmt.GroupBy) == 0 && len(stmt.GroupingSets) == 0 {
 			return nil, fmt.Errorf("HAVING requires GROUP BY clause")
 		}
 		p.nextToken() // consume HAVING
@@ -395,7 +396,186 @@ func (p *Parser) parseOrderByList() ([]OrderByClause, error) {
 	return orderBy, nil
 }
 
-// parseGroupByList parses: column [, column ...]
+// parseGroupByClause parses GROUP BY with support for GROUPING SETS, CUBE, ROLLUP.
+// Syntax examples:
+//
+//	GROUP BY col1, col2
+//	GROUP BY ROLLUP(col1, col2)
+//	GROUP BY CUBE(col1, col2)
+//	GROUP BY GROUPING SETS ((col1, col2), (col1), ())
+//	GROUP BY col1, ROLLUP(col2, col3)
+func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
+	var simpleGroupBy []string
+	var groupingSets []GroupingSet
+
+	for {
+		if p.curTokenIs(TOKEN_ROLLUP) {
+			// ROLLUP(col1, col2, ...) expands to (col1,col2,...), (col1,col2), ..., (col1), ()
+			p.nextToken() // consume ROLLUP
+			cols, err := p.parseColumnListInParens()
+			if err != nil {
+				return nil, nil, fmt.Errorf("error parsing ROLLUP: %w", err)
+			}
+			// Expand ROLLUP: (a,b,c) -> (a,b,c), (a,b), (a), ()
+			rollupSets := expandRollup(cols)
+			groupingSets = append(groupingSets, rollupSets...)
+
+		} else if p.curTokenIs(TOKEN_CUBE) {
+			// CUBE(col1, col2, ...) expands to all combinations
+			p.nextToken() // consume CUBE
+			cols, err := p.parseColumnListInParens()
+			if err != nil {
+				return nil, nil, fmt.Errorf("error parsing CUBE: %w", err)
+			}
+			// Expand CUBE: (a,b) -> (), (a), (b), (a,b)
+			cubeSets := expandCube(cols)
+			groupingSets = append(groupingSets, cubeSets...)
+
+		} else if p.curTokenIs(TOKEN_GROUPING) {
+			// GROUPING SETS ((col1, col2), (col1), ())
+			p.nextToken() // consume GROUPING
+			if err := p.expect(TOKEN_SETS); err != nil {
+				return nil, nil, fmt.Errorf("expected SETS after GROUPING: %w", err)
+			}
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, nil, fmt.Errorf("expected '(' after GROUPING SETS: %w", err)
+			}
+
+			// Parse list of grouping sets
+			for {
+				set, err := p.parseGroupingSet()
+				if err != nil {
+					return nil, nil, err
+				}
+				groupingSets = append(groupingSets, set)
+
+				if !p.curTokenIs(TOKEN_COMMA) {
+					break
+				}
+				p.nextToken() // consume comma
+			}
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, nil, fmt.Errorf("expected ')' after GROUPING SETS list: %w", err)
+			}
+
+		} else if p.isIdentifierOrContextualKeyword() {
+			// Simple column name
+			colName, err := p.parseIdentifier()
+			if err != nil {
+				return nil, nil, err
+			}
+			simpleGroupBy = append(simpleGroupBy, colName)
+
+		} else {
+			return nil, nil, fmt.Errorf("expected column name, ROLLUP, CUBE, or GROUPING SETS in GROUP BY, got %v", p.cur.Type)
+		}
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+
+	return simpleGroupBy, groupingSets, nil
+}
+
+// parseColumnListInParens parses (col1, col2, ...) and returns the column names.
+func (p *Parser) parseColumnListInParens() ([]string, error) {
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, err
+	}
+
+	var cols []string
+	for {
+		if p.curTokenIs(TOKEN_RPAREN) {
+			break // empty list is allowed
+		}
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
+		}
+		colName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		cols = append(cols, colName)
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, err
+	}
+
+	return cols, nil
+}
+
+// parseGroupingSet parses a single grouping set: (col1, col2) or () for grand total
+func (p *Parser) parseGroupingSet() (GroupingSet, error) {
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return GroupingSet{}, fmt.Errorf("expected '(' for grouping set: %w", err)
+	}
+
+	var cols []string
+	for {
+		if p.curTokenIs(TOKEN_RPAREN) {
+			break // empty set () represents grand total
+		}
+		if !p.isIdentifierOrContextualKeyword() {
+			return GroupingSet{}, fmt.Errorf("expected column name in grouping set, got %v", p.cur.Type)
+		}
+		colName, err := p.parseIdentifier()
+		if err != nil {
+			return GroupingSet{}, err
+		}
+		cols = append(cols, colName)
+
+		if !p.curTokenIs(TOKEN_COMMA) {
+			break
+		}
+		p.nextToken() // consume comma
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return GroupingSet{}, fmt.Errorf("expected ')' after grouping set: %w", err)
+	}
+
+	return GroupingSet{Columns: cols}, nil
+}
+
+// expandRollup generates grouping sets for ROLLUP(col1, col2, col3).
+// ROLLUP(a, b, c) = (a, b, c), (a, b), (a), ()
+func expandRollup(cols []string) []GroupingSet {
+	var sets []GroupingSet
+	for i := len(cols); i >= 0; i-- {
+		sets = append(sets, GroupingSet{Columns: cols[:i]})
+	}
+	return sets
+}
+
+// expandCube generates grouping sets for CUBE(col1, col2, col3).
+// CUBE(a, b) = (), (a), (b), (a, b)
+func expandCube(cols []string) []GroupingSet {
+	n := len(cols)
+	count := 1 << n // 2^n combinations
+	sets := make([]GroupingSet, 0, count)
+
+	for mask := 0; mask < count; mask++ {
+		var setCols []string
+		for i := 0; i < n; i++ {
+			if mask&(1<<i) != 0 {
+				setCols = append(setCols, cols[i])
+			}
+		}
+		sets = append(sets, GroupingSet{Columns: setCols})
+	}
+	return sets
+}
+
+// parseGroupByList parses: column [, column ...] (legacy, simple form)
 func (p *Parser) parseGroupByList() ([]string, error) {
 	var groupBy []string
 
@@ -686,6 +866,9 @@ func (p *Parser) isFunctionToken() bool {
 		return true
 	// Special expressions
 	case TOKEN_CAST, TOKEN_EXTRACT:
+		return true
+	// Grouping function (for GROUPING SETS/CUBE/ROLLUP)
+	case TOKEN_GROUPING:
 		return true
 	}
 	return false
@@ -2199,6 +2382,10 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 
 	// Additional string functions
 	case TOKEN_TRIM, TOKEN_LTRIM, TOKEN_RTRIM, TOKEN_REPLACE, TOKEN_POSITION, TOKEN_REVERSE, TOKEN_REPEAT, TOKEN_LPAD, TOKEN_RPAD:
+		return p.parseFunctionCall()
+
+	// GROUPING() function for grouping sets
+	case TOKEN_GROUPING:
 		return p.parseFunctionCall()
 
 	case TOKEN_CAST:

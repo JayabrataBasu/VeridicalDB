@@ -349,6 +349,11 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 		}
 	}
 
+	// Check for GROUPING SETS / CUBE / ROLLUP
+	if len(stmt.GroupingSets) > 0 {
+		return e.executeSelectWithGroupingSets(stmt, meta)
+	}
+
 	if hasAggregates || len(stmt.GroupBy) > 0 {
 		return e.executeSelectWithAggregates(stmt, meta)
 	}
@@ -1624,6 +1629,443 @@ func groupKeyString(values []catalog.Value) string {
 		}
 	}
 	return strings.Join(parts, "|")
+}
+
+// executeSelectWithGroupingSets handles SELECT with GROUPING SETS, CUBE, or ROLLUP.
+func (e *Executor) executeSelectWithGroupingSets(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+	// Collect all columns that appear in any grouping set
+	groupingCols := make(map[string]int) // column name -> schema index
+	for _, gs := range stmt.GroupingSets {
+		for _, col := range gs.Columns {
+			if _, exists := groupingCols[col]; !exists {
+				_, idx := meta.Schema.ColumnByName(col)
+				if idx < 0 {
+					return nil, fmt.Errorf("unknown column in GROUPING SETS: %s", col)
+				}
+				groupingCols[col] = idx
+			}
+		}
+	}
+
+	// Also add simple GROUP BY columns
+	for _, col := range stmt.GroupBy {
+		if _, exists := groupingCols[col]; !exists {
+			_, idx := meta.Schema.ColumnByName(col)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column in GROUP BY: %s", col)
+			}
+			groupingCols[col] = idx
+		}
+	}
+
+	// Determine output columns and aggregate info
+	type columnInfo struct {
+		isAggregate bool
+		aggregate   *AggregateFunc
+		colName     string
+		isGrouping  bool   // GROUPING() function
+		groupingArg string // column name for GROUPING()
+	}
+	columnInfos := make([]columnInfo, len(stmt.Columns))
+	outputCols := make([]string, len(stmt.Columns))
+
+	for i, col := range stmt.Columns {
+		if col.Aggregate != nil {
+			agg := col.Aggregate
+			columnInfos[i].isAggregate = true
+			columnInfos[i].aggregate = agg
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = fmt.Sprintf("%s(%s)", agg.Function, agg.Arg)
+			}
+		} else if col.Expression != nil {
+			// Check if it's a GROUPING() function call
+			if funcExpr, ok := col.Expression.(*FunctionExpr); ok && strings.ToUpper(funcExpr.Name) == "GROUPING" {
+				columnInfos[i].isGrouping = true
+				if len(funcExpr.Args) == 1 {
+					if colRef, ok := funcExpr.Args[0].(*ColumnRef); ok {
+						columnInfos[i].groupingArg = colRef.Name
+					}
+				}
+				if col.Alias != "" {
+					outputCols[i] = col.Alias
+				} else {
+					outputCols[i] = "GROUPING"
+				}
+			} else {
+				// Other expression
+				if col.Alias != "" {
+					outputCols[i] = col.Alias
+				} else {
+					outputCols[i] = "expr"
+				}
+			}
+		} else if col.Name != "" {
+			columnInfos[i].colName = col.Name
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = col.Name
+			}
+		}
+	}
+
+	// Collect all matching rows first
+	var allRows [][]catalog.Value
+	err := e.scanTable(stmt.TableName, meta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row)
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				return true, nil
+			}
+		}
+		rowCopy := make([]catalog.Value, len(row))
+		copy(rowCopy, row)
+		allRows = append(allRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Process each grouping set separately and combine results
+	var resultRows [][]catalog.Value
+
+	for _, gs := range stmt.GroupingSets {
+		// Build index map for this grouping set
+		groupIndices := make([]int, len(gs.Columns))
+		groupColSet := make(map[string]bool)
+		for i, col := range gs.Columns {
+			groupIndices[i] = groupingCols[col]
+			groupColSet[col] = true
+		}
+
+		// Group rows by this grouping set's columns
+		groups := make(map[string]*groupingSetState)
+		var groupOrder []string
+
+		for _, row := range allRows {
+			// Build group key
+			var keyParts []string
+			for _, idx := range groupIndices {
+				if row[idx].IsNull {
+					keyParts = append(keyParts, "NULL")
+				} else {
+					keyParts = append(keyParts, row[idx].String())
+				}
+			}
+			keyStr := strings.Join(keyParts, "|")
+
+			grp, exists := groups[keyStr]
+			if !exists {
+				// Store the group key values
+				groupKey := make([]catalog.Value, len(groupIndices))
+				for i, idx := range groupIndices {
+					groupKey[i] = row[idx]
+				}
+				grp = &groupingSetState{
+					groupKey:    groupKey,
+					aggregators: make([]aggregatorState, len(stmt.Columns)),
+				}
+				groups[keyStr] = grp
+				groupOrder = append(groupOrder, keyStr)
+			}
+
+			// Update aggregators
+			for i, colInfo := range columnInfos {
+				if colInfo.isAggregate {
+					agg := colInfo.aggregate
+					var val catalog.Value
+					if agg.Arg == "*" {
+						// COUNT(*) - just count rows
+						grp.aggregators[i].count++
+						grp.aggregators[i].hasValue = true
+						continue
+					}
+
+					// Get column value
+					_, idx := meta.Schema.ColumnByName(agg.Arg)
+					if idx >= 0 {
+						val = row[idx]
+					} else {
+						continue
+					}
+
+					if val.IsNull {
+						continue
+					}
+
+					grp.aggregators[i].hasValue = true
+					grp.aggregators[i].count++
+
+					switch agg.Function {
+					case "SUM", "AVG":
+						switch val.Type {
+						case catalog.TypeInt32:
+							grp.aggregators[i].sum += int64(val.Int32)
+						case catalog.TypeInt64:
+							grp.aggregators[i].sum += val.Int64
+						}
+					case "MIN":
+						if !grp.aggregators[i].hasValue || compareValuesForSort(val, grp.aggregators[i].min) < 0 {
+							grp.aggregators[i].min = val
+						}
+					case "MAX":
+						if !grp.aggregators[i].hasValue || compareValuesForSort(val, grp.aggregators[i].max) > 0 {
+							grp.aggregators[i].max = val
+						}
+					}
+				}
+			}
+		}
+
+		// Build result rows for this grouping set
+		for _, keyStr := range groupOrder {
+			grp := groups[keyStr]
+			resultRow := make([]catalog.Value, len(stmt.Columns))
+
+			for i, colInfo := range columnInfos {
+				if colInfo.isAggregate {
+					agg := colInfo.aggregate
+					aggState := grp.aggregators[i]
+
+					switch agg.Function {
+					case "COUNT":
+						resultRow[i] = catalog.NewInt64(aggState.count)
+					case "SUM":
+						if aggState.hasValue {
+							resultRow[i] = catalog.NewInt64(aggState.sum)
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeInt64)
+						}
+					case "AVG":
+						if aggState.count > 0 {
+							avg := aggState.sum / aggState.count
+							resultRow[i] = catalog.NewInt64(avg)
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeInt64)
+						}
+					case "MIN":
+						if aggState.hasValue {
+							resultRow[i] = aggState.min
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeUnknown)
+						}
+					case "MAX":
+						if aggState.hasValue {
+							resultRow[i] = aggState.max
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeUnknown)
+						}
+					}
+				} else if colInfo.isGrouping {
+					// GROUPING() function: 1 if column is rolled up (NULL), 0 otherwise
+					colInSet := groupColSet[colInfo.groupingArg]
+					if colInSet {
+						resultRow[i] = catalog.NewInt64(0) // Column is in grouping set
+					} else {
+						resultRow[i] = catalog.NewInt64(1) // Column is rolled up (super-aggregate)
+					}
+				} else if colInfo.colName != "" {
+					// Regular column - get from group key if in this grouping set
+					if _, ok := groupColSet[colInfo.colName]; ok {
+						// Find the position in group key
+						for j, col := range gs.Columns {
+							if col == colInfo.colName {
+								resultRow[i] = grp.groupKey[j]
+								break
+							}
+						}
+					} else {
+						// Column not in this grouping set - return NULL
+						resultRow[i] = catalog.Null(catalog.TypeUnknown)
+					}
+				}
+			}
+
+			resultRows = append(resultRows, resultRow)
+		}
+
+		// Handle empty group (grand total when grouping set is empty)
+		// Only add if no rows were produced from the regular loop (which means no data)
+		if len(gs.Columns) == 0 && len(allRows) > 0 && len(groupOrder) == 0 {
+			resultRow := make([]catalog.Value, len(stmt.Columns))
+
+			// Calculate aggregates over all rows
+			var grandTotalAggs []aggregatorState
+			grandTotalAggs = make([]aggregatorState, len(stmt.Columns))
+
+			for _, row := range allRows {
+				for i, colInfo := range columnInfos {
+					if colInfo.isAggregate {
+						agg := colInfo.aggregate
+						if agg.Arg == "*" {
+							grandTotalAggs[i].count++
+							grandTotalAggs[i].hasValue = true
+							continue
+						}
+
+						_, idx := meta.Schema.ColumnByName(agg.Arg)
+						if idx < 0 {
+							continue
+						}
+						val := row[idx]
+						if val.IsNull {
+							continue
+						}
+
+						grandTotalAggs[i].hasValue = true
+						grandTotalAggs[i].count++
+
+						switch agg.Function {
+						case "SUM", "AVG":
+							switch val.Type {
+							case catalog.TypeInt32:
+								grandTotalAggs[i].sum += int64(val.Int32)
+							case catalog.TypeInt64:
+								grandTotalAggs[i].sum += val.Int64
+							}
+						case "MIN":
+							if !grandTotalAggs[i].hasValue || compareValuesForSort(val, grandTotalAggs[i].min) < 0 {
+								grandTotalAggs[i].min = val
+							}
+						case "MAX":
+							if !grandTotalAggs[i].hasValue || compareValuesForSort(val, grandTotalAggs[i].max) > 0 {
+								grandTotalAggs[i].max = val
+							}
+						}
+					}
+				}
+			}
+
+			for i, colInfo := range columnInfos {
+				if colInfo.isAggregate {
+					agg := colInfo.aggregate
+					aggState := grandTotalAggs[i]
+
+					switch agg.Function {
+					case "COUNT":
+						resultRow[i] = catalog.NewInt64(aggState.count)
+					case "SUM":
+						if aggState.hasValue {
+							resultRow[i] = catalog.NewInt64(aggState.sum)
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeInt64)
+						}
+					case "AVG":
+						if aggState.count > 0 {
+							resultRow[i] = catalog.NewInt64(aggState.sum / aggState.count)
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeInt64)
+						}
+					case "MIN":
+						if aggState.hasValue {
+							resultRow[i] = aggState.min
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeUnknown)
+						}
+					case "MAX":
+						if aggState.hasValue {
+							resultRow[i] = aggState.max
+						} else {
+							resultRow[i] = catalog.Null(catalog.TypeUnknown)
+						}
+					}
+				} else if colInfo.isGrouping {
+					// All columns are rolled up in grand total
+					resultRow[i] = catalog.NewInt32(1)
+				} else {
+					// Regular columns are NULL in grand total
+					resultRow[i] = catalog.Null(catalog.TypeUnknown)
+				}
+			}
+
+			resultRows = append(resultRows, resultRow)
+		}
+	}
+
+	// Handle empty result (no rows matched WHERE)
+	if len(resultRows) == 0 && len(stmt.GroupingSets) > 0 {
+		// Check if there's a grand total grouping set
+		for _, gs := range stmt.GroupingSets {
+			if len(gs.Columns) == 0 {
+				resultRow := make([]catalog.Value, len(stmt.Columns))
+				for i, colInfo := range columnInfos {
+					if colInfo.isAggregate {
+						switch colInfo.aggregate.Function {
+						case "COUNT":
+							resultRow[i] = catalog.NewInt64(0)
+						default:
+							resultRow[i] = catalog.Null(catalog.TypeUnknown)
+						}
+					} else if colInfo.isGrouping {
+						resultRow[i] = catalog.NewInt32(1)
+					} else {
+						resultRow[i] = catalog.Null(catalog.TypeUnknown)
+					}
+				}
+				resultRows = append(resultRows, resultRow)
+				break
+			}
+		}
+	}
+
+	// Apply HAVING filter if present
+	if stmt.Having != nil {
+		var filteredRows [][]catalog.Value
+		for _, row := range resultRows {
+			// Build a schema for evaluation
+			havingSchema := &catalog.Schema{
+				Columns: make([]catalog.Column, len(outputCols)),
+			}
+			for i, name := range outputCols {
+				havingSchema.Columns[i] = catalog.Column{Name: name}
+			}
+			match, err := e.evalCondition(stmt.Having, havingSchema, row)
+			if err != nil {
+				return nil, fmt.Errorf("error evaluating HAVING: %w", err)
+			}
+			if match {
+				filteredRows = append(filteredRows, row)
+			}
+		}
+		resultRows = filteredRows
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			found := false
+			for j, col := range outputCols {
+				if strings.EqualFold(col, ob.Column) {
+					orderByIndices[i] = j
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("ORDER BY column not in result: %s", ob.Column)
+			}
+		}
+		sortJoinedRows(resultRows, orderByIndices, stmt.OrderBy)
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// groupingSetState holds state for a single group in GROUPING SETS processing.
+type groupingSetState struct {
+	groupKey    []catalog.Value
+	aggregators []aggregatorState
 }
 
 // deduplicateRows removes duplicate rows from the result set.
