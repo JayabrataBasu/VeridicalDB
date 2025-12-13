@@ -4207,6 +4207,186 @@ func TestWindowFunctionAggregate(t *testing.T) {
 	}
 }
 
+// TestWindowFrameExecution tests window frame specification execution.
+func TestWindowFrameExecution(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE frame_test (id INT, value INT);")
+
+	executeSQL(t, executor, "INSERT INTO frame_test VALUES (1, 10);")
+	executeSQL(t, executor, "INSERT INTO frame_test VALUES (2, 20);")
+	executeSQL(t, executor, "INSERT INTO frame_test VALUES (3, 30);")
+	executeSQL(t, executor, "INSERT INTO frame_test VALUES (4, 40);")
+	executeSQL(t, executor, "INSERT INTO frame_test VALUES (5, 50);")
+
+	// Test 1: SUM with ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING (moving window of 3)
+	// Row 1: sum(10) = 10 (can only look forward)
+	// Row 2: sum(10,20,30) = 60
+	// Row 3: sum(20,30,40) = 90
+	// Row 4: sum(30,40,50) = 120
+	// Row 5: sum(40,50) = 90 (can only look back)
+	result := executeSQL(t, executor, `
+		SELECT id, value, SUM(value) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) as moving_sum
+		FROM frame_test;
+	`)
+
+	if len(result.Rows) != 5 {
+		t.Errorf("Test 1: Expected 5 rows, got %d", len(result.Rows))
+	}
+
+	expectedMovingSums := []int64{30, 60, 90, 120, 90}
+	for i, row := range result.Rows {
+		if row[2].Type == catalog.TypeInt64 {
+			if row[2].Int64 != expectedMovingSums[i] {
+				t.Errorf("Test 1 Row %d: Expected moving sum %d, got %d", i+1, expectedMovingSums[i], row[2].Int64)
+			}
+		}
+	}
+
+	// Test 2: COUNT with ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW (default behavior)
+	// Row 1: count = 1
+	// Row 2: count = 2
+	// Row 3: count = 3
+	// Row 4: count = 4
+	// Row 5: count = 5
+	result2 := executeSQL(t, executor, `
+		SELECT id, COUNT(*) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as running_count
+		FROM frame_test;
+	`)
+
+	if len(result2.Rows) != 5 {
+		t.Errorf("Test 2: Expected 5 rows, got %d", len(result2.Rows))
+	}
+
+	for i, row := range result2.Rows {
+		expected := int64(i + 1)
+		if row[1].Type == catalog.TypeInt64 && row[1].Int64 != expected {
+			t.Errorf("Test 2 Row %d: Expected count %d, got %d", i+1, expected, row[1].Int64)
+		}
+	}
+
+	// Test 3: AVG with ROWS BETWEEN 2 PRECEDING AND CURRENT ROW (3-row moving average)
+	// Row 1: avg(10) = 10
+	// Row 2: avg(10,20) = 15
+	// Row 3: avg(10,20,30) = 20
+	// Row 4: avg(20,30,40) = 30
+	// Row 5: avg(30,40,50) = 40
+	result3 := executeSQL(t, executor, `
+		SELECT id, AVG(value) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) as moving_avg
+		FROM frame_test;
+	`)
+
+	if len(result3.Rows) != 5 {
+		t.Errorf("Test 3: Expected 5 rows, got %d", len(result3.Rows))
+	}
+
+	expectedMovingAvgs := []int64{10, 15, 20, 30, 40}
+	for i, row := range result3.Rows {
+		if row[1].Type == catalog.TypeInt64 {
+			if row[1].Int64 != expectedMovingAvgs[i] {
+				t.Errorf("Test 3 Row %d: Expected moving avg %d, got %d", i+1, expectedMovingAvgs[i], row[1].Int64)
+			}
+		}
+	}
+
+	// Test 4: MIN with ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING (entire partition)
+	// All rows should have MIN = 10
+	result4 := executeSQL(t, executor, `
+		SELECT id, MIN(value) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as global_min
+		FROM frame_test;
+	`)
+
+	if len(result4.Rows) != 5 {
+		t.Errorf("Test 4: Expected 5 rows, got %d", len(result4.Rows))
+	}
+
+	for i, row := range result4.Rows {
+		var minVal int64
+		if row[1].Type == catalog.TypeInt64 {
+			minVal = row[1].Int64
+		} else if row[1].Type == catalog.TypeInt32 {
+			minVal = int64(row[1].Int32)
+		}
+		if minVal != 10 {
+			t.Errorf("Test 4 Row %d: Expected global min 10, got %d", i+1, minVal)
+		}
+	}
+
+	// Test 5: MAX with ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
+	// Row 1: max(10,20,30,40,50) = 50
+	// Row 2: max(20,30,40,50) = 50
+	// Row 3: max(30,40,50) = 50
+	// Row 4: max(40,50) = 50
+	// Row 5: max(50) = 50
+	result5 := executeSQL(t, executor, `
+		SELECT id, MAX(value) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) as future_max
+		FROM frame_test;
+	`)
+
+	if len(result5.Rows) != 5 {
+		t.Errorf("Test 5: Expected 5 rows, got %d", len(result5.Rows))
+	}
+
+	for i, row := range result5.Rows {
+		var maxVal int64
+		if row[1].Type == catalog.TypeInt64 {
+			maxVal = row[1].Int64
+		} else if row[1].Type == catalog.TypeInt32 {
+			maxVal = int64(row[1].Int32)
+		}
+		if maxVal != 50 {
+			t.Errorf("Test 5 Row %d: Expected future max 50, got %d", i+1, maxVal)
+		}
+	}
+
+	// Test 6: FIRST_VALUE with default frame (UNBOUNDED PRECEDING TO CURRENT ROW)
+	// All rows should see first value = 10
+	result6 := executeSQL(t, executor, `
+		SELECT id, FIRST_VALUE(value) OVER (ORDER BY id) as first_val
+		FROM frame_test;
+	`)
+
+	if len(result6.Rows) != 5 {
+		t.Errorf("Test 6: Expected 5 rows, got %d", len(result6.Rows))
+	}
+
+	for i, row := range result6.Rows {
+		var firstVal int64
+		if row[1].Type == catalog.TypeInt64 {
+			firstVal = row[1].Int64
+		} else if row[1].Type == catalog.TypeInt32 {
+			firstVal = int64(row[1].Int32)
+		}
+		if firstVal != 10 {
+			t.Errorf("Test 6 Row %d: Expected first value 10, got %d", i+1, firstVal)
+		}
+	}
+
+	// Test 7: LAST_VALUE with full frame
+	// All rows should see last value = 50
+	result7 := executeSQL(t, executor, `
+		SELECT id, LAST_VALUE(value) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as last_val
+		FROM frame_test;
+	`)
+
+	if len(result7.Rows) != 5 {
+		t.Errorf("Test 7: Expected 5 rows, got %d", len(result7.Rows))
+	}
+
+	for i, row := range result7.Rows {
+		var lastVal int64
+		if row[1].Type == catalog.TypeInt64 {
+			lastVal = row[1].Int64
+		} else if row[1].Type == catalog.TypeInt32 {
+			lastVal = int64(row[1].Int32)
+		}
+		if lastVal != 50 {
+			t.Errorf("Test 7 Row %d: Expected last value 50, got %d", i+1, lastVal)
+		}
+	}
+}
+
 // TestNthValue tests NTH_VALUE window function.
 func TestNthValue(t *testing.T) {
 	tm := setupTestTableManager(t)
@@ -4220,9 +4400,13 @@ func TestNthValue(t *testing.T) {
 	executeSQL(t, executor, "INSERT INTO nth_test VALUES (4, 'Sales', 60000);")
 	executeSQL(t, executor, "INSERT INTO nth_test VALUES (5, 'Sales', 65000);")
 
-	// Test NTH_VALUE - get the 2nd salary for each department (ordered by salary DESC)
+	// Test NTH_VALUE with explicit ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+	// This ensures we get the 2nd value from the entire partition
 	result := executeSQL(t, executor, `
-		SELECT id, department, salary, NTH_VALUE(salary, 2) OVER (PARTITION BY department ORDER BY salary DESC) as second_highest
+		SELECT id, department, salary, NTH_VALUE(salary, 2) OVER (
+			PARTITION BY department ORDER BY salary DESC
+			ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+		) as second_highest
 		FROM nth_test;
 	`)
 

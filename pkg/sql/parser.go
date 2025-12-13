@@ -3206,14 +3206,19 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 		}
 		p.nextToken() // consume ROWS/RANGE
 
-		// Parse frame bound
+		// Check for BETWEEN keyword (optional, for full syntax: ROWS BETWEEN ... AND ...)
+		if p.curTokenIs(TOKEN_BETWEEN) {
+			p.nextToken() // consume BETWEEN
+		}
+
+		// Parse frame start bound
 		frameBound, err := p.parseFrameBound()
 		if err != nil {
 			return nil, err
 		}
 		spec.FrameStart = frameBound
 
-		// Check for BETWEEN ... AND ...
+		// Check for AND ... (end bound)
 		if p.curTokenIs(TOKEN_AND) {
 			p.nextToken() // consume AND
 			endBound, err := p.parseFrameBound()

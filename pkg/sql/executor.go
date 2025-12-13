@@ -6258,7 +6258,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			}
 
 		case "SUM":
-			// Running SUM or total SUM depending on frame
+			// SUM with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("SUM requires exactly 1 argument")
 			}
@@ -6271,28 +6271,38 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			// Calculate running sum
-			var runningSum int64
-			for _, rowIdx := range rowIndices {
-				val := rows[rowIdx][colIdx]
-				if !val.IsNull {
-					if val.Type == catalog.TypeInt32 {
-						runningSum += int64(val.Int32)
-					} else if val.Type == catalog.TypeInt64 {
-						runningSum += val.Int64
-					}
+			// Use frame bounds for each row
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
+					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				} else {
+					sum := computeFrameSum(rows, rowIndices, colIdx, startIdx, endIdx)
+					result[rowIdx] = catalog.NewInt64(sum)
 				}
-				result[rowIdx] = catalog.NewInt64(runningSum)
 			}
 
 		case "COUNT":
-			// Running COUNT
+			// COUNT with frame support
+			colIdx := -1 // -1 means COUNT(*)
+			if len(wf.Args) == 1 {
+				if colRef, ok := wf.Args[0].(*ColumnRef); ok {
+					_, colIdx = schema.ColumnByName(colRef.Name)
+				}
+			}
+
 			for i, rowIdx := range rowIndices {
-				result[rowIdx] = catalog.NewInt64(int64(i + 1))
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
+					result[rowIdx] = catalog.NewInt64(0)
+				} else {
+					count := computeFrameCount(rows, rowIndices, colIdx, startIdx, endIdx, colIdx < 0)
+					result[rowIdx] = catalog.NewInt64(count)
+				}
 			}
 
 		case "AVG":
-			// Running AVG
+			// AVG with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("AVG requires exactly 1 argument")
 			}
@@ -6305,26 +6315,23 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			var runningSum int64
-			count := 0
-			for _, rowIdx := range rowIndices {
-				val := rows[rowIdx][colIdx]
-				if !val.IsNull {
-					if val.Type == catalog.TypeInt32 {
-						runningSum += int64(val.Int32)
-					} else if val.Type == catalog.TypeInt64 {
-						runningSum += val.Int64
-					}
-					count++
-				}
-				if count > 0 {
-					result[rowIdx] = catalog.NewInt64(runningSum / int64(count))
-				} else {
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
 					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				} else {
+					sum := computeFrameSum(rows, rowIndices, colIdx, startIdx, endIdx)
+					count := computeFrameCount(rows, rowIndices, colIdx, startIdx, endIdx, false)
+					if count > 0 {
+						result[rowIdx] = catalog.NewInt64(sum / count)
+					} else {
+						result[rowIdx] = catalog.Null(catalog.TypeInt64)
+					}
 				}
 			}
 
 		case "MIN":
+			// MIN with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("MIN requires exactly 1 argument")
 			}
@@ -6337,19 +6344,17 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			var minVal catalog.Value
-			minVal.IsNull = true
-			for _, rowIdx := range rowIndices {
-				val := rows[rowIdx][colIdx]
-				if !val.IsNull {
-					if minVal.IsNull || compareValuesForSort(val, minVal) < 0 {
-						minVal = val
-					}
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
+					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				} else {
+					result[rowIdx] = computeFrameMin(rows, rowIndices, colIdx, startIdx, endIdx)
 				}
-				result[rowIdx] = minVal
 			}
 
 		case "MAX":
+			// MAX with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("MAX requires exactly 1 argument")
 			}
@@ -6362,16 +6367,13 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			var maxVal catalog.Value
-			maxVal.IsNull = true
-			for _, rowIdx := range rowIndices {
-				val := rows[rowIdx][colIdx]
-				if !val.IsNull {
-					if maxVal.IsNull || compareValuesForSort(val, maxVal) > 0 {
-						maxVal = val
-					}
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
+					result[rowIdx] = catalog.Null(catalog.TypeInt64)
+				} else {
+					result[rowIdx] = computeFrameMax(rows, rowIndices, colIdx, startIdx, endIdx)
 				}
-				result[rowIdx] = maxVal
 			}
 
 		case "LAG":
@@ -6465,6 +6467,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			}
 
 		case "FIRST_VALUE":
+			// FIRST_VALUE with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("FIRST_VALUE requires exactly 1 argument")
 			}
@@ -6477,14 +6480,17 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			if len(rowIndices) > 0 {
-				firstVal := rows[rowIndices[0]][colIdx]
-				for _, rowIdx := range rowIndices {
-					result[rowIdx] = firstVal
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 || startIdx > endIdx || startIdx >= len(rowIndices) {
+					result[rowIdx] = catalog.Null(schema.Columns[colIdx].Type)
+				} else {
+					result[rowIdx] = rows[rowIndices[startIdx]][colIdx]
 				}
 			}
 
 		case "LAST_VALUE":
+			// LAST_VALUE with frame support
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("LAST_VALUE requires exactly 1 argument")
 			}
@@ -6497,14 +6503,24 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
 			}
 
-			// Default frame is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-			// So LAST_VALUE returns current row's value by default
 			for i, rowIdx := range rowIndices {
-				result[rowIdx] = rows[rowIndices[i]][colIdx]
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 || startIdx > endIdx || endIdx >= len(rowIndices) {
+					if endIdx >= len(rowIndices) {
+						endIdx = len(rowIndices) - 1
+					}
+					if endIdx < 0 || startIdx > endIdx {
+						result[rowIdx] = catalog.Null(schema.Columns[colIdx].Type)
+					} else {
+						result[rowIdx] = rows[rowIndices[endIdx]][colIdx]
+					}
+				} else {
+					result[rowIdx] = rows[rowIndices[endIdx]][colIdx]
+				}
 			}
 
 		case "NTH_VALUE":
-			// NTH_VALUE(expr, n) returns the value of expr from the nth row of the window frame
+			// NTH_VALUE with frame support - returns value from nth row of the window frame
 			if len(wf.Args) != 2 {
 				return nil, fmt.Errorf("NTH_VALUE requires exactly 2 arguments")
 			}
@@ -6536,13 +6552,19 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, fmt.Errorf("NTH_VALUE second argument must be a positive integer")
 			}
 
-			// Return the nth value in the partition (1-based)
-			nIdx := int(nVal) - 1 // Convert to 0-based index
-			for _, rowIdx := range rowIndices {
-				if nIdx < len(rowIndices) {
+			// Return the nth value within the frame (1-based)
+			for i, rowIdx := range rowIndices {
+				startIdx, endIdx := getFrameBounds(i, len(rowIndices), wf.Over.FrameType, wf.Over.FrameStart, wf.Over.FrameEnd)
+				if startIdx < 0 {
+					result[rowIdx] = catalog.Null(schema.Columns[colIdx].Type)
+					continue
+				}
+				// Calculate the index within the frame
+				nIdx := startIdx + int(nVal) - 1 // Convert 1-based to absolute index within partition
+				if nIdx <= endIdx && nIdx < len(rowIndices) {
 					result[rowIdx] = rows[rowIndices[nIdx]][colIdx]
 				} else {
-					// If n is beyond partition size, return NULL
+					// If n is beyond frame size, return NULL
 					result[rowIdx] = catalog.Null(schema.Columns[colIdx].Type)
 				}
 			}
@@ -6608,4 +6630,145 @@ func valueToString(v catalog.Value) string {
 	default:
 		return "?"
 	}
+}
+
+// getFrameBounds calculates the start and end indices for a window frame.
+// Parameters:
+//   - currentIdx: index of current row within the partition (0-based)
+//   - partitionSize: total number of rows in the partition
+//   - frameType: "ROWS" or "RANGE" (empty means default)
+//   - frameStart: "UNBOUNDED PRECEDING", "CURRENT ROW", "n PRECEDING", "n FOLLOWING"
+//   - frameEnd: same as frameStart, or empty for single-bound frame
+//
+// Returns: startIdx, endIdx (inclusive) within the partition
+func getFrameBounds(currentIdx, partitionSize int, frameType, frameStart, frameEnd string) (int, int) {
+	// Default frame: RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+	if frameType == "" || frameStart == "" {
+		return 0, currentIdx
+	}
+
+	startIdx := parseFrameBoundIndex(frameStart, currentIdx, partitionSize, true)
+
+	// If no end bound specified, use same as start for single-bound frame
+	var endIdx int
+	if frameEnd == "" {
+		// Single bound - frame goes from start to current row
+		endIdx = currentIdx
+	} else {
+		endIdx = parseFrameBoundIndex(frameEnd, currentIdx, partitionSize, false)
+	}
+
+	// Clamp to valid bounds
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	if endIdx >= partitionSize {
+		endIdx = partitionSize - 1
+	}
+	if startIdx > endIdx {
+		// Empty frame
+		return -1, -1
+	}
+
+	return startIdx, endIdx
+}
+
+// parseFrameBoundIndex converts a frame bound string to an index.
+// isStart indicates if this is the start bound (for default handling).
+func parseFrameBoundIndex(bound string, currentIdx, partitionSize int, isStart bool) int {
+	switch bound {
+	case "UNBOUNDED PRECEDING":
+		return 0
+	case "UNBOUNDED FOLLOWING":
+		return partitionSize - 1
+	case "CURRENT ROW":
+		return currentIdx
+	default:
+		// Parse "n PRECEDING" or "n FOLLOWING"
+		parts := strings.Split(bound, " ")
+		if len(parts) == 2 {
+			n, err := strconv.Atoi(parts[0])
+			if err == nil {
+				if parts[1] == "PRECEDING" {
+					return currentIdx - n
+				} else if parts[1] == "FOLLOWING" {
+					return currentIdx + n
+				}
+			}
+		}
+		// Default: current row
+		return currentIdx
+	}
+}
+
+// computeFrameSum calculates the sum of values within a frame.
+func computeFrameSum(rows [][]catalog.Value, rowIndices []int, colIdx int, startIdx, endIdx int) int64 {
+	var sum int64
+	for i := startIdx; i <= endIdx && i < len(rowIndices); i++ {
+		if i < 0 {
+			continue
+		}
+		val := rows[rowIndices[i]][colIdx]
+		if !val.IsNull {
+			if val.Type == catalog.TypeInt32 {
+				sum += int64(val.Int32)
+			} else if val.Type == catalog.TypeInt64 {
+				sum += val.Int64
+			}
+		}
+	}
+	return sum
+}
+
+// computeFrameCount calculates the count of non-null values within a frame.
+func computeFrameCount(rows [][]catalog.Value, rowIndices []int, colIdx int, startIdx, endIdx int, countStar bool) int64 {
+	var count int64
+	for i := startIdx; i <= endIdx && i < len(rowIndices); i++ {
+		if i < 0 {
+			continue
+		}
+		if countStar {
+			count++
+		} else {
+			val := rows[rowIndices[i]][colIdx]
+			if !val.IsNull {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// computeFrameMin finds the minimum value within a frame.
+func computeFrameMin(rows [][]catalog.Value, rowIndices []int, colIdx int, startIdx, endIdx int) catalog.Value {
+	minVal := catalog.Value{IsNull: true}
+	for i := startIdx; i <= endIdx && i < len(rowIndices); i++ {
+		if i < 0 {
+			continue
+		}
+		val := rows[rowIndices[i]][colIdx]
+		if !val.IsNull {
+			if minVal.IsNull || compareValuesForSort(val, minVal) < 0 {
+				minVal = val
+			}
+		}
+	}
+	return minVal
+}
+
+// computeFrameMax finds the maximum value within a frame.
+func computeFrameMax(rows [][]catalog.Value, rowIndices []int, colIdx int, startIdx, endIdx int) catalog.Value {
+	maxVal := catalog.Value{IsNull: true}
+	for i := startIdx; i <= endIdx && i < len(rowIndices); i++ {
+		if i < 0 {
+			continue
+		}
+		val := rows[rowIndices[i]][colIdx]
+		if !val.IsNull {
+			if maxVal.IsNull || compareValuesForSort(val, maxVal) > 0 {
+				maxVal = val
+			}
+		}
+	}
+	return maxVal
 }

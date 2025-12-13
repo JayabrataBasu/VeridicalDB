@@ -19,59 +19,26 @@
 
 These features have parsing support but incomplete execution. **Complete these first.**
 
-### 1.1 Recursive CTEs
-- **Status:** Parsed, not executed recursively
-- **Current State:** `WITH RECURSIVE` keyword parses, but the CTE query only runs once (no iteration)
-- **What's Needed:**
-  - Detect recursive CTE (references itself in the query)
-  - Implement iterative execution:
-    1. Execute base case (non-recursive part)
-    2. Repeatedly execute recursive part using previous iteration's results
-    3. Stop when no new rows are produced (or hit iteration limit)
-  - Handle UNION vs UNION ALL in recursive part
-- **Files to Modify:**
-  - `pkg/sql/executor.go` - Add `executeRecursiveCTE()` function
-- **Difficulty:** Medium-Hard
-- **Estimated Time:** 4-6 hours
+### 1.1 Recursive CTEs ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Iterative fixed-point execution with UNION support
+- **Test:** `TestRecursiveCTE` in sql_test.go
 
-### 1.2 View Execution (SELECT FROM view)
-- **Status:** CREATE VIEW parsed and stored, SELECT from view not working
-- **Current State:** Views are stored in catalog but not resolved during SELECT
-- **What's Needed:**
-  - When resolving table name, check if it's a view
-  - If view, retrieve the stored SELECT query
-  - Execute the view's query as a subquery/derived table
-  - Apply any additional WHERE/ORDER BY from outer query
-- **Files to Modify:**
-  - `pkg/sql/executor.go` - Modify `executeSelect()` to check for views
-  - `pkg/catalog/catalog.go` - Ensure view retrieval works
-- **Difficulty:** Medium
-- **Estimated Time:** 3-4 hours
+### 1.2 View Execution (SELECT FROM view) ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** CREATE VIEW, DROP VIEW, SELECT FROM view with WHERE/JOIN
+- **Test:** `TestViewExecution` in sql_test.go
 
-### 1.3 Window Frame Execution
-- **Status:** Frame syntax parsed (`ROWS BETWEEN ... AND ...`), execution uses default frame
-- **Current State:** `ROWS`/`RANGE` with `UNBOUNDED PRECEDING`, `CURRENT ROW`, etc. are parsed but execution always uses partition-wide frames
-- **What's Needed:**
-  - In `executeSelectWithWindowFunctions()`, respect `FrameType`, `FrameStart`, `FrameEnd` from `WindowSpec`
-  - Implement sliding window for `ROWS n PRECEDING`
-  - Handle `RANGE` differently (value-based, not row-based)
-- **Files to Modify:**
-  - `pkg/sql/executor.go` - Modify window function execution
-- **Difficulty:** Medium-Hard
-- **Estimated Time:** 4-6 hours
+### 1.3 Window Frame Execution ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** ROWS BETWEEN with all bound types (UNBOUNDED PRECEDING/FOLLOWING, CURRENT ROW, n PRECEDING/FOLLOWING)
+- **Functions:** SUM, COUNT, AVG, MIN, MAX, FIRST_VALUE, LAST_VALUE, NTH_VALUE all support frames
+- **Test:** `TestWindowFrameExecution` in sql_test.go
 
-### 1.4 NTH_VALUE() Window Function
-- **Status:** Token exists, may lack execution
-- **Current State:** `TOKEN_NTH_VALUE` defined in lexer
-- **What's Needed:**
-  - Verify parser handles `NTH_VALUE(col, n)` syntax
-  - Add execution in window function handler
-  - Returns the nth value in the window frame
-- **Files to Modify:**
-  - `pkg/sql/parser.go` - Verify parsing
-  - `pkg/sql/executor.go` - Add to window function switch
-- **Difficulty:** Easy
-- **Estimated Time:** 1-2 hours
+### 1.4 NTH_VALUE() Window Function ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** NTH_VALUE(col, n) returns nth value within window frame
+- **Test:** `TestNthValue` in sql_test.go
 
 ---
 
@@ -358,10 +325,10 @@ Advanced features for future enhancement.
 ### Partially Implemented
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
-| Recursive CTEs | ⬜ Not Started | |
-| View Execution | ⬜ Not Started | |
-| Window Frame Execution | ⬜ Not Started | |
-| NTH_VALUE() | ⬜ Not Started | |
+| Recursive CTEs | ✅ Complete | Dec 2024 |
+| View Execution | ✅ Complete | Dec 2024 |
+| Window Frame Execution | ✅ Complete | Dec 2024 |
+| NTH_VALUE() | ✅ Complete | Dec 2024 |
 
 ### High Priority
 | Feature | Status | Completed Date |
@@ -397,11 +364,11 @@ Advanced features for future enhancement.
 
 ## Implementation Order
 
-1. **Phase 1: Complete Partial Implementations**
-   - [ ] 1.4 NTH_VALUE() (easiest, ~1 hour)
-   - [ ] 1.2 View Execution (~3-4 hours)
-   - [ ] 1.1 Recursive CTEs (~4-6 hours)
-   - [ ] 1.3 Window Frame Execution (~4-6 hours)
+1. **Phase 1: Complete Partial Implementations** ✅ COMPLETED
+   - [x] 1.4 NTH_VALUE() ✅
+   - [x] 1.2 View Execution ✅
+   - [x] 1.1 Recursive CTEs ✅
+   - [x] 1.3 Window Frame Execution ✅
 
 2. **Phase 2: High Priority Features**
    - [ ] 2.3 Multi-Row INSERT (easiest, ~2 hours)
