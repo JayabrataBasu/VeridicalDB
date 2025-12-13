@@ -432,12 +432,13 @@ type MergeAction struct {
 }
 
 // CTE represents a Common Table Expression definition.
-// WITH cte_name [(col1, col2, ...)] AS (SELECT ...)
+// WITH cte_name [(col1, col2, ...)] AS (SELECT ... [UNION ALL SELECT ...])
 type CTE struct {
-	Name      string      // CTE name
-	Columns   []string    // optional column aliases
-	Query     *SelectStmt // the query that defines the CTE
-	Recursive bool        // true for recursive CTE
+	Name       string      // CTE name
+	Columns    []string    // optional column aliases
+	Query      *SelectStmt // simple SELECT query (if not UNION)
+	UnionQuery *UnionStmt  // UNION query (for recursive CTEs)
+	Recursive  bool        // true for recursive CTE
 }
 
 // WithClause represents the WITH clause containing one or more CTEs.

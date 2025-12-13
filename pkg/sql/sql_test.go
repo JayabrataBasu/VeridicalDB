@@ -3263,6 +3263,90 @@ func TestViewParsing(t *testing.T) {
 	}
 }
 
+// TestViewExecution tests CREATE VIEW execution and SELECT from views.
+func TestViewExecution(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create base table
+	executeSQL(t, executor, "CREATE TABLE employees (id INT, name TEXT, department TEXT, salary INT);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (1, 'Alice', 'Engineering', 80000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (2, 'Bob', 'Engineering', 90000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (3, 'Carol', 'Sales', 60000);")
+	executeSQL(t, executor, "INSERT INTO employees VALUES (4, 'Dave', 'Sales', 70000);")
+
+	// Create a view
+	result := executeSQL(t, executor, "CREATE VIEW engineers AS SELECT id, name, salary FROM employees WHERE department = 'Engineering';")
+	if result.Message != "View 'engineers' created." {
+		t.Errorf("Expected view creation message, got: %s", result.Message)
+	}
+
+	// Select all from view
+	result = executeSQL(t, executor, "SELECT * FROM engineers;")
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 engineers, got %d", len(result.Rows))
+	}
+
+	// Select specific columns from view with filter
+	result = executeSQL(t, executor, "SELECT name FROM engineers WHERE salary > 85000;")
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 high-paid engineer, got %d", len(result.Rows))
+	}
+	if len(result.Rows) > 0 && result.Rows[0][0].Text != "Bob" {
+		t.Errorf("Expected Bob, got %s", result.Rows[0][0].Text)
+	}
+
+	// Create view with column aliases
+	result = executeSQL(t, executor, "CREATE VIEW sales_people (emp_id, emp_name, emp_salary) AS SELECT id, name, salary FROM employees WHERE department = 'Sales';")
+	if result.Message != "View 'sales_people' created." {
+		t.Errorf("Expected view creation message, got: %s", result.Message)
+	}
+
+	// Select from view with renamed columns
+	result = executeSQL(t, executor, "SELECT * FROM sales_people;")
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 sales people, got %d", len(result.Rows))
+	}
+	if len(result.Columns) != 3 || result.Columns[0] != "emp_id" || result.Columns[1] != "emp_name" || result.Columns[2] != "emp_salary" {
+		t.Errorf("Expected columns [emp_id, emp_name, emp_salary], got %v", result.Columns)
+	}
+
+	// Test CREATE OR REPLACE VIEW
+	result = executeSQL(t, executor, "CREATE OR REPLACE VIEW engineers AS SELECT name, salary FROM employees WHERE department = 'Engineering';")
+	if result.Message != "View 'engineers' created." {
+		t.Errorf("Expected view creation message, got: %s", result.Message)
+	}
+
+	// Verify view was replaced (now only 2 columns)
+	result = executeSQL(t, executor, "SELECT * FROM engineers;")
+	if len(result.Columns) != 2 {
+		t.Errorf("Expected 2 columns after replacing view, got %d", len(result.Columns))
+	}
+
+	// Test DROP VIEW
+	result = executeSQL(t, executor, "DROP VIEW engineers;")
+	if result.Message != "View 'engineers' dropped." {
+		t.Errorf("Expected drop message, got: %s", result.Message)
+	}
+
+	// Verify view is dropped - this should fail
+	_, err := executeSQLWithError(executor, "SELECT * FROM engineers;")
+	if err == nil {
+		t.Error("Expected error selecting from dropped view")
+	}
+
+	// Test DROP VIEW IF EXISTS for non-existent view
+	result = executeSQL(t, executor, "DROP VIEW IF EXISTS nonexistent;")
+	// Should not error
+
+	// Test view already exists error
+	executeSQL(t, executor, "CREATE VIEW test_view AS SELECT * FROM employees;")
+	_, err = executeSQLWithError(executor, "CREATE VIEW test_view AS SELECT * FROM employees;")
+	if err == nil {
+		t.Error("Expected error for duplicate view creation")
+	}
+}
+
 // TestLeftJoin tests LEFT JOIN functionality.
 func TestLeftJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
@@ -4123,6 +4207,68 @@ func TestWindowFunctionAggregate(t *testing.T) {
 	}
 }
 
+// TestNthValue tests NTH_VALUE window function.
+func TestNthValue(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE nth_test (id INT, department TEXT, salary INT);")
+
+	executeSQL(t, executor, "INSERT INTO nth_test VALUES (1, 'Engineering', 80000);")
+	executeSQL(t, executor, "INSERT INTO nth_test VALUES (2, 'Engineering', 90000);")
+	executeSQL(t, executor, "INSERT INTO nth_test VALUES (3, 'Engineering', 70000);")
+	executeSQL(t, executor, "INSERT INTO nth_test VALUES (4, 'Sales', 60000);")
+	executeSQL(t, executor, "INSERT INTO nth_test VALUES (5, 'Sales', 65000);")
+
+	// Test NTH_VALUE - get the 2nd salary for each department (ordered by salary DESC)
+	result := executeSQL(t, executor, `
+		SELECT id, department, salary, NTH_VALUE(salary, 2) OVER (PARTITION BY department ORDER BY salary DESC) as second_highest
+		FROM nth_test;
+	`)
+
+	if len(result.Rows) != 5 {
+		t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+	}
+
+	// The 2nd highest salary in Engineering is 80000 (after 90000)
+	// The 2nd highest salary in Sales is 60000 (after 65000)
+	for _, row := range result.Rows {
+		dept := row[1].Text
+		nthVal := row[3]
+
+		if dept == "Engineering" {
+			if nthVal.Type == catalog.TypeInt64 && nthVal.Int64 != 80000 {
+				t.Errorf("Engineering: Expected NTH_VALUE(2) = 80000, got %d", nthVal.Int64)
+			} else if nthVal.Type == catalog.TypeInt32 && nthVal.Int32 != 80000 {
+				t.Errorf("Engineering: Expected NTH_VALUE(2) = 80000, got %d", nthVal.Int32)
+			}
+		} else if dept == "Sales" {
+			if nthVal.Type == catalog.TypeInt64 && nthVal.Int64 != 60000 {
+				t.Errorf("Sales: Expected NTH_VALUE(2) = 60000, got %d", nthVal.Int64)
+			} else if nthVal.Type == catalog.TypeInt32 && nthVal.Int32 != 60000 {
+				t.Errorf("Sales: Expected NTH_VALUE(2) = 60000, got %d", nthVal.Int32)
+			}
+		}
+	}
+
+	// Test NTH_VALUE with n > partition size - should return NULL
+	result2 := executeSQL(t, executor, `
+		SELECT id, department, NTH_VALUE(salary, 10) OVER (PARTITION BY department ORDER BY salary) as tenth_val
+		FROM nth_test;
+	`)
+
+	if len(result2.Rows) != 5 {
+		t.Errorf("Expected 5 rows, got %d", len(result2.Rows))
+	}
+
+	// All rows should have NULL for tenth value since partitions have < 10 rows
+	for _, row := range result2.Rows {
+		if !row[2].IsNull {
+			t.Errorf("Expected NULL for NTH_VALUE(10) when partition has fewer rows, got %v", row[2])
+		}
+	}
+}
+
 // TestLateralJoin tests LATERAL join functionality.
 func TestLateralJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
@@ -4908,6 +5054,44 @@ func TestCTEMultiple(t *testing.T) {
 		// cheap: Widget (100), Gizmo (150) = 2 products
 		if len(result.Rows) != 2 {
 			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+	})
+}
+
+// TestRecursiveCTE tests recursive CTE execution.
+func TestRecursiveCTE(t *testing.T) {
+	tm := setupTestTableManager(t)
+	exec := NewExecutor(tm)
+
+	// Create a hierarchy table for recursive CTE testing
+	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, manager_id INT)")
+	executeSQL(t, exec, "INSERT INTO employees VALUES (1, 'CEO', 0)")      // Top level
+	executeSQL(t, exec, "INSERT INTO employees VALUES (2, 'VP1', 1)")      // Reports to CEO
+	executeSQL(t, exec, "INSERT INTO employees VALUES (3, 'VP2', 1)")      // Reports to CEO
+	executeSQL(t, exec, "INSERT INTO employees VALUES (4, 'Manager1', 2)") // Reports to VP1
+	executeSQL(t, exec, "INSERT INTO employees VALUES (5, 'Manager2', 2)") // Reports to VP1
+	executeSQL(t, exec, "INSERT INTO employees VALUES (6, 'Worker1', 4)")  // Reports to Manager1
+
+	t.Run("recursive CTE - employee hierarchy", func(t *testing.T) {
+		// Find all employees who report (directly or indirectly) to employee id 1 (CEO)
+		result := executeSQL(t, exec, `
+			WITH RECURSIVE reports AS (
+				SELECT id, name, manager_id FROM employees WHERE manager_id = 1
+				UNION ALL
+				SELECT e.id, e.name, e.manager_id FROM employees e JOIN reports r ON e.manager_id = r.id
+			)
+			SELECT * FROM reports
+		`)
+
+		// Should get: VP1, VP2 (direct reports)
+		// Then: Manager1, Manager2 (report to VP1)
+		// Then: Worker1 (reports to Manager1)
+		// Total: 5 employees
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows (all reports to CEO), got %d", len(result.Rows))
+			for i, row := range result.Rows {
+				t.Logf("Row %d: %v", i, row)
+			}
 		}
 	})
 }

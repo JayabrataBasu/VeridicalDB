@@ -172,7 +172,17 @@ func (p *Parser) parseWith() (Statement, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse CTE query: %w", err)
 		}
-		cte.Query = cteQuery
+
+		// Check if there's a UNION/INTERSECT/EXCEPT after the SELECT
+		if p.curTokenIs(TOKEN_UNION) || p.curTokenIs(TOKEN_INTERSECT) || p.curTokenIs(TOKEN_EXCEPT) {
+			unionStmt, err := p.parseSetOperation(cteQuery)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse UNION in CTE: %w", err)
+			}
+			cte.UnionQuery = unionStmt
+		} else {
+			cte.Query = cteQuery
+		}
 
 		if err := p.expect(TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after CTE query: %w", err)

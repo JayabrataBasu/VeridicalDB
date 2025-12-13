@@ -17,7 +17,16 @@ type Executor struct {
 	tm              *catalog.TableManager
 	autoIncCounters map[string]int64 // table.column -> next value
 	autoIncMu       sync.Mutex
-	cteData         map[string]*Result // CTE name -> result (for WITH clause)
+	cteData         map[string]*Result  // CTE name -> result (for WITH clause)
+	views           map[string]*ViewDef // view name -> view definition
+	viewsMu         sync.RWMutex
+}
+
+// ViewDef stores a view definition.
+type ViewDef struct {
+	Name    string
+	Columns []string    // optional column aliases
+	Query   *SelectStmt // the SELECT that defines the view
 }
 
 // NewExecutor creates a new Executor.
@@ -25,6 +34,7 @@ func NewExecutor(tm *catalog.TableManager) *Executor {
 	return &Executor{
 		tm:              tm,
 		autoIncCounters: make(map[string]int64),
+		views:           make(map[string]*ViewDef),
 	}
 }
 
@@ -329,6 +339,15 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 				return e.executeSelectFromCTE(stmt, cteResult)
 			}
 		}
+
+		// Check if it's a view reference
+		e.viewsMu.RLock()
+		viewDef, isView := e.views[stmt.TableName]
+		e.viewsMu.RUnlock()
+		if isView {
+			return e.executeSelectFromView(stmt, viewDef)
+		}
+
 		return nil, err
 	}
 
@@ -383,8 +402,22 @@ func (e *Executor) executeSelectWithCTEs(stmt *SelectStmt) (*Result, error) {
 
 	// Execute each CTE and store results
 	for _, cte := range stmt.With.CTEs {
-		// Execute CTE query
-		cteResult, err := e.executeSelect(cte.Query)
+		var cteResult *Result
+		var err error
+
+		// Check if this is a recursive CTE
+		if cte.Recursive && cte.UnionQuery != nil {
+			cteResult, err = e.executeRecursiveCTE(&cte)
+		} else if cte.UnionQuery != nil {
+			// Non-recursive UNION in CTE
+			cteResult, err = e.executeUnion(cte.UnionQuery)
+		} else if cte.Query != nil {
+			// Simple SELECT CTE
+			cteResult, err = e.executeSelect(cte.Query)
+		} else {
+			err = fmt.Errorf("CTE '%s' has no query defined", cte.Name)
+		}
+
 		if err != nil {
 			e.cteData = oldCTEData // Restore on error
 			return nil, fmt.Errorf("error executing CTE '%s': %w", cte.Name, err)
@@ -412,6 +445,116 @@ func (e *Executor) executeSelectWithCTEs(stmt *SelectStmt) (*Result, error) {
 	e.cteData = oldCTEData
 
 	return result, err
+}
+
+// executeRecursiveCTE executes a recursive CTE with iterative fixed-point evaluation.
+// The CTE must have a UNION (or UNION ALL) structure:
+//   - Left side: base case (anchor query)
+//   - Right side: recursive case (references the CTE name)
+func (e *Executor) executeRecursiveCTE(cte *CTE) (*Result, error) {
+	const maxIterations = 1000 // Safety limit to prevent infinite loops
+
+	// Execute the base case (anchor query - left side of UNION)
+	baseResult, err := e.executeSelect(cte.UnionQuery.Left)
+	if err != nil {
+		return nil, fmt.Errorf("error executing base case of recursive CTE: %w", err)
+	}
+
+	// Initialize CTE result with base case
+	result := &Result{
+		Columns: make([]string, len(baseResult.Columns)),
+		Rows:    make([][]catalog.Value, len(baseResult.Rows)),
+	}
+	copy(result.Columns, baseResult.Columns)
+	for i, row := range baseResult.Rows {
+		result.Rows[i] = make([]catalog.Value, len(row))
+		copy(result.Rows[i], row)
+	}
+
+	// Store current CTE result for recursive queries to reference
+	e.cteData[cte.Name] = result
+
+	// Track working table (rows from previous iteration)
+	workingRows := baseResult.Rows
+
+	// Iteratively execute the recursive part
+	for iteration := 0; iteration < maxIterations; iteration++ {
+		// Update the CTE data with only the working rows for this iteration
+		workingResult := &Result{
+			Columns: result.Columns,
+			Rows:    workingRows,
+		}
+		e.cteData[cte.Name] = workingResult
+
+		// Execute the recursive query (right side of UNION)
+		recursiveResult, err := e.executeSelect(cte.UnionQuery.Right)
+		if err != nil {
+			return nil, fmt.Errorf("error executing recursive part of CTE (iteration %d): %w", iteration, err)
+		}
+
+		// Check if we got any new rows
+		if len(recursiveResult.Rows) == 0 {
+			// Fixed point reached - no more new rows
+			break
+		}
+
+		// Add new rows to result
+		newRows := recursiveResult.Rows
+
+		// If UNION (not UNION ALL), remove duplicates
+		if !cte.UnionQuery.All {
+			newRows = e.removeDuplicateRows(newRows, result.Rows)
+		}
+
+		if len(newRows) == 0 {
+			// No unique new rows - fixed point reached
+			break
+		}
+
+		// Add new rows to result
+		result.Rows = append(result.Rows, newRows...)
+
+		// Working table for next iteration is the new rows
+		workingRows = newRows
+	}
+
+	// Update final CTE result
+	e.cteData[cte.Name] = result
+
+	return result, nil
+}
+
+// removeDuplicateRows removes rows from newRows that already exist in existingRows.
+func (e *Executor) removeDuplicateRows(newRows, existingRows [][]catalog.Value) [][]catalog.Value {
+	var uniqueRows [][]catalog.Value
+
+	for _, newRow := range newRows {
+		isDuplicate := false
+		for _, existingRow := range existingRows {
+			if e.rowsEqual(newRow, existingRow) {
+				isDuplicate = true
+				break
+			}
+		}
+		if !isDuplicate {
+			uniqueRows = append(uniqueRows, newRow)
+		}
+	}
+
+	return uniqueRows
+}
+
+// rowsEqual checks if two rows have equal values.
+func (e *Executor) rowsEqual(row1, row2 []catalog.Value) bool {
+	if len(row1) != len(row2) {
+		return false
+	}
+	for i := range row1 {
+		if compareValuesForSort(row1[i], row2[i]) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // executeSelectFromCTE executes a SELECT against a CTE result set.
@@ -985,6 +1128,13 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		return e.executeSelectWithLateralJoin(stmt, leftMeta, join)
 	}
 
+	// Check if the right table is a CTE
+	if e.cteData != nil {
+		if cteResult, isCTE := e.cteData[join.TableName]; isCTE {
+			return e.executeSelectWithJoinCTE(stmt, leftMeta, join, cteResult)
+		}
+	}
+
 	// Get the right table metadata
 	rightMeta, err := e.tm.Catalog().GetTable(join.TableName)
 	if err != nil {
@@ -1313,6 +1463,113 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 		} else {
 			resultRows = deduplicateRows(resultRows)
 		}
+	}
+
+	return &Result{
+		Columns: outputCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// executeSelectWithJoinCTE handles JOIN where the right side is a CTE.
+func (e *Executor) executeSelectWithJoinCTE(stmt *SelectStmt, leftMeta *catalog.TableMeta, join JoinClause, cteResult *Result) (*Result, error) {
+	// Build CTE schema from result
+	cteSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, len(cteResult.Columns)),
+	}
+	for i, colName := range cteResult.Columns {
+		colType := catalog.TypeText
+		if len(cteResult.Rows) > 0 {
+			colType = cteResult.Rows[0][i].Type
+		}
+		cteSchema.Columns[i] = catalog.Column{Name: colName, Type: colType}
+	}
+
+	// Build combined schema with table prefixes
+	combinedSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, 0, len(leftMeta.Schema.Columns)+len(cteSchema.Columns)),
+	}
+	colTableMap := make(map[string]int)
+
+	// Left table columns
+	leftLen := len(leftMeta.Schema.Columns)
+	for i, col := range leftMeta.Schema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colTableMap[stmt.TableName+"."+col.Name] = i
+		if stmt.TableAlias != "" {
+			colTableMap[stmt.TableAlias+"."+col.Name] = i
+		}
+		colTableMap[col.Name] = i
+	}
+
+	// CTE columns (right side)
+	cteLen := len(cteSchema.Columns)
+	for i, col := range cteSchema.Columns {
+		combinedSchema.Columns = append(combinedSchema.Columns, col)
+		colTableMap[join.TableName+"."+col.Name] = leftLen + i
+		if join.TableAlias != "" {
+			colTableMap[join.TableAlias+"."+col.Name] = leftLen + i
+		}
+		if _, exists := colTableMap[col.Name]; !exists {
+			colTableMap[col.Name] = leftLen + i
+		}
+	}
+
+	// Perform nested loop join
+	var joinedRows [][]catalog.Value
+
+	err := e.scanTable(stmt.TableName, leftMeta.Schema, func(leftRID storage.RID, leftRow []catalog.Value) (bool, error) {
+		for _, cteRow := range cteResult.Rows {
+			combinedRow := make([]catalog.Value, leftLen+cteLen)
+			copy(combinedRow, leftRow)
+			copy(combinedRow[leftLen:], cteRow)
+
+			match, err := e.evalJoinCondition(join.Condition, combinedSchema, combinedRow, colTableMap)
+			if err != nil {
+				return false, err
+			}
+			if match {
+				joinedRows = append(joinedRows, combinedRow)
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine output columns
+	var outputCols []string
+	var colIndices []int
+
+	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+		for i, c := range combinedSchema.Columns {
+			outputCols = append(outputCols, c.Name)
+			colIndices = append(colIndices, i)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			idx, ok := colTableMap[sc.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			if sc.Alias != "" {
+				outputCols = append(outputCols, sc.Alias)
+			} else {
+				outputCols = append(outputCols, sc.Name)
+			}
+			colIndices = append(colIndices, idx)
+		}
+	}
+
+	// Project columns
+	resultRows := make([][]catalog.Value, len(joinedRows))
+	for i, row := range joinedRows {
+		projectedRow := make([]catalog.Value, len(colIndices))
+		for j, idx := range colIndices {
+			projectedRow[j] = row[idx]
+		}
+		resultRows[i] = projectedRow
 	}
 
 	return &Result{
@@ -5261,24 +5518,278 @@ func (e *Executor) validateCheckConstraints(schema *catalog.Schema, values []cat
 }
 
 // executeCreateView creates a new view.
-// Note: This is a simplified implementation that stores view definitions in memory.
-// A production implementation would persist view metadata to the catalog.
 func (e *Executor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
-	// For now, views are not fully implemented - we return an error
-	// A real implementation would:
-	// 1. Validate the SELECT query
-	// 2. Store the view definition in the catalog
-	// 3. Allow SELECT from the view by expanding it
-	return nil, fmt.Errorf("CREATE VIEW is not yet fully implemented (view definition parsed successfully)")
+	e.viewsMu.Lock()
+	defer e.viewsMu.Unlock()
+
+	// Check if view already exists
+	if _, exists := e.views[stmt.ViewName]; exists {
+		if stmt.OrReplace {
+			// Replace existing view
+			delete(e.views, stmt.ViewName)
+		} else {
+			return nil, fmt.Errorf("view '%s' already exists", stmt.ViewName)
+		}
+	}
+
+	// Validate the SELECT query by executing it (dry run to check for errors)
+	// We don't actually need the result, just validation
+	_, err := e.executeSelect(stmt.Query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid view query: %w", err)
+	}
+
+	// Store the view definition
+	e.views[stmt.ViewName] = &ViewDef{
+		Name:    stmt.ViewName,
+		Columns: stmt.Columns,
+		Query:   stmt.Query,
+	}
+
+	return &Result{Message: fmt.Sprintf("View '%s' created.", stmt.ViewName)}, nil
 }
 
 // executeDropView drops a view.
 func (e *Executor) executeDropView(stmt *DropViewStmt) (*Result, error) {
-	// For now, views are not fully implemented
-	if stmt.IfExists {
-		return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
+	e.viewsMu.Lock()
+	defer e.viewsMu.Unlock()
+
+	if _, exists := e.views[stmt.ViewName]; !exists {
+		if stmt.IfExists {
+			return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
+		}
+		return nil, fmt.Errorf("view '%s' does not exist", stmt.ViewName)
 	}
-	return nil, fmt.Errorf("DROP VIEW is not yet fully implemented")
+
+	delete(e.views, stmt.ViewName)
+	return &Result{Message: fmt.Sprintf("View '%s' dropped.", stmt.ViewName)}, nil
+}
+
+// executeSelectFromView executes a SELECT from a view by expanding the view definition.
+func (e *Executor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef) (*Result, error) {
+	// First, execute the view's underlying query
+	viewResult, err := e.executeSelect(viewDef.Query)
+	if err != nil {
+		return nil, fmt.Errorf("error executing view '%s': %w", viewDef.Name, err)
+	}
+
+	// If view has column aliases, apply them
+	if len(viewDef.Columns) > 0 {
+		if len(viewDef.Columns) != len(viewResult.Columns) {
+			return nil, fmt.Errorf("view '%s' column count mismatch: %d aliases for %d columns",
+				viewDef.Name, len(viewDef.Columns), len(viewResult.Columns))
+		}
+		for i, alias := range viewDef.Columns {
+			viewResult.Columns[i] = alias
+		}
+	}
+
+	// If the outer query is SELECT * FROM view, just return the view result
+	if len(outerStmt.Columns) == 1 && outerStmt.Columns[0].Star &&
+		outerStmt.Where == nil && len(outerStmt.OrderBy) == 0 &&
+		outerStmt.Limit == nil {
+		return viewResult, nil
+	}
+
+	// Build a schema from the view result
+	viewSchema := &catalog.Schema{
+		Columns: make([]catalog.Column, len(viewResult.Columns)),
+	}
+	colIndexMap := make(map[string]int)
+	for i, colName := range viewResult.Columns {
+		// Infer type from first row, or default to TypeText
+		colType := catalog.TypeText
+		if len(viewResult.Rows) > 0 {
+			colType = viewResult.Rows[0][i].Type
+		}
+		viewSchema.Columns[i] = catalog.Column{Name: colName, Type: colType}
+		colIndexMap[colName] = i
+	}
+
+	// Apply WHERE filter if present
+	filteredRows := viewResult.Rows
+	if outerStmt.Where != nil {
+		filteredRows = nil
+		for _, row := range viewResult.Rows {
+			match, err := e.evaluateExpressionWithRow(outerStmt.Where, row, viewSchema)
+			if err != nil {
+				return nil, err
+			}
+			if match.Type == catalog.TypeBool && match.Bool {
+				filteredRows = append(filteredRows, row)
+			}
+		}
+	}
+
+	// Build output columns
+	var resultCols []string
+	var resultRows [][]catalog.Value
+
+	if len(outerStmt.Columns) == 1 && outerStmt.Columns[0].Star {
+		// SELECT * - return all columns
+		resultCols = viewResult.Columns
+		resultRows = filteredRows
+	} else {
+		// Build specific columns
+		for _, col := range outerStmt.Columns {
+			if col.Alias != "" {
+				resultCols = append(resultCols, col.Alias)
+			} else if col.Name != "" {
+				resultCols = append(resultCols, col.Name)
+			} else if col.Expression != nil {
+				// Expression column - use a generated name
+				resultCols = append(resultCols, "expr")
+			}
+		}
+
+		// Project columns
+		for _, row := range filteredRows {
+			resultRow := make([]catalog.Value, len(outerStmt.Columns))
+			for i, col := range outerStmt.Columns {
+				if col.Name != "" {
+					idx, ok := colIndexMap[col.Name]
+					if !ok {
+						return nil, fmt.Errorf("unknown column '%s' in view '%s'", col.Name, viewDef.Name)
+					}
+					resultRow[i] = row[idx]
+				} else if col.Expression != nil {
+					val, err := e.evaluateExpressionWithRow(col.Expression, row, viewSchema)
+					if err != nil {
+						return nil, err
+					}
+					resultRow[i] = val
+				}
+			}
+			resultRows = append(resultRows, resultRow)
+		}
+	}
+
+	// Apply ORDER BY if present
+	if len(outerStmt.OrderBy) > 0 {
+		sort.Slice(resultRows, func(i, j int) bool {
+			for _, ob := range outerStmt.OrderBy {
+				idx, ok := colIndexMap[ob.Column]
+				if !ok {
+					// Try result columns
+					for ci, cn := range resultCols {
+						if cn == ob.Column {
+							idx = ci
+							break
+						}
+					}
+				}
+				if idx < 0 || idx >= len(resultRows[i]) {
+					continue
+				}
+				cmp := compareValuesForSort(resultRows[i][idx], resultRows[j][idx])
+				if cmp != 0 {
+					if ob.Desc {
+						return cmp > 0
+					}
+					return cmp < 0
+				}
+			}
+			return false
+		})
+	}
+
+	// Apply LIMIT if present
+	if outerStmt.Limit != nil {
+		limit := *outerStmt.Limit
+		if limit < int64(len(resultRows)) {
+			resultRows = resultRows[:limit]
+		}
+	}
+
+	return &Result{
+		Columns: resultCols,
+		Rows:    resultRows,
+	}, nil
+}
+
+// evaluateExpressionWithRow evaluates an expression given a row and schema.
+func (e *Executor) evaluateExpressionWithRow(expr Expression, row []catalog.Value, schema *catalog.Schema) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *ColumnRef:
+		_, idx := schema.ColumnByName(ex.Name)
+		if idx < 0 {
+			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		return row[idx], nil
+
+	case *BinaryExpr:
+		left, err := e.evaluateExpressionWithRow(ex.Left, row, schema)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		right, err := e.evaluateExpressionWithRow(ex.Right, row, schema)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+
+		switch ex.Op {
+		case TOKEN_EQ:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) == 0}, nil
+		case TOKEN_NE:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) != 0}, nil
+		case TOKEN_LT:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) < 0}, nil
+		case TOKEN_GT:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) > 0}, nil
+		case TOKEN_LE:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) <= 0}, nil
+		case TOKEN_GE:
+			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) >= 0}, nil
+		case TOKEN_AND:
+			return catalog.Value{Type: catalog.TypeBool, Bool: left.Bool && right.Bool}, nil
+		case TOKEN_OR:
+			return catalog.Value{Type: catalog.TypeBool, Bool: left.Bool || right.Bool}, nil
+		case TOKEN_PLUS:
+			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
+				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 + right.Int64}, nil
+			}
+			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
+				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 + right.Int32}, nil
+			}
+		case TOKEN_MINUS:
+			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
+				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 - right.Int64}, nil
+			}
+			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
+				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 - right.Int32}, nil
+			}
+		case TOKEN_STAR:
+			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
+				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 * right.Int64}, nil
+			}
+			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
+				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 * right.Int32}, nil
+			}
+		case TOKEN_SLASH:
+			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 && right.Int64 != 0 {
+				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 / right.Int64}, nil
+			}
+			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 && right.Int32 != 0 {
+				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 / right.Int32}, nil
+			}
+		}
+		return catalog.Value{}, fmt.Errorf("unsupported binary operation: %v", ex.Op)
+
+	case *UnaryExpr:
+		operand, err := e.evaluateExpressionWithRow(ex.Expr, row, schema)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		if ex.Op == TOKEN_NOT {
+			return catalog.Value{Type: catalog.TypeBool, Bool: !operand.Bool}, nil
+		}
+		return catalog.Value{}, fmt.Errorf("unsupported unary operation: %v", ex.Op)
+	}
+
+	return catalog.Value{}, fmt.Errorf("unsupported expression type in view: %T", expr)
 }
 
 // executeUnion executes a UNION/INTERSECT/EXCEPT operation.
@@ -5990,6 +6501,50 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			// So LAST_VALUE returns current row's value by default
 			for i, rowIdx := range rowIndices {
 				result[rowIdx] = rows[rowIndices[i]][colIdx]
+			}
+
+		case "NTH_VALUE":
+			// NTH_VALUE(expr, n) returns the value of expr from the nth row of the window frame
+			if len(wf.Args) != 2 {
+				return nil, fmt.Errorf("NTH_VALUE requires exactly 2 arguments")
+			}
+			colRef, ok := wf.Args[0].(*ColumnRef)
+			if !ok {
+				return nil, fmt.Errorf("NTH_VALUE first argument must be a column reference")
+			}
+			_, colIdx := schema.ColumnByName(colRef.Name)
+			if colIdx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", colRef.Name)
+			}
+
+			// Get the N value (1-based index)
+			var nVal int64
+			switch n := wf.Args[1].(type) {
+			case *LiteralExpr:
+				if n.Value.Type == catalog.TypeInt64 {
+					nVal = n.Value.Int64
+				} else if n.Value.Type == catalog.TypeInt32 {
+					nVal = int64(n.Value.Int32)
+				} else {
+					return nil, fmt.Errorf("NTH_VALUE second argument must be an integer")
+				}
+			default:
+				return nil, fmt.Errorf("NTH_VALUE second argument must be an integer literal")
+			}
+
+			if nVal < 1 {
+				return nil, fmt.Errorf("NTH_VALUE second argument must be a positive integer")
+			}
+
+			// Return the nth value in the partition (1-based)
+			nIdx := int(nVal) - 1 // Convert to 0-based index
+			for _, rowIdx := range rowIndices {
+				if nIdx < len(rowIndices) {
+					result[rowIdx] = rows[rowIndices[nIdx]][colIdx]
+				} else {
+					// If n is beyond partition size, return NULL
+					result[rowIdx] = catalog.Null(schema.Columns[colIdx].Type)
+				}
 			}
 
 		default:
