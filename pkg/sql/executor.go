@@ -146,102 +146,112 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 		return nil, err
 	}
 
-	// Build values array matching schema order
-	values := make([]catalog.Value, len(meta.Schema.Columns))
+	totalInserted := 0
 
-	if len(stmt.Columns) == 0 {
-		// No column list provided - values must match schema order
-		if len(stmt.Values) != len(meta.Schema.Columns) {
-			return nil, fmt.Errorf("expected %d values, got %d", len(meta.Schema.Columns), len(stmt.Values))
-		}
-		for i, expr := range stmt.Values {
-			val, err := e.evalExpr(expr, meta.Schema, nil)
-			if err != nil {
-				return nil, err
+	// Process each row in ValuesList
+	for rowIdx, rowValues := range stmt.ValuesList {
+		// Build values array matching schema order
+		values := make([]catalog.Value, len(meta.Schema.Columns))
+
+		if len(stmt.Columns) == 0 {
+			// No column list provided - values must match schema order
+			if len(rowValues) != len(meta.Schema.Columns) {
+				return nil, fmt.Errorf("row %d: expected %d values, got %d", rowIdx+1, len(meta.Schema.Columns), len(rowValues))
 			}
-			// Coerce type if needed
-			val, err = coerceValue(val, meta.Schema.Columns[i].Type)
-			if err != nil {
-				return nil, fmt.Errorf("column %s: %w", meta.Schema.Columns[i].Name, err)
+			for i, expr := range rowValues {
+				val, err := e.evalExpr(expr, meta.Schema, nil)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				// Coerce type if needed
+				val, err = coerceValue(val, meta.Schema.Columns[i].Type)
+				if err != nil {
+					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, meta.Schema.Columns[i].Name, err)
+				}
+				values[i] = val
 			}
-			values[i] = val
-		}
-	} else {
-		// Column list provided - match values to columns
-		if len(stmt.Columns) != len(stmt.Values) {
-			return nil, fmt.Errorf("column count (%d) doesn't match value count (%d)", len(stmt.Columns), len(stmt.Values))
+		} else {
+			// Column list provided - match values to columns
+			if len(stmt.Columns) != len(rowValues) {
+				return nil, fmt.Errorf("row %d: column count (%d) doesn't match value count (%d)", rowIdx+1, len(stmt.Columns), len(rowValues))
+			}
+
+			// Initialize with defaults or nulls
+			for i, col := range meta.Schema.Columns {
+				if col.HasDefault && col.DefaultValue != nil {
+					values[i] = *col.DefaultValue
+				} else {
+					values[i] = catalog.Null(col.Type)
+				}
+			}
+
+			for i, colName := range stmt.Columns {
+				col, idx := meta.Schema.ColumnByName(colName)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column: %s", colName)
+				}
+				val, err := e.evalExpr(rowValues[i], meta.Schema, nil)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				val, err = coerceValue(val, col.Type)
+				if err != nil {
+					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, colName, err)
+				}
+				values[idx] = val
+			}
 		}
 
-		// Initialize with defaults or nulls
+		// Apply auto-increment for NULL auto-increment columns
 		for i, col := range meta.Schema.Columns {
-			if col.HasDefault && col.DefaultValue != nil {
-				values[i] = *col.DefaultValue
-			} else {
-				values[i] = catalog.Null(col.Type)
+			if col.AutoIncrement && values[i].IsNull {
+				// Get next auto-increment value
+				nextVal := e.getNextAutoIncrement(stmt.TableName, col.Name, meta.Schema, i)
+				if col.Type == catalog.TypeInt32 {
+					values[i] = catalog.NewInt32(int32(nextVal))
+				} else {
+					values[i] = catalog.NewInt64(nextVal)
+				}
 			}
 		}
 
-		for i, colName := range stmt.Columns {
-			col, idx := meta.Schema.ColumnByName(colName)
-			if col == nil {
-				return nil, fmt.Errorf("unknown column: %s", colName)
-			}
-			val, err := e.evalExpr(stmt.Values[i], meta.Schema, nil)
-			if err != nil {
-				return nil, err
-			}
-			val, err = coerceValue(val, col.Type)
-			if err != nil {
-				return nil, fmt.Errorf("column %s: %w", colName, err)
-			}
-			values[idx] = val
-		}
-	}
+		// Check primary key uniqueness before insert
+		for i, col := range meta.Schema.Columns {
+			if col.PrimaryKey {
+				// Get the value for this primary key column
+				pkValue := values[i]
+				if pkValue.IsNull {
+					return nil, fmt.Errorf("row %d: primary key column %q cannot be NULL", rowIdx+1, col.Name)
+				}
 
-	// Apply auto-increment for NULL auto-increment columns
-	for i, col := range meta.Schema.Columns {
-		if col.AutoIncrement && values[i].IsNull {
-			// Get next auto-increment value
-			nextVal := e.getNextAutoIncrement(stmt.TableName, col.Name, meta.Schema, i)
-			if col.Type == catalog.TypeInt32 {
-				values[i] = catalog.NewInt32(int32(nextVal))
-			} else {
-				values[i] = catalog.NewInt64(nextVal)
+				// Scan existing rows to check for duplicates
+				exists, err := e.primaryKeyExists(stmt.TableName, meta.Schema, i, pkValue)
+				if err != nil {
+					return nil, err
+				}
+				if exists {
+					return nil, fmt.Errorf("row %d: duplicate key value violates primary key constraint on column %q", rowIdx+1, col.Name)
+				}
 			}
 		}
-	}
 
-	// Check primary key uniqueness before insert
-	for i, col := range meta.Schema.Columns {
-		if col.PrimaryKey {
-			// Get the value for this primary key column
-			pkValue := values[i]
-			if pkValue.IsNull {
-				return nil, fmt.Errorf("primary key column %q cannot be NULL", col.Name)
-			}
-
-			// Scan existing rows to check for duplicates
-			exists, err := e.primaryKeyExists(stmt.TableName, meta.Schema, i, pkValue)
-			if err != nil {
-				return nil, err
-			}
-			if exists {
-				return nil, fmt.Errorf("duplicate key value violates primary key constraint on column %q", col.Name)
-			}
+		// Validate CHECK constraints
+		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
+
+		_, err = e.tm.Insert(stmt.TableName, values)
+		if err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
+		totalInserted++
 	}
 
-	// Validate CHECK constraints
-	if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
-		return nil, err
+	if totalInserted == 1 {
+		return &Result{Message: "1 row inserted.", RowsAffected: totalInserted}, nil
 	}
-
-	_, err = e.tm.Insert(stmt.TableName, values)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Result{Message: "1 row inserted.", RowsAffected: 1}, nil
+	return &Result{Message: fmt.Sprintf("%d rows inserted.", totalInserted), RowsAffected: totalInserted}, nil
 }
 
 // primaryKeyExists checks if a value already exists for a primary key column.

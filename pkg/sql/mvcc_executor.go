@@ -138,72 +138,82 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		return nil, err
 	}
 
-	// Build values array
-	values := make([]catalog.Value, len(meta.Columns))
+	totalInserted := 0
 
-	// Initialize all values to NULL
-	for i := range values {
-		values[i] = catalog.Null(meta.Columns[i].Type)
-	}
+	// Process each row in ValuesList
+	for rowIdx, rowValues := range stmt.ValuesList {
+		// Build values array
+		values := make([]catalog.Value, len(meta.Columns))
 
-	// If column list specified, map values to columns
-	if len(stmt.Columns) > 0 {
-		if len(stmt.Columns) != len(stmt.Values) {
-			return nil, fmt.Errorf("column count (%d) doesn't match value count (%d)",
-				len(stmt.Columns), len(stmt.Values))
+		// Initialize all values to NULL
+		for i := range values {
+			values[i] = catalog.Null(meta.Columns[i].Type)
 		}
-		for i, colName := range stmt.Columns {
-			col, idx := meta.Schema.ColumnByName(colName)
-			if col == nil {
-				return nil, fmt.Errorf("unknown column: %s", colName)
+
+		// If column list specified, map values to columns
+		if len(stmt.Columns) > 0 {
+			if len(stmt.Columns) != len(rowValues) {
+				return nil, fmt.Errorf("row %d: column count (%d) doesn't match value count (%d)",
+					rowIdx+1, len(stmt.Columns), len(rowValues))
 			}
-			val, err := e.evalExpr(stmt.Values[i], meta.Schema, nil)
-			if err != nil {
-				return nil, err
+			for i, colName := range stmt.Columns {
+				col, idx := meta.Schema.ColumnByName(colName)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column: %s", colName)
+				}
+				val, err := e.evalExpr(rowValues[i], meta.Schema, nil)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				val, err = coerceValueMVCC(val, col.Type)
+				if err != nil {
+					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, colName, err)
+				}
+				values[idx] = val
 			}
-			val, err = coerceValueMVCC(val, col.Type)
-			if err != nil {
-				return nil, fmt.Errorf("column %s: %w", colName, err)
+		} else {
+			// Positional values
+			if len(rowValues) != len(meta.Columns) {
+				return nil, fmt.Errorf("row %d: expected %d values, got %d", rowIdx+1, len(meta.Columns), len(rowValues))
 			}
-			values[idx] = val
+			for i, expr := range rowValues {
+				val, err := e.evalExpr(expr, meta.Schema, nil)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				val, err = coerceValueMVCC(val, meta.Columns[i].Type)
+				if err != nil {
+					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, meta.Columns[i].Name, err)
+				}
+				values[i] = val
+			}
 		}
-	} else {
-		// Positional values
-		if len(stmt.Values) != len(meta.Columns) {
-			return nil, fmt.Errorf("expected %d values, got %d", len(meta.Columns), len(stmt.Values))
+
+		// Validate CHECK constraints
+		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
-		for i, expr := range stmt.Values {
-			val, err := e.evalExpr(expr, meta.Schema, nil)
-			if err != nil {
-				return nil, err
-			}
-			val, err = coerceValueMVCC(val, meta.Columns[i].Type)
-			if err != nil {
-				return nil, fmt.Errorf("column %s: %w", meta.Columns[i].Name, err)
-			}
-			values[i] = val
+
+		// Insert with MVCC
+		rid, err := e.mtm.Insert(stmt.TableName, values, tx)
+		if err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
+
+		// Update indexes for the new row
+		if err := e.updateIndexesOnInsert(stmt.TableName, rid, values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("row %d: index update failed: %w", rowIdx+1, err)
+		}
+
+		totalInserted++
 	}
 
-	// Validate CHECK constraints
-	if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
-		return nil, err
+	if totalInserted == 1 {
+		return &Result{Message: "1 row inserted.", RowsAffected: 1}, nil
 	}
-
-	// Insert with MVCC
-	rid, err := e.mtm.Insert(stmt.TableName, values, tx)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update indexes for the new row
-	if err := e.updateIndexesOnInsert(stmt.TableName, rid, values, meta.Schema); err != nil {
-		return nil, fmt.Errorf("index update failed: %w", err)
-	}
-
 	return &Result{
-		Message:      "1 row inserted.",
-		RowsAffected: 1,
+		Message:      fmt.Sprintf("%d rows inserted.", totalInserted),
+		RowsAffected: totalInserted,
 	}, nil
 }
 

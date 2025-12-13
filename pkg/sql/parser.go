@@ -1349,26 +1349,38 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 		return nil, err
 	}
 
-	// (values)
-	if err := p.expect(TOKEN_LPAREN); err != nil {
-		return nil, err
-	}
-
+	// Parse multiple value rows: (v1, v2), (v3, v4), ...
 	for {
-		expr, err := p.parsePrimaryExpression()
-		if err != nil {
+		// (values)
+		if err := p.expect(TOKEN_LPAREN); err != nil {
 			return nil, err
 		}
-		stmt.Values = append(stmt.Values, expr)
 
+		var rowValues []Expression
+		for {
+			expr, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, err
+			}
+			rowValues = append(rowValues, expr)
+
+			if !p.curTokenIs(TOKEN_COMMA) {
+				break
+			}
+			p.nextToken()
+		}
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, err
+		}
+
+		stmt.ValuesList = append(stmt.ValuesList, rowValues)
+
+		// Check for more value rows
 		if !p.curTokenIs(TOKEN_COMMA) {
 			break
 		}
-		p.nextToken()
-	}
-
-	if err := p.expect(TOKEN_RPAREN); err != nil {
-		return nil, err
+		p.nextToken() // consume comma between value rows
 	}
 
 	return stmt, nil

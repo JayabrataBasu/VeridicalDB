@@ -204,6 +204,13 @@ func (c *Coordinator) routeStatement(stmt sql.Statement, sessionID string) Route
 
 // routeInsert routes an INSERT statement.
 func (c *Coordinator) routeInsert(stmt *sql.InsertStmt) RouteResult {
+	// For multi-row INSERT, we use the first row for routing
+	// In a full implementation, each row could go to different shards
+	if len(stmt.ValuesList) == 0 {
+		return RouteResult{Error: fmt.Errorf("INSERT has no values")}
+	}
+	firstRow := stmt.ValuesList[0]
+
 	// Find shard key in values
 	keyCol := c.config.ShardKeyColumn
 	keyIdx := -1
@@ -221,12 +228,12 @@ func (c *Coordinator) routeInsert(stmt *sql.InsertStmt) RouteResult {
 		keyIdx = 0
 	}
 
-	if keyIdx < 0 || keyIdx >= len(stmt.Values) {
+	if keyIdx < 0 || keyIdx >= len(firstRow) {
 		return RouteResult{Error: fmt.Errorf("shard key column '%s' not found in INSERT", keyCol)}
 	}
 
-	// Extract the key value
-	keyExpr := stmt.Values[keyIdx]
+	// Extract the key value from the first row
+	keyExpr := firstRow[keyIdx]
 	keyVal := extractLiteralValue(keyExpr)
 	if keyVal == nil {
 		return RouteResult{Error: fmt.Errorf("shard key must be a literal value")}

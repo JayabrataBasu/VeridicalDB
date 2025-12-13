@@ -62,9 +62,9 @@ func (s *DropIndexStmt) statementNode() {}
 
 // InsertStmt represents INSERT INTO statement.
 type InsertStmt struct {
-	TableName string
-	Columns   []string // optional column list
-	Values    []Expression
+	TableName  string
+	Columns    []string       // optional column list
+	ValuesList [][]Expression // multiple rows: INSERT INTO t VALUES (...), (...), ...
 }
 
 func (s *InsertStmt) statementNode() {}

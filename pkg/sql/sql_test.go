@@ -490,6 +490,111 @@ func TestExecutorInsertWithColumns(t *testing.T) {
 	}
 }
 
+// TestMultiRowInsert tests INSERT with multiple value rows.
+func TestMultiRowInsert(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	executeSQL(t, executor, "CREATE TABLE products (id INT, name TEXT, price INT);")
+
+	// Test 1: Multi-row INSERT without column list
+	result := executeSQL(t, executor, `
+		INSERT INTO products VALUES 
+			(1, 'Apple', 100),
+			(2, 'Banana', 50),
+			(3, 'Cherry', 200);
+	`)
+
+	if result.RowsAffected != 3 {
+		t.Errorf("Test 1: Expected 3 rows affected, got %d", result.RowsAffected)
+	}
+
+	// Verify data
+	selectResult := executeSQL(t, executor, "SELECT * FROM products ORDER BY id;")
+	if len(selectResult.Rows) != 3 {
+		t.Fatalf("Test 1: Expected 3 rows, got %d", len(selectResult.Rows))
+	}
+
+	// Check values
+	expected := []struct {
+		id    int64
+		name  string
+		price int64
+	}{
+		{1, "Apple", 100},
+		{2, "Banana", 50},
+		{3, "Cherry", 200},
+	}
+
+	for i, exp := range expected {
+		row := selectResult.Rows[i]
+		var id, price int64
+		if row[0].Type == catalog.TypeInt32 {
+			id = int64(row[0].Int32)
+		} else {
+			id = row[0].Int64
+		}
+		if row[2].Type == catalog.TypeInt32 {
+			price = int64(row[2].Int32)
+		} else {
+			price = row[2].Int64
+		}
+		if id != exp.id || row[1].Text != exp.name || price != exp.price {
+			t.Errorf("Test 1 Row %d: Expected (%d, %s, %d), got (%d, %s, %d)",
+				i, exp.id, exp.name, exp.price, id, row[1].Text, price)
+		}
+	}
+
+	// Test 2: Multi-row INSERT with column list
+	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT, age INT);")
+	result2 := executeSQL(t, executor, `
+		INSERT INTO users (id, name, age) VALUES 
+			(1, 'Alice', 30),
+			(2, 'Bob', 25);
+	`)
+
+	if result2.RowsAffected != 2 {
+		t.Errorf("Test 2: Expected 2 rows affected, got %d", result2.RowsAffected)
+	}
+
+	selectResult2 := executeSQL(t, executor, "SELECT id, name, age FROM users ORDER BY id;")
+	if len(selectResult2.Rows) != 2 {
+		t.Fatalf("Test 2: Expected 2 rows, got %d", len(selectResult2.Rows))
+	}
+
+	// Test 3: Multi-row INSERT with partial columns (others should be NULL)
+	executeSQL(t, executor, "CREATE TABLE partial (id INT, val1 TEXT, val2 TEXT);")
+	result3 := executeSQL(t, executor, `
+		INSERT INTO partial (id, val1) VALUES 
+			(1, 'first'),
+			(2, 'second');
+	`)
+
+	if result3.RowsAffected != 2 {
+		t.Errorf("Test 3: Expected 2 rows affected, got %d", result3.RowsAffected)
+	}
+
+	selectResult3 := executeSQL(t, executor, "SELECT * FROM partial ORDER BY id;")
+	for i, row := range selectResult3.Rows {
+		if !row[2].IsNull {
+			t.Errorf("Test 3 Row %d: Expected val2 to be NULL, got %v", i, row[2])
+		}
+	}
+
+	// Test 4: Single row INSERT still works (backward compatibility)
+	executeSQL(t, executor, "CREATE TABLE single (id INT, name TEXT);")
+	result4 := executeSQL(t, executor, "INSERT INTO single VALUES (1, 'solo');")
+
+	if result4.RowsAffected != 1 {
+		t.Errorf("Test 4: Expected 1 row affected, got %d", result4.RowsAffected)
+	}
+
+	selectResult4 := executeSQL(t, executor, "SELECT * FROM single;")
+	if len(selectResult4.Rows) != 1 {
+		t.Fatalf("Test 4: Expected 1 row, got %d", len(selectResult4.Rows))
+	}
+}
+
 // Helper: set up a test TableManager
 func setupTestTableManager(t *testing.T) *catalog.TableManager {
 	t.Helper()

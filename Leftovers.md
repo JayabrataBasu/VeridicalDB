@@ -92,22 +92,14 @@ Common SQL features needed for practical use.
 - **Difficulty:** Medium
 - **Estimated Time:** 4-6 hours
 
-### 2.3 Multi-Row INSERT
-- **Status:** Not implemented
-- **What's Needed:**
-  - Parser: Support multiple value tuples
-  - AST: Change `Values []Expression` to `ValuesList [][]Expression`
-  - Executor: Loop through all value tuples
+### 2.3 Multi-Row INSERT ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Parser supports multiple value tuples, AST uses `ValuesList [][]Expression`, executor loops through all rows
 - **Syntax:**
   ```sql
   INSERT INTO t (id, name) VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol');
   ```
-- **Files to Modify:**
-  - `pkg/sql/ast.go` - Change `InsertStmt.Values` type
-  - `pkg/sql/parser.go` - Parse multiple VALUES tuples
-  - `pkg/sql/executor.go` - Loop in `executeInsert()`
-- **Difficulty:** Easy
-- **Estimated Time:** 2-3 hours
+- **Test:** `TestMultiRowInsert` in sql_test.go
 
 ### 2.4 UPDATE with JOIN / FROM
 - **Status:** Not implemented
@@ -335,7 +327,7 @@ Advanced features for future enhancement.
 |---------|--------|----------------|
 | FOREIGN KEY | ⬜ Not Started | |
 | INSERT ON CONFLICT | ⬜ Not Started | |
-| Multi-Row INSERT | ⬜ Not Started | |
+| Multi-Row INSERT | ✅ Complete | Dec 2024 |
 | UPDATE with JOIN | ⬜ Not Started | |
 | DELETE with USING | ⬜ Not Started | |
 
@@ -371,7 +363,7 @@ Advanced features for future enhancement.
    - [x] 1.3 Window Frame Execution ✅
 
 2. **Phase 2: High Priority Features**
-   - [ ] 2.3 Multi-Row INSERT (easiest, ~2 hours)
+   - [x] 2.3 Multi-Row INSERT ✅
    - [ ] 2.2 INSERT ON CONFLICT (~4-6 hours)
    - [ ] 2.4 UPDATE with JOIN (~4-5 hours)
    - [ ] 2.5 DELETE with USING (~3-4 hours)
