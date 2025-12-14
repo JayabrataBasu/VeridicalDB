@@ -40,7 +40,7 @@ type ShardNode struct {
 
 // NewShardNode creates a new shard node.
 func NewShardNode(info *ShardInfo, dataDir string, pageSize int) (*ShardNode, error) {
-	tm, err := catalog.NewTableManager(dataDir, pageSize)
+	tm, err := catalog.NewTableManager(dataDir, pageSize, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create table manager: %w", err)
 	}

@@ -1,6 +1,7 @@
 package wal
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -98,6 +99,21 @@ func Open(arg interface{}) (*WAL, error) {
 		return nil, fmt.Errorf("stat wal file: %w", err)
 	}
 	w.currentLSN = LSN(info.Size())
+
+	// If file is empty, write magic header to ensure LSN > 0
+	if w.currentLSN == 0 {
+		magic := []byte("VDBWAL01") // 8 bytes
+		if _, err := file.Write(magic); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("write wal magic: %w", err)
+		}
+		if err := file.Sync(); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("sync wal magic: %w", err)
+		}
+		w.currentLSN = LSN(len(magic))
+	}
+
 	w.flushedLSN = w.currentLSN
 
 	// Seek to end for appending
@@ -269,9 +285,34 @@ func (w *WAL) NewIterator() (*Iterator, error) {
 		return nil, fmt.Errorf("stat wal: %w", err)
 	}
 
+	offset := int64(0)
+	// Check for magic header and skip it
+	if info.Size() >= 8 {
+		header := make([]byte, 8)
+		if _, err := file.ReadAt(header, 0); err == nil {
+			if bytes.Equal(header, []byte("VDBWAL01")) {
+				offset = 8
+			} else {
+				fmt.Printf("Header mismatch: %v\n", header)
+			}
+		} else {
+			fmt.Printf("ReadAt error: %v\n", err)
+		}
+	} else {
+		fmt.Printf("File too small: %d\n", info.Size())
+	}
+
+	// Seek to offset
+	if offset > 0 {
+		if _, err := file.Seek(offset, 0); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("seek past header: %w", err)
+		}
+	}
+
 	return &Iterator{
 		file:   file,
-		offset: 0,
+		offset: offset,
 		size:   info.Size(),
 	}, nil
 }
@@ -283,12 +324,15 @@ func (w *WAL) NewIteratorFrom(startLSN LSN) (*Iterator, error) {
 		return nil, err
 	}
 
-	// Seek to the starting position
-	if _, err := it.file.Seek(int64(startLSN), io.SeekStart); err != nil {
-		it.Close()
-		return nil, fmt.Errorf("seek to LSN: %w", err)
+	// If startLSN is provided, seek to it.
+	// Otherwise, keep the offset determined by NewIterator (which skips header).
+	if startLSN > 0 {
+		if _, err := it.file.Seek(int64(startLSN), io.SeekStart); err != nil {
+			it.Close()
+			return nil, fmt.Errorf("seek to LSN: %w", err)
+		}
+		it.offset = int64(startLSN)
 	}
-	it.offset = int64(startLSN)
 
 	return it, nil
 }

@@ -664,22 +664,27 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
-		// Check if it's a CTE reference
-		if e.cteData != nil {
-			if cteResult, ok := e.cteData[stmt.TableName]; ok {
-				return e.executeSelectFromCTE(stmt, cteResult)
+		// Check if it's an information_schema table
+		if infoMeta, ok := e.getInformationSchemaTable(stmt.TableName); ok {
+			meta = infoMeta
+		} else {
+			// Check if it's a CTE reference
+			if e.cteData != nil {
+				if cteResult, ok := e.cteData[stmt.TableName]; ok {
+					return e.executeSelectFromCTE(stmt, cteResult)
+				}
 			}
-		}
 
-		// Check if it's a view reference
-		e.viewsMu.RLock()
-		viewDef, isView := e.views[stmt.TableName]
-		e.viewsMu.RUnlock()
-		if isView {
-			return e.executeSelectFromView(stmt, viewDef)
-		}
+			// Check if it's a view reference
+			e.viewsMu.RLock()
+			viewDef, isView := e.views[stmt.TableName]
+			e.viewsMu.RUnlock()
+			if isView {
+				return e.executeSelectFromView(stmt, viewDef)
+			}
 
-		return nil, err
+			return nil, err
+		}
 	}
 
 	// Check if query contains JOINs
@@ -4506,6 +4511,11 @@ func generateCreateTableDDL(meta *catalog.TableMeta) string {
 // scanTable scans all rows in a table and calls fn for each.
 // This is a simple sequential scan implementation.
 func (e *Executor) scanTable(tableName string, _ *catalog.Schema, fn func(rid storage.RID, row []catalog.Value) (bool, error)) error {
+	// Check for information_schema tables
+	if strings.HasPrefix(strings.ToLower(tableName), "information_schema.") {
+		return e.scanInformationSchema(tableName, fn)
+	}
+
 	// We need to scan through pages. For now, use a simple approach:
 	// Try fetching RIDs starting from page 0, slot 0.
 	// This is inefficient but works for small datasets.

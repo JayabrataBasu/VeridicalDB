@@ -14,8 +14,8 @@ func TestWALOpenClose(t *testing.T) {
 		t.Fatalf("Open failed: %v", err)
 	}
 
-	if w.CurrentLSN() != 0 {
-		t.Errorf("expected initial LSN 0, got %d", w.CurrentLSN())
+	if w.CurrentLSN() != 8 {
+		t.Errorf("expected initial LSN 8, got %d", w.CurrentLSN())
 	}
 
 	if err := w.Close(); err != nil {
@@ -224,14 +224,14 @@ func TestWALFlushSync(t *testing.T) {
 		t.Fatalf("Append failed: %v", err)
 	}
 
-	// The first record has LSN 0
-	if lsn != 0 {
-		t.Errorf("expected first record LSN 0, got %d", lsn)
+	// The first record has LSN 8 (after header)
+	if lsn != 8 {
+		t.Errorf("expected first record LSN 8, got %d", lsn)
 	}
 
-	// Before flush, flushed LSN should be 0 (nothing written to disk yet)
-	if w.FlushedLSN() != 0 {
-		t.Errorf("expected FlushedLSN 0 before flush, got %d", w.FlushedLSN())
+	// Before flush, flushed LSN should be 8 (header flushed)
+	if w.FlushedLSN() != 8 {
+		t.Errorf("expected FlushedLSN 8 before flush, got %d", w.FlushedLSN())
 	}
 
 	if err := w.Flush(); err != nil {

@@ -13,6 +13,8 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 func main() {
@@ -73,17 +75,39 @@ func main() {
 		os.Exit(0)
 	}()
 
+	// Initialize WAL
+	walLog, err := wal.Open(cfg.Storage.DataDir)
+	if err != nil {
+		logger.Error("Failed to open WAL", "error", err)
+		os.Exit(1)
+	}
+	defer walLog.Close()
+
+	// Initialize TxnManager
+	txnMgr := txn.NewManager()
+
+	// Initialize TxnLogger
+	txnLogger := wal.NewTxnLogger(walLog, txnMgr)
+
+	// Initialize Checkpointer
+	checkpointer := wal.NewCheckpointer(walLog, txnLogger)
+
 	// Initialize TableManager
-	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, cfg.Storage.PageSize)
+	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, cfg.Storage.PageSize, walLog)
 	if err != nil {
 		logger.Error("Failed to initialize TableManager", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("TableManager initialized", "tables", len(tm.ListTables()))
 
+	// Set up checkpointer
+	checkpointer.SetPageFlusher(tm.Checkpoint)
+	checkpointer.StartBackground()
+	defer checkpointer.StopBackground()
+
 	// Run in interactive mode
 	if *interactive {
-		if err := cli.RunInteractive(logger, tm); err != nil {
+		if err := cli.RunInteractive(logger, tm, txnMgr); err != nil {
 			logger.Error("REPL error", "error", err)
 			os.Exit(1)
 		}

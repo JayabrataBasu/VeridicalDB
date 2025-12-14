@@ -47,7 +47,7 @@ type REPL struct {
 }
 
 // NewREPL creates a new REPL instance.
-func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager) *REPL {
+func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager) *REPL {
 	var executor *sql.Executor
 	var mtm *catalog.MVCCTableManager
 	var session *sql.Session
@@ -56,7 +56,9 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 		executor = sql.NewExecutor(tm)
 
 		// Create MVCC layer
-		txnMgr := txn.NewManager()
+		if txnMgr == nil {
+			txnMgr = txn.NewManager()
+		}
 		mtm = catalog.NewMVCCTableManager(tm, txnMgr)
 		session = sql.NewSession(mtm)
 	}
@@ -70,6 +72,12 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 		mtm:      mtm,
 		session:  session,
 	}
+}
+
+// RunInteractive starts the REPL in interactive mode.
+func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager) error {
+	repl := NewREPL(os.Stdin, os.Stdout, logger, tm, txnMgr)
+	return repl.Run()
 }
 
 // Run starts the REPL loop.
@@ -486,12 +494,6 @@ func truncate(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// RunInteractive starts an interactive REPL using stdin/stdout.
-func RunInteractive(logger *log.Logger, tm *catalog.TableManager) error {
-	repl := NewREPL(os.Stdin, os.Stdout, logger, tm)
-	return repl.Run()
 }
 
 // listIndexes prints all indexes in the database.

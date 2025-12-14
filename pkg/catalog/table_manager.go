@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 // TableManager provides high-level table operations with typed rows.
@@ -14,22 +15,24 @@ type TableManager struct {
 	columnarTables map[string]*storage.ColumnarEngine // columnar table engines
 	dataDir        string
 	pageSize       int
+	wal            *wal.WAL
 	mu             sync.RWMutex // Protects all operations
 }
 
 // NewTableManager creates a TableManager.
-func NewTableManager(dataDir string, pageSize int) (*TableManager, error) {
+func NewTableManager(dataDir string, pageSize int, walLog *wal.WAL) (*TableManager, error) {
 	cat, err := NewCatalog(dataDir)
 	if err != nil {
 		return nil, err
 	}
-	store := storage.NewStorage(dataDir, pageSize)
+	store := storage.NewStorage(dataDir, pageSize, walLog)
 	return &TableManager{
 		catalog:        cat,
 		storage:        store,
 		columnarTables: make(map[string]*storage.ColumnarEngine),
 		dataDir:        dataDir,
 		pageSize:       pageSize,
+		wal:            walLog,
 	}, nil
 }
 
@@ -72,6 +75,24 @@ func (tm *TableManager) CreateTableWithStorage(name string, cols []Column, forei
 		_ = tm.catalog.DropTable(name)
 		return err
 	}
+	return nil
+}
+
+// Checkpoint flushes all dirty pages to disk.
+func (tm *TableManager) Checkpoint() error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	// Flush columnar tables
+	for name, engine := range tm.columnarTables {
+		if err := engine.Flush(); err != nil {
+			return fmt.Errorf("flush columnar table %s: %w", name, err)
+		}
+	}
+
+	// Flush row storage (currently a no-op as it uses direct IO, but good for future)
+	// If we add buffering to Storage, we would call tm.storage.Flush() here.
+
 	return nil
 }
 

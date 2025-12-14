@@ -17,7 +17,7 @@ func setupMVCCTest(t *testing.T) (*Session, func()) {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
 
-	tm, err := catalog.NewTableManager(dir, 8192)
+	tm, err := catalog.NewTableManager(dir, 8192, nil)
 	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatalf("failed to create table manager: %v", err)

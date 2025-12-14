@@ -74,7 +74,7 @@ func TestREPLCommands(t *testing.T) {
 			var output bytes.Buffer
 			logger := log.New(&output, log.LevelError, log.FormatText) // Suppress debug logs
 
-			repl := NewREPL(input, &output, logger, nil)
+			repl := NewREPL(input, &output, logger, nil, nil)
 			if err := repl.Run(); err != nil {
 				t.Fatalf("REPL.Run() error = %v", err)
 			}
@@ -95,7 +95,7 @@ func TestREPLMultilineInput(t *testing.T) {
 	var output bytes.Buffer
 	logger := log.New(&output, log.LevelError, log.FormatText)
 
-	repl := NewREPL(input, &output, logger, nil)
+	repl := NewREPL(input, &output, logger, nil, nil)
 	if err := repl.Run(); err != nil {
 		t.Fatalf("REPL.Run() error = %v", err)
 	}
@@ -112,7 +112,7 @@ func TestREPLWelcomeBanner(t *testing.T) {
 	var output bytes.Buffer
 	logger := log.New(&output, log.LevelError, log.FormatText)
 
-	repl := NewREPL(input, &output, logger, nil)
+	repl := NewREPL(input, &output, logger, nil, nil)
 	if err := repl.Run(); err != nil {
 		t.Fatalf("REPL.Run() error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestREPLWithTableManager(t *testing.T) {
 	tmp := t.TempDir()
 	dataDir := filepath.Join(tmp, "data")
 
-	tm, err := catalog.NewTableManager(dataDir, 4096)
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
 	if err != nil {
 		t.Fatalf("NewTableManager error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestREPLWithTableManager(t *testing.T) {
 	var output bytes.Buffer
 	logger := log.New(&output, log.LevelError, log.FormatText)
 
-	repl := NewREPL(input, &output, logger, tm)
+	repl := NewREPL(input, &output, logger, tm, nil)
 	if err := repl.Run(); err != nil {
 		t.Fatalf("REPL.Run() error = %v", err)
 	}
@@ -172,7 +172,7 @@ func TestREPLWithTableManager(t *testing.T) {
 	input2 := strings.NewReader("\\describe users;\nEXIT;\n")
 	var output2 bytes.Buffer
 
-	repl2 := NewREPL(input2, &output2, logger, tm)
+	repl2 := NewREPL(input2, &output2, logger, tm, nil)
 	if err := repl2.Run(); err != nil {
 		t.Fatalf("REPL.Run() error = %v", err)
 	}

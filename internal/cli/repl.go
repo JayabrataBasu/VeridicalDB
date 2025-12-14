@@ -43,7 +43,7 @@ func (r *REPL) Initialize() error {
 		pageSize = 4096 // default
 	}
 
-	r.tm, err = catalog.NewTableManager(r.config.Storage.DataDir, pageSize)
+	r.tm, err = catalog.NewTableManager(r.config.Storage.DataDir, pageSize, nil)
 	if err != nil {
 		return fmt.Errorf("failed to initialize table manager: %w", err)
 	}

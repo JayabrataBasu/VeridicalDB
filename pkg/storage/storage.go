@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 // Storage is a simple table manager that uses one heap file per table.
 type Storage struct {
 	dataDir  string
 	pageSize int
+	wal      *wal.WAL
 	mu       sync.Mutex // Protects all storage operations
 }
 
 // NewStorage creates a Storage rooted at dataDir using pageSize.
-func NewStorage(dataDir string, pageSize int) *Storage {
-	return &Storage{dataDir: dataDir, pageSize: pageSize}
+func NewStorage(dataDir string, pageSize int, walLog *wal.WAL) *Storage {
+	return &Storage{dataDir: dataDir, pageSize: pageSize, wal: walLog}
 }
 
 // CreateTable creates an empty table file (if not exists) and writes an initial page.
@@ -24,7 +27,7 @@ func (s *Storage) CreateTable(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pager, err := OpenPager(s.dataDir, tableFileName(name), s.pageSize)
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(name), s.pageSize, s.wal)
 	if err != nil {
 		return err
 	}
@@ -43,7 +46,7 @@ func (s *Storage) Insert(table string, data []byte) (RID, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pager, err := OpenPager(s.dataDir, tableFileName(table), s.pageSize)
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(table), s.pageSize, s.wal)
 	if err != nil {
 		return RID{}, err
 	}
@@ -89,7 +92,7 @@ func (s *Storage) Fetch(rid RID) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	pager, err := OpenPager(s.dataDir, tableFileName(rid.Table), s.pageSize)
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(rid.Table), s.pageSize, s.wal)
 	if err != nil {
 		return nil, err
 	}

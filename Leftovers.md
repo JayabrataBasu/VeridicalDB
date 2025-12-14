@@ -130,20 +130,15 @@ Common SQL features needed for practical use.
 
 Production readiness and tooling compatibility.
 
-### 3.1 Information Schema
-- **Status:** Not implemented
-- **What's Needed:**
-  - Virtual tables: `information_schema.tables`, `information_schema.columns`
-  - Return catalog metadata in SQL-standard format
-  - No persistence needed - generated from catalog on query
-- **Tables to implement:**
-  - `information_schema.tables` - table_catalog, table_schema, table_name, table_type
-  - `information_schema.columns` - table_name, column_name, data_type, is_nullable, column_default
-  - `information_schema.table_constraints` - constraint_name, table_name, constraint_type
-- **Files to Modify:**
-  - `pkg/sql/executor.go` - Special handling for `information_schema.*` tables
-- **Difficulty:** Medium
-- **Estimated Time:** 4-6 hours
+### 3.1 Information Schema ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Virtual table mechanism in `pkg/catalog/system_catalog.go`.
+  - `information_schema.tables` and `information_schema.columns` implemented.
+  - Integration with `SELECT` queries via `SystemCatalog`.
+- **Test:** `TestInformationSchema` in `pkg/observability/system_catalog_test.go`.
+
+### 3.2 Prepared Statements
 
 ### 3.2 Prepared Statements
 - **Status:** Not implemented
@@ -178,18 +173,15 @@ Production readiness and tooling compatibility.
 - **Difficulty:** Hard
 - **Estimated Time:** 8-12 hours
 
-### 3.4 Checkpointing
-- **Status:** Checkpoint file exists, periodic checkpointing not implemented
-- **What's Needed:**
-  - Flush all dirty pages to disk
-  - Write checkpoint record to WAL
-  - Truncate old WAL segments
-  - Can be triggered manually or on timer
-- **Files to Modify:**
-  - `pkg/wal/checkpoint.go` - Already exists, enhance
-  - Add timer-based checkpoint in server
-- **Difficulty:** Medium
-- **Estimated Time:** 4-6 hours
+### 3.4 Checkpointing ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - `Checkpointer` runs in background and triggers periodic checkpoints.
+  - `TableManager.Checkpoint()` flushes all dirty pages (columnar buffers).
+  - WAL writes `CHECKPOINT_BEGIN` and `CHECKPOINT_END` records.
+  - WAL handles magic header to ensure valid LSNs.
+  - Integration tests verify checkpoint records and persistence.
+- **Test:** `TestCheckpointIntegration` in `pkg/wal/checkpoint_integration_test.go`.
 
 ### 3.5 PostgreSQL Wire Protocol
 - **Status:** Not implemented (basic TCP framework exists)
@@ -312,17 +304,17 @@ Advanced features for future enhancement.
 |---------|--------|----------------|
 | FOREIGN KEY | ⬜ Not Started | |
 | INSERT ON CONFLICT | ✅ Complete | Dec 2025 |
-| Multi-Row INSERT | ✅ Complete | Dec 2024 |
+| Multi-Row INSERT | ✅ Complete | Dec 2025 |
 | UPDATE with JOIN | ✅ Complete | Dec 2025 |
 | DELETE with USING | ✅ Complete | Dec 2025 |
 
 ### Medium Priority
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
-| Information Schema | ⬜ Not Started | |
+| Information Schema | ✅ Complete | Dec 2025 |
 | Prepared Statements | ⬜ Not Started | |
 | Crash Recovery | ⬜ Not Started | |
-| Checkpointing | ⬜ Not Started | |
+| Checkpointing | ✅ Complete | Dec 2025 |
 | PostgreSQL Wire Protocol | ⬜ Not Started | |
 | User Authentication | ⬜ Not Started | |
 
@@ -355,8 +347,8 @@ Advanced features for future enhancement.
    - [ ] 2.1 FOREIGN KEY (~8-12 hours)
 
 3. **Phase 3: Medium Priority Features**
-   - [ ] 3.1 Information Schema (~4-6 hours)
-   - [ ] 3.4 Checkpointing (~4-6 hours)
+   - [x] 3.1 Information Schema ✅
+   - [x] 3.4 Checkpointing ✅
    - [ ] 3.2 Prepared Statements (~6-8 hours)
    - [ ] 3.6 User Authentication (~6-8 hours)
    - [ ] 3.3 Crash Recovery (~8-12 hours)

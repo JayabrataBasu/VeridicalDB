@@ -18,7 +18,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	tm, err := catalog.NewTableManager(dir, 4096)
+	tm, err := catalog.NewTableManager(dir, 4096, nil)
 	if err != nil {
 		os.RemoveAll(dir)
 		t.Fatalf("Failed to create table manager: %v", err)
@@ -173,7 +173,7 @@ func TestCreateIndexWithoutManager(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	// Setup without IndexManager
-	tm, err := catalog.NewTableManager(dir, 4096)
+	tm, err := catalog.NewTableManager(dir, 4096, nil)
 	if err != nil {
 		t.Fatalf("Failed to create table manager: %v", err)
 	}

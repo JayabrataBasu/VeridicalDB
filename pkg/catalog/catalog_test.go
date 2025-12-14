@@ -145,7 +145,7 @@ func TestTableManager(t *testing.T) {
 	tmp := t.TempDir()
 	dataDir := filepath.Join(tmp, "data")
 
-	tm, err := NewTableManager(dataDir, 4096)
+	tm, err := NewTableManager(dataDir, 4096, nil)
 	if err != nil {
 		t.Fatalf("NewTableManager error: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestTableManagerPersistence(t *testing.T) {
 	dataDir := filepath.Join(tmp, "data")
 
 	// Create and insert
-	tm, err := NewTableManager(dataDir, 4096)
+	tm, err := NewTableManager(dataDir, 4096, nil)
 	if err != nil {
 		t.Fatalf("NewTableManager error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestTableManagerPersistence(t *testing.T) {
 	}
 
 	// Reopen
-	tm2, err := NewTableManager(dataDir, 4096)
+	tm2, err := NewTableManager(dataDir, 4096, nil)
 	if err != nil {
 		t.Fatalf("NewTableManager reopen error: %v", err)
 	}
