@@ -147,6 +147,7 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 	}
 
 	totalInserted := 0
+	totalUpdated := 0
 
 	// Process each row in ValuesList
 	for rowIdx, rowValues := range stmt.ValuesList {
@@ -215,22 +216,66 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 			}
 		}
 
-		// Check primary key uniqueness before insert
+		// Check for conflicts on primary key or specified conflict columns
+		conflictRID, conflictRow, hasConflict := e.findConflictingRow(stmt, meta.Schema, values)
+
+		if hasConflict {
+			// Handle ON CONFLICT
+			if stmt.OnConflict == nil {
+				// No ON CONFLICT clause - error on duplicate
+				return nil, fmt.Errorf("row %d: duplicate key value violates unique constraint", rowIdx+1)
+			}
+
+			if stmt.OnConflict.DoNothing {
+				// ON CONFLICT DO NOTHING - skip this row
+				continue
+			}
+
+			// ON CONFLICT DO UPDATE SET ...
+			// Create a combined row context for EXCLUDED references
+			newRow := make([]catalog.Value, len(conflictRow))
+			copy(newRow, conflictRow)
+
+			for _, assign := range stmt.OnConflict.UpdateSet {
+				col, idx := meta.Schema.ColumnByName(assign.Column)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column in ON CONFLICT UPDATE: %s", assign.Column)
+				}
+				// Evaluate expression with EXCLUDED context (the new values)
+				val, err := e.evalExprWithExcluded(assign.Value, meta.Schema, conflictRow, values)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				val, err = coerceValue(val, col.Type)
+				if err != nil {
+					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, assign.Column, err)
+				}
+				newRow[idx] = val
+			}
+
+			// Validate CHECK constraints on updated row
+			if err := e.validateCheckConstraints(meta.Schema, newRow); err != nil {
+				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+			}
+
+			// Delete old row and insert updated row
+			if err := e.tm.Delete(conflictRID); err != nil {
+				return nil, fmt.Errorf("row %d: update delete failed: %w", rowIdx+1, err)
+			}
+			_, err = e.tm.Insert(stmt.TableName, newRow)
+			if err != nil {
+				return nil, fmt.Errorf("row %d: update insert failed: %w", rowIdx+1, err)
+			}
+			totalUpdated++
+			continue
+		}
+
+		// No conflict - check primary key constraints (for non-conflict columns)
 		for i, col := range meta.Schema.Columns {
 			if col.PrimaryKey {
-				// Get the value for this primary key column
 				pkValue := values[i]
 				if pkValue.IsNull {
 					return nil, fmt.Errorf("row %d: primary key column %q cannot be NULL", rowIdx+1, col.Name)
-				}
-
-				// Scan existing rows to check for duplicates
-				exists, err := e.primaryKeyExists(stmt.TableName, meta.Schema, i, pkValue)
-				if err != nil {
-					return nil, err
-				}
-				if exists {
-					return nil, fmt.Errorf("row %d: duplicate key value violates primary key constraint on column %q", rowIdx+1, col.Name)
 				}
 			}
 		}
@@ -248,10 +293,113 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 		totalInserted++
 	}
 
+	// Build result message
+	if totalUpdated > 0 {
+		if totalInserted == 0 {
+			return &Result{Message: fmt.Sprintf("%d row(s) updated.", totalUpdated), RowsAffected: totalUpdated}, nil
+		}
+		return &Result{Message: fmt.Sprintf("%d row(s) inserted, %d row(s) updated.", totalInserted, totalUpdated), RowsAffected: totalInserted + totalUpdated}, nil
+	}
 	if totalInserted == 1 {
 		return &Result{Message: "1 row inserted.", RowsAffected: totalInserted}, nil
 	}
 	return &Result{Message: fmt.Sprintf("%d rows inserted.", totalInserted), RowsAffected: totalInserted}, nil
+}
+
+// findConflictingRow checks if the values conflict with an existing row.
+// It returns the RID, row data, and whether a conflict exists.
+func (e *Executor) findConflictingRow(stmt *InsertStmt, schema *catalog.Schema, values []catalog.Value) (storage.RID, []catalog.Value, bool) {
+	var conflictRID storage.RID
+	var conflictRow []catalog.Value
+	hasConflict := false
+
+	// Determine which columns to check for conflicts
+	var conflictColIndices []int
+
+	if stmt.OnConflict != nil && len(stmt.OnConflict.ConflictColumns) > 0 {
+		// Use specified conflict columns
+		for _, colName := range stmt.OnConflict.ConflictColumns {
+			_, idx := schema.ColumnByName(colName)
+			if idx >= 0 {
+				conflictColIndices = append(conflictColIndices, idx)
+			}
+		}
+	} else {
+		// Default to primary key columns
+		for i, col := range schema.Columns {
+			if col.PrimaryKey {
+				conflictColIndices = append(conflictColIndices, i)
+			}
+		}
+	}
+
+	if len(conflictColIndices) == 0 {
+		return conflictRID, conflictRow, false
+	}
+
+	_ = e.scanTable(stmt.TableName, schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+		// Check if all conflict columns match
+		allMatch := true
+		for _, idx := range conflictColIndices {
+			if !valuesEqual(values[idx], row[idx]) {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			conflictRID = rid
+			conflictRow = make([]catalog.Value, len(row))
+			copy(conflictRow, row)
+			hasConflict = true
+			return false, nil // stop scanning
+		}
+		return true, nil // continue
+	})
+
+	return conflictRID, conflictRow, hasConflict
+}
+
+// evalExprWithExcluded evaluates an expression with EXCLUDED context for ON CONFLICT.
+// EXCLUDED refers to the values that would have been inserted.
+func (e *Executor) evalExprWithExcluded(expr Expression, schema *catalog.Schema, currentRow, excludedRow []catalog.Value) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		// Check for EXCLUDED.column reference (stored as "EXCLUDED.colname" or "excluded.colname")
+		colName := ex.Name
+		if strings.HasPrefix(strings.ToUpper(colName), "EXCLUDED.") {
+			// Extract the actual column name after "EXCLUDED."
+			actualColName := colName[9:] // len("EXCLUDED.") = 9
+			_, idx := schema.ColumnByName(actualColName)
+			if idx < 0 {
+				return catalog.Value{}, fmt.Errorf("unknown column in EXCLUDED: %s", actualColName)
+			}
+			return excludedRow[idx], nil
+		}
+		// Regular column reference - use current row
+		_, idx := schema.ColumnByName(colName)
+		if idx < 0 {
+			return catalog.Value{}, fmt.Errorf("unknown column: %s", colName)
+		}
+		return currentRow[idx], nil
+
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *BinaryExpr:
+		left, err := e.evalExprWithExcluded(ex.Left, schema, currentRow, excludedRow)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		right, err := e.evalExprWithExcluded(ex.Right, schema, currentRow, excludedRow)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		return e.evalBinaryExprValue(left, ex.Op, right)
+
+	default:
+		// Fall back to regular eval for other expression types
+		return e.evalExpr(expr, schema, currentRow)
+	}
 }
 
 // primaryKeyExists checks if a value already exists for a primary key column.
@@ -3039,8 +3187,12 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 		return nil, err
 	}
 
-	// For now, we do a simple approach: scan, filter, update in place
-	// This is not efficient but works for Stage 3
+	// Handle UPDATE with FROM clause (PostgreSQL-style join update)
+	if stmt.FromTable != "" {
+		return e.executeUpdateWithFrom(stmt, meta)
+	}
+
+	// Simple UPDATE without FROM
 	var ridsToUpdate []storage.RID
 	var newRows [][]catalog.Value
 
@@ -3091,7 +3243,6 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 	}
 
 	// Delete old rows and insert new rows
-	// This is a simple delete+insert approach for Stage 3
 	for i, rid := range ridsToUpdate {
 		if err := e.tm.Delete(rid); err != nil {
 			return nil, fmt.Errorf("update delete failed: %w", err)
@@ -3108,13 +3259,288 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 	}, nil
 }
 
+// executeUpdateWithFrom handles UPDATE ... FROM ... WHERE syntax (PostgreSQL style).
+func (e *Executor) executeUpdateWithFrom(stmt *UpdateStmt, targetMeta *catalog.TableMeta) (*Result, error) {
+	// Get the FROM table metadata
+	fromMeta, err := e.tm.Catalog().GetTable(stmt.FromTable)
+	if err != nil {
+		return nil, fmt.Errorf("FROM table %q: %w", stmt.FromTable, err)
+	}
+
+	// Build combined schema for expression evaluation
+	combinedSchema := e.buildCombinedSchema(
+		stmt.TableName, stmt.TableAlias, targetMeta.Schema,
+		stmt.FromTable, stmt.FromAlias, fromMeta.Schema,
+	)
+
+	// Collect rows from FROM table
+	var fromRows [][]catalog.Value
+	err = e.scanTable(stmt.FromTable, fromMeta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+		rowCopy := make([]catalog.Value, len(row))
+		copy(rowCopy, row)
+		fromRows = append(fromRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var ridsToUpdate []storage.RID
+	var newRows [][]catalog.Value
+
+	// Scan target table
+	err = e.scanTable(stmt.TableName, targetMeta.Schema, func(rid storage.RID, targetRow []catalog.Value) (bool, error) {
+		// For each target row, find matching FROM rows
+		for _, fromRow := range fromRows {
+			// Combine rows for expression evaluation
+			combinedRow := append(targetRow, fromRow...)
+
+			// Apply WHERE filter on combined row
+			if stmt.Where != nil {
+				match, err := e.evalConditionCombined(stmt.Where, combinedSchema, combinedRow)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					continue
+				}
+			}
+
+			// Apply updates
+			newRow := make([]catalog.Value, len(targetRow))
+			copy(newRow, targetRow)
+
+			for _, assign := range stmt.Assignments {
+				col, idx := targetMeta.Schema.ColumnByName(assign.Column)
+				if col == nil {
+					return false, fmt.Errorf("unknown column: %s", assign.Column)
+				}
+				val, err := e.evalExprCombined(assign.Value, combinedSchema, combinedRow)
+				if err != nil {
+					return false, err
+				}
+				val, err = coerceValue(val, col.Type)
+				if err != nil {
+					return false, fmt.Errorf("column %s: %w", assign.Column, err)
+				}
+				newRow[idx] = val
+			}
+
+			// Validate CHECK constraints
+			if err := e.validateCheckConstraints(targetMeta.Schema, newRow); err != nil {
+				return false, err
+			}
+
+			ridsToUpdate = append(ridsToUpdate, rid)
+			newRows = append(newRows, newRow)
+			break // Only update each target row once (first match)
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Delete old rows and insert new rows
+	for i, rid := range ridsToUpdate {
+		if err := e.tm.Delete(rid); err != nil {
+			return nil, fmt.Errorf("update delete failed: %w", err)
+		}
+		_, err := e.tm.Insert(stmt.TableName, newRows[i])
+		if err != nil {
+			return nil, fmt.Errorf("update insert failed: %w", err)
+		}
+	}
+
+	return &Result{
+		Message:      fmt.Sprintf("%d row(s) updated.", len(ridsToUpdate)),
+		RowsAffected: len(ridsToUpdate),
+	}, nil
+}
+
+// buildCombinedSchema creates a schema that combines two tables for join operations.
+// Both qualified (table.column) and unqualified column names are supported.
+// The combined schema maps both forms to the correct indices in combined rows.
+func (e *Executor) buildCombinedSchema(table1, alias1 string, schema1 *catalog.Schema, table2, alias2 string, schema2 *catalog.Schema) *combinedSchema {
+	combined := &combinedSchema{
+		Schema: &catalog.Schema{
+			Columns: make([]catalog.Column, len(schema1.Columns)+len(schema2.Columns)),
+		},
+		columnMap: make(map[string]int),
+	}
+
+	// Add columns from first table
+	prefix1 := table1
+	if alias1 != "" {
+		prefix1 = alias1
+	}
+	for i, col := range schema1.Columns {
+		newCol := col
+		newCol.Name = prefix1 + "." + col.Name
+		combined.Schema.Columns[i] = newCol
+		// Map qualified name to index
+		combined.columnMap[strings.ToUpper(prefix1+"."+col.Name)] = i
+		// Also map unqualified name (may be overwritten if ambiguous)
+		combined.columnMap[strings.ToUpper(col.Name)] = i
+	}
+
+	// Add columns from second table
+	prefix2 := table2
+	if alias2 != "" {
+		prefix2 = alias2
+	}
+	offset := len(schema1.Columns)
+	for i, col := range schema2.Columns {
+		newCol := col
+		newCol.Name = prefix2 + "." + col.Name
+		combined.Schema.Columns[offset+i] = newCol
+		// Map qualified name to index
+		combined.columnMap[strings.ToUpper(prefix2+"."+col.Name)] = offset + i
+		// Map unqualified name only if not ambiguous (not in schema1)
+		if _, idx := schema1.ColumnByName(col.Name); idx < 0 {
+			combined.columnMap[strings.ToUpper(col.Name)] = offset + i
+		}
+	}
+
+	return combined
+}
+
+// combinedSchema wraps a schema with a column name to index map for efficient lookups.
+type combinedSchema struct {
+	Schema    *catalog.Schema
+	columnMap map[string]int
+}
+
+// ColumnByName finds a column by name (supports both qualified and unqualified names).
+func (cs *combinedSchema) ColumnByName(name string) (*catalog.Column, int) {
+	if idx, ok := cs.columnMap[strings.ToUpper(name)]; ok {
+		return &cs.Schema.Columns[idx], idx
+	}
+	return nil, -1
+}
+
+// evalExprCombined evaluates an expression using a combined schema.
+func (e *Executor) evalExprCombined(expr Expression, cs *combinedSchema, row []catalog.Value) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *ColumnRef:
+		if row == nil {
+			return catalog.Value{}, fmt.Errorf("cannot reference column %s without a row context", ex.Name)
+		}
+		col, idx := cs.ColumnByName(ex.Name)
+		if col == nil {
+			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		return row[idx], nil
+
+	case *BinaryExpr:
+		switch ex.Op {
+		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH:
+			left, err := e.evalExprCombined(ex.Left, cs, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+			right, err := e.evalExprCombined(ex.Right, cs, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+			return evalArithmetic(left, right, ex.Op)
+		}
+		return catalog.Value{}, fmt.Errorf("unsupported binary operator in expression: %v", ex.Op)
+
+	case *FunctionExpr:
+		args := make([]catalog.Value, len(ex.Args))
+		for i, arg := range ex.Args {
+			val, err := e.evalExprCombined(arg, cs, row)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+			args[i] = val
+		}
+		return evalFunction(ex.Name, args)
+
+	default:
+		// Fall back to regular evalExpr for other expression types
+		return e.evalExpr(expr, cs.Schema, row)
+	}
+}
+
+// evalConditionCombined evaluates a boolean expression using a combined schema.
+func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, row []catalog.Value) (bool, error) {
+	switch ex := expr.(type) {
+	case *BinaryExpr:
+		switch ex.Op {
+		case TOKEN_AND:
+			left, err := e.evalConditionCombined(ex.Left, cs, row)
+			if err != nil {
+				return false, err
+			}
+			if !left {
+				return false, nil
+			}
+			return e.evalConditionCombined(ex.Right, cs, row)
+
+		case TOKEN_OR:
+			left, err := e.evalConditionCombined(ex.Left, cs, row)
+			if err != nil {
+				return false, err
+			}
+			if left {
+				return true, nil
+			}
+			return e.evalConditionCombined(ex.Right, cs, row)
+
+		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+			left, err := e.evalExprCombined(ex.Left, cs, row)
+			if err != nil {
+				return false, err
+			}
+			right, err := e.evalExprCombined(ex.Right, cs, row)
+			if err != nil {
+				return false, err
+			}
+			return compareValues(left, right, ex.Op)
+		}
+
+	case *UnaryExpr:
+		if ex.Op == TOKEN_NOT {
+			val, err := e.evalConditionCombined(ex.Expr, cs, row)
+			if err != nil {
+				return false, err
+			}
+			return !val, nil
+		}
+
+	case *IsNullExpr:
+		val, err := e.evalExprCombined(ex.Expr, cs, row)
+		if err != nil {
+			return false, err
+		}
+		isNull := val.IsNull
+		if ex.Not {
+			return !isNull, nil
+		}
+		return isNull, nil
+	}
+
+	return false, fmt.Errorf("unsupported condition type: %T", expr)
+}
+
 func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Collect RIDs to delete
+	// Handle DELETE with USING clause (PostgreSQL-style join delete)
+	if stmt.UsingTable != "" {
+		return e.executeDeleteWithUsing(stmt, meta)
+	}
+
+	// Simple DELETE without USING
 	var ridsToDelete []storage.RID
 
 	err = e.scanTable(stmt.TableName, meta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
@@ -3128,6 +3554,76 @@ func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 			}
 		}
 		ridsToDelete = append(ridsToDelete, rid)
+		return true, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Actually delete the rows
+	for _, rid := range ridsToDelete {
+		if err := e.tm.Delete(rid); err != nil {
+			return nil, fmt.Errorf("delete failed: %w", err)
+		}
+	}
+
+	return &Result{
+		Message:      fmt.Sprintf("%d row(s) deleted.", len(ridsToDelete)),
+		RowsAffected: len(ridsToDelete),
+	}, nil
+}
+
+// executeDeleteWithUsing handles DELETE ... USING ... WHERE syntax (PostgreSQL style).
+func (e *Executor) executeDeleteWithUsing(stmt *DeleteStmt, targetMeta *catalog.TableMeta) (*Result, error) {
+	// Get the USING table metadata
+	usingMeta, err := e.tm.Catalog().GetTable(stmt.UsingTable)
+	if err != nil {
+		return nil, fmt.Errorf("USING table %q: %w", stmt.UsingTable, err)
+	}
+
+	// Build combined schema for expression evaluation
+	combinedSchema := e.buildCombinedSchema(
+		stmt.TableName, stmt.TableAlias, targetMeta.Schema,
+		stmt.UsingTable, stmt.UsingAlias, usingMeta.Schema,
+	)
+
+	// Collect rows from USING table
+	var usingRows [][]catalog.Value
+	err = e.scanTable(stmt.UsingTable, usingMeta.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+		rowCopy := make([]catalog.Value, len(row))
+		copy(rowCopy, row)
+		usingRows = append(usingRows, rowCopy)
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var ridsToDelete []storage.RID
+
+	// Scan target table
+	err = e.scanTable(stmt.TableName, targetMeta.Schema, func(rid storage.RID, targetRow []catalog.Value) (bool, error) {
+		// For each target row, check against USING rows
+		for _, usingRow := range usingRows {
+			// Combine rows for expression evaluation
+			combinedRow := append(targetRow, usingRow...)
+
+			// Apply WHERE filter on combined row
+			if stmt.Where != nil {
+				match, err := e.evalConditionCombined(stmt.Where, combinedSchema, combinedRow)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					continue
+				}
+			}
+
+			// Match found - mark for deletion
+			ridsToDelete = append(ridsToDelete, rid)
+			break // Only need one match to delete the row
+		}
 		return true, nil
 	})
 

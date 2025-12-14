@@ -595,7 +595,246 @@ func TestMultiRowInsert(t *testing.T) {
 	}
 }
 
-// Helper: set up a test TableManager
+// TestInsertOnConflict tests INSERT ... ON CONFLICT (UPSERT).
+func TestInsertOnConflict(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create table with primary key
+	executeSQL(t, executor, "CREATE TABLE upsert_test (id INT PRIMARY KEY, name TEXT, amount INT);")
+
+	// Test 1: Insert initial row
+	executeSQL(t, executor, "INSERT INTO upsert_test VALUES (1, 'Alice', 10);")
+
+	// Test 2: ON CONFLICT DO NOTHING - should skip duplicate
+	result := executeSQL(t, executor, `
+		INSERT INTO upsert_test VALUES (1, 'Bob', 20)
+		ON CONFLICT (id) DO NOTHING;
+	`)
+
+	// Should not affect any rows (skipped)
+	selectResult := executeSQL(t, executor, "SELECT * FROM upsert_test WHERE id = 1;")
+	if len(selectResult.Rows) != 1 {
+		t.Fatalf("Test 2: Expected 1 row, got %d", len(selectResult.Rows))
+	}
+	if selectResult.Rows[0][1].Text != "Alice" {
+		t.Errorf("Test 2: Name should still be Alice, got %s", selectResult.Rows[0][1].Text)
+	}
+
+	// Test 3: ON CONFLICT DO UPDATE SET - should update existing row
+	result = executeSQL(t, executor, `
+		INSERT INTO upsert_test VALUES (1, 'Bob', 20)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, amount = EXCLUDED.amount;
+	`)
+
+	if result.RowsAffected != 1 {
+		t.Errorf("Test 3: Expected 1 row affected, got %d", result.RowsAffected)
+	}
+
+	selectResult = executeSQL(t, executor, "SELECT * FROM upsert_test WHERE id = 1;")
+	if len(selectResult.Rows) != 1 {
+		t.Fatalf("Test 3: Expected 1 row, got %d", len(selectResult.Rows))
+	}
+	if selectResult.Rows[0][1].Text != "Bob" {
+		t.Errorf("Test 3: Name should be Bob, got %s", selectResult.Rows[0][1].Text)
+	}
+	var amt int64
+	if selectResult.Rows[0][2].Type == catalog.TypeInt32 {
+		amt = int64(selectResult.Rows[0][2].Int32)
+	} else {
+		amt = selectResult.Rows[0][2].Int64
+	}
+	if amt != 20 {
+		t.Errorf("Test 3: Amount should be 20, got %d", amt)
+	}
+
+	// Test 4: Insert new row (no conflict)
+	result = executeSQL(t, executor, `
+		INSERT INTO upsert_test VALUES (2, 'Carol', 30)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;
+	`)
+
+	if result.RowsAffected != 1 {
+		t.Errorf("Test 4: Expected 1 row affected, got %d", result.RowsAffected)
+	}
+
+	selectResult = executeSQL(t, executor, "SELECT COUNT(*) FROM upsert_test;")
+	var totalCount int64
+	if selectResult.Rows[0][0].Type == catalog.TypeInt32 {
+		totalCount = int64(selectResult.Rows[0][0].Int32)
+	} else {
+		totalCount = selectResult.Rows[0][0].Int64
+	}
+	if totalCount != 2 {
+		t.Errorf("Test 4: Should have 2 rows total, got %d", totalCount)
+	}
+
+	// Test 5: Multi-row INSERT with ON CONFLICT
+	result = executeSQL(t, executor, `
+		INSERT INTO upsert_test VALUES (2, 'Carol Updated', 35), (3, 'Dave', 40)
+		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, amount = EXCLUDED.amount;
+	`)
+
+	selectResult = executeSQL(t, executor, "SELECT * FROM upsert_test ORDER BY id;")
+	if len(selectResult.Rows) != 3 {
+		t.Fatalf("Test 5: Expected 3 rows, got %d", len(selectResult.Rows))
+	}
+	if selectResult.Rows[1][1].Text != "Carol Updated" {
+		t.Errorf("Test 5: Carol should be updated to 'Carol Updated', got %s", selectResult.Rows[1][1].Text)
+	}
+	if selectResult.Rows[2][1].Text != "Dave" {
+		t.Errorf("Test 5: Third row should be Dave, got %s", selectResult.Rows[2][1].Text)
+	}
+}
+
+// TestUpdateWithFrom tests UPDATE ... FROM ... WHERE (PostgreSQL style).
+func TestUpdateWithFrom(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create test tables
+	executeSQL(t, executor, "CREATE TABLE orders (id INT, customer_id INT, status TEXT);")
+	executeSQL(t, executor, "CREATE TABLE customers (id INT, country TEXT);")
+
+	// Insert test data
+	executeSQL(t, executor, "INSERT INTO orders VALUES (1, 100, 'pending'), (2, 101, 'pending'), (3, 102, 'pending');")
+	executeSQL(t, executor, "INSERT INTO customers VALUES (100, 'USA'), (101, 'Canada'), (102, 'USA');")
+
+	// Test 1: UPDATE with FROM - update orders for USA customers
+	result := executeSQL(t, executor, `
+		UPDATE orders SET status = 'shipped'
+		FROM customers
+		WHERE orders.customer_id = customers.id AND customers.country = 'USA';
+	`)
+
+	if result.RowsAffected != 2 {
+		t.Errorf("Test 1: Expected 2 rows updated, got %d", result.RowsAffected)
+	}
+
+	// Verify results
+	selectResult := executeSQL(t, executor, "SELECT id, status FROM orders ORDER BY id;")
+	if len(selectResult.Rows) != 3 {
+		t.Fatalf("Test 1: Expected 3 rows, got %d", len(selectResult.Rows))
+	}
+
+	// Orders 1 and 3 should be shipped (USA customers)
+	if selectResult.Rows[0][1].Text != "shipped" {
+		t.Errorf("Test 1: Order 1 should be shipped, got %s", selectResult.Rows[0][1].Text)
+	}
+	if selectResult.Rows[1][1].Text != "pending" {
+		t.Errorf("Test 1: Order 2 should be pending, got %s", selectResult.Rows[1][1].Text)
+	}
+	if selectResult.Rows[2][1].Text != "shipped" {
+		t.Errorf("Test 1: Order 3 should be shipped, got %s", selectResult.Rows[2][1].Text)
+	}
+
+	// Test 2: UPDATE with FROM using value from joined table
+	executeSQL(t, executor, "CREATE TABLE products (id INT, name TEXT, price INT);")
+	executeSQL(t, executor, "CREATE TABLE discounts (product_id INT, discount_pct INT);")
+
+	executeSQL(t, executor, "INSERT INTO products VALUES (1, 'Widget', 100), (2, 'Gadget', 200);")
+	executeSQL(t, executor, "INSERT INTO discounts VALUES (1, 10);")
+
+	result = executeSQL(t, executor, `
+		UPDATE products SET price = price - (price * discounts.discount_pct / 100)
+		FROM discounts
+		WHERE products.id = discounts.product_id;
+	`)
+
+	if result.RowsAffected != 1 {
+		t.Errorf("Test 2: Expected 1 row updated, got %d", result.RowsAffected)
+	}
+
+	selectResult = executeSQL(t, executor, "SELECT id, price FROM products ORDER BY id;")
+	var price1, price2 int64
+	if selectResult.Rows[0][1].Type == catalog.TypeInt32 {
+		price1 = int64(selectResult.Rows[0][1].Int32)
+	} else {
+		price1 = selectResult.Rows[0][1].Int64
+	}
+	if selectResult.Rows[1][1].Type == catalog.TypeInt32 {
+		price2 = int64(selectResult.Rows[1][1].Int32)
+	} else {
+		price2 = selectResult.Rows[1][1].Int64
+	}
+
+	if price1 != 90 {
+		t.Errorf("Test 2: Widget price should be 90, got %d", price1)
+	}
+	if price2 != 200 {
+		t.Errorf("Test 2: Gadget price should still be 200, got %d", price2)
+	}
+}
+
+// TestDeleteWithUsing tests DELETE ... USING ... WHERE (PostgreSQL style).
+func TestDeleteWithUsing(t *testing.T) {
+	tm := setupTestTableManager(t)
+	executor := NewExecutor(tm)
+
+	// Create test tables
+	executeSQL(t, executor, "CREATE TABLE orders2 (id INT, customer_id INT, amount INT);")
+	executeSQL(t, executor, "CREATE TABLE inactive_customers (id INT);")
+
+	// Insert test data
+	executeSQL(t, executor, "INSERT INTO orders2 VALUES (1, 100, 500), (2, 101, 300), (3, 100, 200), (4, 102, 400);")
+	executeSQL(t, executor, "INSERT INTO inactive_customers VALUES (100), (102);")
+
+	// Test 1: DELETE with USING - delete orders for inactive customers
+	result := executeSQL(t, executor, `
+		DELETE FROM orders2
+		USING inactive_customers
+		WHERE orders2.customer_id = inactive_customers.id;
+	`)
+
+	if result.RowsAffected != 3 {
+		t.Errorf("Test 1: Expected 3 rows deleted, got %d", result.RowsAffected)
+	}
+
+	// Verify results
+	selectResult := executeSQL(t, executor, "SELECT * FROM orders2;")
+	if len(selectResult.Rows) != 1 {
+		t.Fatalf("Test 1: Expected 1 row remaining, got %d", len(selectResult.Rows))
+	}
+
+	// Only order 2 (customer 101) should remain
+	var orderId int64
+	if selectResult.Rows[0][0].Type == catalog.TypeInt32 {
+		orderId = int64(selectResult.Rows[0][0].Int32)
+	} else {
+		orderId = selectResult.Rows[0][0].Int64
+	}
+	if orderId != 2 {
+		t.Errorf("Test 1: Remaining order should be id=2, got id=%d", orderId)
+	}
+
+	// Test 2: DELETE with USING - no matches
+	executeSQL(t, executor, "CREATE TABLE products2 (id INT, category TEXT);")
+	executeSQL(t, executor, "CREATE TABLE discontinued (category TEXT);")
+
+	executeSQL(t, executor, "INSERT INTO products2 VALUES (1, 'Electronics'), (2, 'Clothing');")
+	executeSQL(t, executor, "INSERT INTO discontinued VALUES ('Toys');")
+
+	result = executeSQL(t, executor, `
+		DELETE FROM products2
+		USING discontinued
+		WHERE products2.category = discontinued.category;
+	`)
+
+	if result.RowsAffected != 0 {
+		t.Errorf("Test 2: Expected 0 rows deleted, got %d", result.RowsAffected)
+	}
+
+	selectResult = executeSQL(t, executor, "SELECT COUNT(*) FROM products2;")
+	var count int64
+	if selectResult.Rows[0][0].Type == catalog.TypeInt32 {
+		count = int64(selectResult.Rows[0][0].Int32)
+	} else {
+		count = selectResult.Rows[0][0].Int64
+	}
+	if count != 2 {
+		t.Errorf("Test 2: Should still have 2 products, got %d", count)
+	}
+}
 func setupTestTableManager(t *testing.T) *catalog.TableManager {
 	t.Helper()
 	tmp := t.TempDir()

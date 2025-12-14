@@ -1383,6 +1383,86 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 		p.nextToken() // consume comma between value rows
 	}
 
+	// Parse optional ON CONFLICT clause
+	if p.curTokenIs(TOKEN_ON) {
+		p.nextToken() // consume ON
+		if !p.curTokenIs(TOKEN_CONFLICT) {
+			return nil, fmt.Errorf("expected CONFLICT after ON, got %v", p.cur.Type)
+		}
+		p.nextToken() // consume CONFLICT
+
+		onConflict := &OnConflictClause{}
+
+		// Parse optional conflict columns: ON CONFLICT (col1, col2)
+		if p.curTokenIs(TOKEN_LPAREN) {
+			p.nextToken() // consume (
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return nil, fmt.Errorf("expected column name in ON CONFLICT, got %v", p.cur.Type)
+				}
+				colName, err := p.parseIdentifier()
+				if err != nil {
+					return nil, err
+				}
+				onConflict.ConflictColumns = append(onConflict.ConflictColumns, colName)
+				if !p.curTokenIs(TOKEN_COMMA) {
+					break
+				}
+				p.nextToken() // consume comma
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, err
+			}
+		}
+
+		// Parse DO NOTHING or DO UPDATE SET ...
+		if !p.curTokenIs(TOKEN_DO) {
+			return nil, fmt.Errorf("expected DO after ON CONFLICT, got %v", p.cur.Type)
+		}
+		p.nextToken() // consume DO
+
+		if p.curTokenIs(TOKEN_NOTHING) {
+			p.nextToken() // consume NOTHING
+			onConflict.DoNothing = true
+		} else if p.curTokenIs(TOKEN_UPDATE) {
+			p.nextToken() // consume UPDATE
+			if err := p.expect(TOKEN_SET); err != nil {
+				return nil, fmt.Errorf("expected SET after DO UPDATE, got %v", p.cur.Type)
+			}
+
+			// Parse assignments
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return nil, fmt.Errorf("expected column name in SET, got %v", p.cur.Type)
+				}
+				colName, err := p.parseIdentifier()
+				if err != nil {
+					return nil, err
+				}
+
+				if err := p.expect(TOKEN_EQ); err != nil {
+					return nil, err
+				}
+
+				expr, err := p.parsePrimaryExpression()
+				if err != nil {
+					return nil, err
+				}
+
+				onConflict.UpdateSet = append(onConflict.UpdateSet, Assignment{Column: colName, Value: expr})
+
+				if !p.curTokenIs(TOKEN_COMMA) {
+					break
+				}
+				p.nextToken() // consume comma
+			}
+		} else {
+			return nil, fmt.Errorf("expected NOTHING or UPDATE after DO, got %v", p.cur.Type)
+		}
+
+		stmt.OnConflict = onConflict
+	}
+
 	return stmt, nil
 }
 
@@ -1401,6 +1481,26 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 		return nil, err
 	}
 	stmt.TableName = tableName
+
+	// Optional alias for target table
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
+		}
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SET) {
+		// Alias without AS keyword
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
+	}
 
 	// SET
 	if err := p.expect(TOKEN_SET); err != nil {
@@ -1421,7 +1521,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 			return nil, err
 		}
 
-		expr, err := p.parsePrimaryExpression()
+		expr, err := p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -1432,6 +1532,39 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 			break
 		}
 		p.nextToken()
+	}
+
+	// Optional FROM clause (PostgreSQL style: UPDATE t1 SET ... FROM t2 WHERE ...)
+	if p.curTokenIs(TOKEN_FROM) {
+		p.nextToken() // consume FROM
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected table name in FROM, got %v", p.cur.Type)
+		}
+		fromTable, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.FromTable = fromTable
+
+		// Optional alias for FROM table
+		if p.curTokenIs(TOKEN_AS) {
+			p.nextToken() // consume AS
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
+			}
+			alias, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+			stmt.FromAlias = alias
+		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHERE) {
+			// Alias without AS keyword
+			alias, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+			stmt.FromAlias = alias
+		}
 	}
 
 	// Optional WHERE
@@ -1447,7 +1580,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 	return stmt, nil
 }
 
-// parseDelete parses: DELETE FROM table [WHERE expr]
+// parseDelete parses: DELETE FROM table [USING table] [WHERE expr]
 func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	stmt := &DeleteStmt{}
 
@@ -1466,6 +1599,59 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 		return nil, err
 	}
 	stmt.TableName = tableName
+
+	// Optional alias for target table
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken() // consume AS
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
+		}
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_USING) && !p.curTokenIs(TOKEN_WHERE) {
+		// Alias without AS keyword
+		alias, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.TableAlias = alias
+	}
+
+	// Optional USING clause (PostgreSQL style: DELETE FROM t1 USING t2 WHERE ...)
+	if p.curTokenIs(TOKEN_USING) {
+		p.nextToken() // consume USING
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected table name in USING, got %v", p.cur.Type)
+		}
+		usingTable, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.UsingTable = usingTable
+
+		// Optional alias for USING table
+		if p.curTokenIs(TOKEN_AS) {
+			p.nextToken() // consume AS
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
+			}
+			alias, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+			stmt.UsingAlias = alias
+		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHERE) {
+			// Alias without AS keyword
+			alias, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+			stmt.UsingAlias = alias
+		}
+	}
 
 	// Optional WHERE
 	if p.curTokenIs(TOKEN_WHERE) {
@@ -2492,7 +2678,7 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 
 	case TOKEN_IDENT,
 		// Contextual keywords that can be used as identifiers
-		TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING:
+		TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING, TOKEN_EXCLUDED:
 		name := p.cur.Literal
 		p.nextToken()
 

@@ -240,6 +240,8 @@ const (
 	TOKEN_SOURCE
 	TOKEN_DO
 	TOKEN_NOTHING
+	TOKEN_CONFLICT
+	TOKEN_EXCLUDED
 
 	// Grouping sets
 	TOKEN_GROUPING
@@ -408,6 +410,8 @@ var keywords = map[string]TokenType{
 	"SOURCE":            TOKEN_SOURCE,
 	"DO":                TOKEN_DO,
 	"NOTHING":           TOKEN_NOTHING,
+	"CONFLICT":          TOKEN_CONFLICT,
+	"EXCLUDED":          TOKEN_EXCLUDED,
 	"GROUPING":          TOKEN_GROUPING,
 	"SETS":              TOKEN_SETS,
 	"CUBE":              TOKEN_CUBE,

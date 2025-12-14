@@ -63,8 +63,16 @@ func (s *DropIndexStmt) statementNode() {}
 // InsertStmt represents INSERT INTO statement.
 type InsertStmt struct {
 	TableName  string
-	Columns    []string       // optional column list
-	ValuesList [][]Expression // multiple rows: INSERT INTO t VALUES (...), (...), ...
+	Columns    []string          // optional column list
+	ValuesList [][]Expression    // multiple rows: INSERT INTO t VALUES (...), (...), ...
+	OnConflict *OnConflictClause // optional ON CONFLICT clause
+}
+
+// OnConflictClause represents ON CONFLICT ... DO UPDATE/NOTHING
+type OnConflictClause struct {
+	ConflictColumns []string     // columns that define the conflict (usually PK or unique)
+	DoNothing       bool         // ON CONFLICT DO NOTHING
+	UpdateSet       []Assignment // ON CONFLICT DO UPDATE SET ...
 }
 
 func (s *InsertStmt) statementNode() {}
@@ -141,7 +149,10 @@ type OrderByClause struct {
 // UpdateStmt represents UPDATE statement.
 type UpdateStmt struct {
 	TableName   string
+	TableAlias  string // optional alias for target table
 	Assignments []Assignment
+	FromTable   string // UPDATE ... FROM table (PostgreSQL style)
+	FromAlias   string // alias for FROM table
 	Where       Expression
 }
 
@@ -155,8 +166,11 @@ type Assignment struct {
 
 // DeleteStmt represents DELETE statement.
 type DeleteStmt struct {
-	TableName string
-	Where     Expression
+	TableName  string
+	TableAlias string // optional alias for target table
+	UsingTable string // DELETE ... USING table (PostgreSQL style)
+	UsingAlias string // alias for USING table
+	Where      Expression
 }
 
 func (s *DeleteStmt) statementNode() {}
