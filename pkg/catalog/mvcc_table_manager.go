@@ -225,13 +225,13 @@ func containsImpl(s, substr string) bool {
 }
 
 // CreateTable delegates to the underlying TableManager.
-func (m *MVCCTableManager) CreateTable(name string, cols []Column) error {
-	return m.tm.CreateTable(name, cols)
+func (m *MVCCTableManager) CreateTable(name string, cols []Column, foreignKeys []ForeignKey) error {
+	return m.tm.CreateTable(name, cols, foreignKeys)
 }
 
 // CreateTableWithStorage delegates to the underlying TableManager.
-func (m *MVCCTableManager) CreateTableWithStorage(name string, cols []Column, storageType string) error {
-	return m.tm.CreateTableWithStorage(name, cols, storageType)
+func (m *MVCCTableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string) error {
+	return m.tm.CreateTableWithStorage(name, cols, foreignKeys, storageType)
 }
 
 // DropTable delegates to the underlying TableManager.

@@ -16,21 +16,32 @@ type Expression interface {
 
 // ColumnDef represents a column definition in CREATE TABLE.
 type ColumnDef struct {
-	Name          string
-	Type          catalog.DataType
-	NotNull       bool
-	PrimaryKey    bool
-	HasDefault    bool
-	Default       Expression // literal value or NULL
-	AutoIncrement bool
-	Check         Expression // CHECK constraint expression
-	CheckExprStr  string     // Original CHECK expression string for storage
+	Name             string
+	Type             catalog.DataType
+	NotNull          bool
+	PrimaryKey       bool
+	HasDefault       bool
+	Default          Expression // literal value or NULL
+	AutoIncrement    bool
+	Check            Expression // CHECK constraint expression
+	CheckExprStr     string     // Original CHECK expression string for storage
+	ReferencesTable  string     // Referenced table for inline FK
+	ReferencesColumn string     // Referenced column for inline FK
+}
+
+// ForeignKeyDef represents a foreign key constraint.
+type ForeignKeyDef struct {
+	ConstraintName string   // Optional constraint name
+	Columns        []string // Columns in the current table
+	RefTable       string   // Referenced table name
+	RefColumns     []string // Referenced columns in the other table
 }
 
 // CreateTableStmt represents CREATE TABLE statement.
 type CreateTableStmt struct {
 	TableName   string
 	Columns     []ColumnDef
+	ForeignKeys []ForeignKeyDef
 	StorageType string // "ROW" (default) or "COLUMN"
 }
 

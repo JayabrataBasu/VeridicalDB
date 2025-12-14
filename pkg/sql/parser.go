@@ -2028,11 +2028,39 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	for {
-		col, err := p.parseColumnDef()
-		if err != nil {
-			return nil, err
+		if p.curTokenIs(TOKEN_FOREIGN) {
+			fk, err := p.parseForeignKeyDef()
+			if err != nil {
+				return nil, err
+			}
+			stmt.ForeignKeys = append(stmt.ForeignKeys, fk)
+		} else if p.curTokenIs(TOKEN_CONSTRAINT) {
+			p.nextToken() // consume CONSTRAINT
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected constraint name")
+			}
+			constraintName, err := p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+
+			if p.curTokenIs(TOKEN_FOREIGN) {
+				fk, err := p.parseForeignKeyDef()
+				if err != nil {
+					return nil, err
+				}
+				fk.ConstraintName = constraintName
+				stmt.ForeignKeys = append(stmt.ForeignKeys, fk)
+			} else {
+				return nil, fmt.Errorf("only FOREIGN KEY constraints are supported for now")
+			}
+		} else {
+			col, err := p.parseColumnDef()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Columns = append(stmt.Columns, col)
 		}
-		stmt.Columns = append(stmt.Columns, col)
 
 		if !p.curTokenIs(TOKEN_COMMA) {
 			break
@@ -2060,6 +2088,81 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	return stmt, nil
+}
+
+func (p *Parser) parseForeignKeyDef() (ForeignKeyDef, error) {
+	fk := ForeignKeyDef{}
+	if err := p.expect(TOKEN_FOREIGN); err != nil {
+		return fk, err
+	}
+	if err := p.expect(TOKEN_KEY); err != nil {
+		return fk, err
+	}
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return fk, err
+	}
+
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return fk, fmt.Errorf("expected column name in FOREIGN KEY")
+		}
+		col, err := p.parseIdentifier()
+		if err != nil {
+			return fk, err
+		}
+		fk.Columns = append(fk.Columns, col)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return fk, err
+	}
+
+	if err := p.expect(TOKEN_REFERENCES); err != nil {
+		return fk, err
+	}
+
+	if !p.isIdentifierOrContextualKeyword() {
+		return fk, fmt.Errorf("expected referenced table name")
+	}
+	refTable, err := p.parseIdentifier()
+	if err != nil {
+		return fk, err
+	}
+	fk.RefTable = refTable
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return fk, err
+	}
+
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return fk, fmt.Errorf("expected referenced column name")
+		}
+		col, err := p.parseIdentifier()
+		if err != nil {
+			return fk, err
+		}
+		fk.RefColumns = append(fk.RefColumns, col)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return fk, err
+	}
+
+	return fk, nil
 }
 
 func (p *Parser) parseColumnDef() (ColumnDef, error) {
@@ -2132,6 +2235,32 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			// We'll serialize the expression to string when storing in catalog
 			if err := p.expect(TOKEN_RPAREN); err != nil {
 				return col, fmt.Errorf("expected ) after CHECK expression: %w", err)
+			}
+		} else if p.curTokenIs(TOKEN_REFERENCES) {
+			p.nextToken() // consume REFERENCES
+			if !p.isIdentifierOrContextualKeyword() {
+				return col, fmt.Errorf("expected referenced table name")
+			}
+			refTable, err := p.parseIdentifier()
+			if err != nil {
+				return col, err
+			}
+			col.ReferencesTable = refTable
+
+			// Optional (column)
+			if p.curTokenIs(TOKEN_LPAREN) {
+				p.nextToken() // consume (
+				if !p.isIdentifierOrContextualKeyword() {
+					return col, fmt.Errorf("expected referenced column name")
+				}
+				refCol, err := p.parseIdentifier()
+				if err != nil {
+					return col, err
+				}
+				col.ReferencesColumn = refCol
+				if err := p.expect(TOKEN_RPAREN); err != nil {
+					return col, err
+				}
 			}
 		} else {
 			break

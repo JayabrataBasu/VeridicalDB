@@ -69,13 +69,9 @@ Common SQL features needed for practical use.
 - **Difficulty:** Hard
 - **Estimated Time:** 8-12 hours
 
-### 2.2 INSERT ... ON CONFLICT (UPSERT)
-- **Status:** Not implemented (note: MERGE exists but is different syntax)
-- **What's Needed:**
-  - Parser: `INSERT INTO ... VALUES ... ON CONFLICT (col) DO UPDATE SET ...`
-  - Parser: `ON CONFLICT DO NOTHING`
-  - AST: Add conflict handling to `InsertStmt`
-  - Executor: Detect unique constraint violation, apply update or skip
+### 2.2 INSERT ... ON CONFLICT (UPSERT) ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Parser supports ON CONFLICT DO NOTHING and DO UPDATE SET with EXCLUDED.column references, executor detects conflicts and applies updates
 - **Syntax:**
   ```sql
   INSERT INTO t (id, name) VALUES (1, 'Alice')
@@ -84,13 +80,7 @@ Common SQL features needed for practical use.
   INSERT INTO t (id, name) VALUES (1, 'Alice')
   ON CONFLICT DO NOTHING;
   ```
-- **Files to Modify:**
-  - `pkg/sql/lexer.go` - Add `TOKEN_CONFLICT`, `TOKEN_EXCLUDED`
-  - `pkg/sql/ast.go` - Add `OnConflict` struct to `InsertStmt`
-  - `pkg/sql/parser.go` - Parse ON CONFLICT clause
-  - `pkg/sql/executor.go` - Handle conflict in `executeInsert()`
-- **Difficulty:** Medium
-- **Estimated Time:** 4-6 hours
+- **Test:** `TestInsertOnConflict` in sql_test.go
 
 ### 2.3 Multi-Row INSERT ✅ COMPLETED
 - **Status:** ✅ Fully implemented
@@ -101,47 +91,42 @@ Common SQL features needed for practical use.
   ```
 - **Test:** `TestMultiRowInsert` in sql_test.go
 
-### 2.4 UPDATE with JOIN / FROM
-- **Status:** Not implemented
-- **What's Needed:**
-  - Parser: `UPDATE t1 SET ... FROM t2 WHERE t1.x = t2.x`
-  - AST: Add `From` clause to `UpdateStmt`
-  - Executor: Join tables, then apply updates
+### 2.4 UPDATE with JOIN / FROM ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Parser supports UPDATE ... FROM ... WHERE syntax, executor joins tables and applies updates with combined schema support
 - **Syntax:**
   ```sql
   UPDATE orders SET status = 'shipped'
   FROM customers
   WHERE orders.customer_id = customers.id AND customers.country = 'USA';
   ```
-- **Files to Modify:**
-  - `pkg/sql/ast.go` - Add `FromTable` to `UpdateStmt`
-  - `pkg/sql/parser.go` - Parse FROM in UPDATE
-  - `pkg/sql/executor.go` - Implement joined update
-- **Difficulty:** Medium
-- **Estimated Time:** 4-5 hours
+- **Test:** `TestUpdateWithFrom` in sql_test.go
 
-### 2.5 DELETE with USING / JOIN
-- **Status:** Not implemented
-- **What's Needed:**
-  - Parser: `DELETE FROM t1 USING t2 WHERE t1.x = t2.x`
-  - AST: Add `Using` clause to `DeleteStmt`
-  - Executor: Join tables, then apply deletes
+### 2.5 DELETE with USING / JOIN ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Parser supports DELETE ... USING ... WHERE syntax, executor joins tables and applies deletes with combined schema support
 - **Syntax:**
   ```sql
   DELETE FROM orders
   USING customers
   WHERE orders.customer_id = customers.id AND customers.status = 'inactive';
   ```
-- **Files to Modify:**
-  - `pkg/sql/ast.go` - Add `UsingTable` to `DeleteStmt`
-  - `pkg/sql/parser.go` - Parse USING in DELETE
-  - `pkg/sql/executor.go` - Implement joined delete
-- **Difficulty:** Medium
-- **Estimated Time:** 3-4 hours
+- **Test:** `TestDeleteWithUsing` in sql_test.go
 
 ---
 
-## 3. Medium Priority Features
+### 2.6 Foreign Key Constraints ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:** Lexer, Parser, Catalog, and Executor support for Foreign Key constraints.
+- **Features:**
+  - Inline `REFERENCES table(col)` syntax.
+  - Table-level `FOREIGN KEY (cols) REFERENCES table(cols)` syntax.
+  - Enforcement on INSERT/UPDATE (check referenced row exists).
+  - Enforcement on DELETE/UPDATE (check referencing rows do not exist - RESTRICT behavior).
+- **Test:** `TestForeignKeyConstraints` in `pkg/sql/foreign_key_test.go`.
+
+## 3. Medium Priority (Enhancements)
+
 
 Production readiness and tooling compatibility.
 
@@ -326,10 +311,10 @@ Advanced features for future enhancement.
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
 | FOREIGN KEY | ⬜ Not Started | |
-| INSERT ON CONFLICT | ⬜ Not Started | |
+| INSERT ON CONFLICT | ✅ Complete | Dec 2025 |
 | Multi-Row INSERT | ✅ Complete | Dec 2024 |
-| UPDATE with JOIN | ⬜ Not Started | |
-| DELETE with USING | ⬜ Not Started | |
+| UPDATE with JOIN | ✅ Complete | Dec 2025 |
+| DELETE with USING | ✅ Complete | Dec 2025 |
 
 ### Medium Priority
 | Feature | Status | Completed Date |
@@ -364,9 +349,9 @@ Advanced features for future enhancement.
 
 2. **Phase 2: High Priority Features**
    - [x] 2.3 Multi-Row INSERT ✅
-   - [ ] 2.2 INSERT ON CONFLICT (~4-6 hours)
-   - [ ] 2.4 UPDATE with JOIN (~4-5 hours)
-   - [ ] 2.5 DELETE with USING (~3-4 hours)
+   - [x] 2.2 INSERT ON CONFLICT ✅
+   - [x] 2.4 UPDATE with JOIN ✅
+   - [x] 2.5 DELETE with USING ✅
    - [ ] 2.1 FOREIGN KEY (~8-12 hours)
 
 3. **Phase 3: Medium Priority Features**

@@ -224,7 +224,7 @@ func TestGetTables(t *testing.T) {
 		{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 		{Name: "name", Type: catalog.TypeText},
 	}
-	cat.CreateTable("users", cols, "row")
+	cat.CreateTable("users", cols, nil, "row")
 
 	txnMgr := txn.NewManager()
 	lockMgr := lock.NewManager()
@@ -266,7 +266,7 @@ func TestGetColumns(t *testing.T) {
 		{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 		{Name: "email", Type: catalog.TypeText, NotNull: false},
 	}
-	cat.CreateTable("accounts", cols, "row")
+	cat.CreateTable("accounts", cols, nil, "row")
 
 	txnMgr := txn.NewManager()
 	lockMgr := lock.NewManager()

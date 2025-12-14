@@ -11,11 +11,12 @@ import (
 
 // TableMeta holds metadata for a table.
 type TableMeta struct {
-	ID          int      `json:"id"`
-	Name        string   `json:"name"`
-	StorageType string   `json:"storage_type"` // "row" or "column" (future)
-	Schema      *Schema  `json:"-"`
-	Columns     []Column `json:"columns"`
+	ID          int          `json:"id"`
+	Name        string       `json:"name"`
+	StorageType string       `json:"storage_type"` // "row" or "column" (future)
+	Schema      *Schema      `json:"-"`
+	Columns     []Column     `json:"columns"`
+	ForeignKeys []ForeignKey `json:"foreign_keys"`
 }
 
 // Catalog manages table metadata, persisted to a JSON file.
@@ -62,6 +63,7 @@ func (c *Catalog) load() error {
 	c.nextID = state.NextID
 	for _, t := range state.Tables {
 		t.Schema = NewSchema(t.Columns)
+		t.Schema.ForeignKeys = t.ForeignKeys
 		c.tables[t.Name] = t
 	}
 	return nil
@@ -88,7 +90,7 @@ func (c *Catalog) save() error {
 }
 
 // CreateTable registers a new table with the given schema.
-func (c *Catalog) CreateTable(name string, cols []Column, storageType string) (*TableMeta, error) {
+func (c *Catalog) CreateTable(name string, cols []Column, foreignKeys []ForeignKey, storageType string) (*TableMeta, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -105,8 +107,10 @@ func (c *Catalog) CreateTable(name string, cols []Column, storageType string) (*
 		Name:        name,
 		StorageType: storageType,
 		Columns:     cols,
+		ForeignKeys: foreignKeys,
 		Schema:      NewSchema(cols),
 	}
+	meta.Schema.ForeignKeys = foreignKeys
 	c.nextID++
 	c.tables[name] = meta
 

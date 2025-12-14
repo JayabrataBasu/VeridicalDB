@@ -145,6 +145,68 @@ func (v Value) String() string {
 	}
 }
 
+// Compare compares two values. Returns -1 if v < other, 0 if v == other, 1 if v > other.
+func (v Value) Compare(other Value) int {
+	if v.IsNull && other.IsNull {
+		return 0
+	}
+	if v.IsNull {
+		return -1
+	}
+	if other.IsNull {
+		return 1
+	}
+	if v.Type != other.Type {
+		// Fallback: compare types? Or just return mismatch?
+		// For now, assume types match or are compatible.
+		if v.Type < other.Type {
+			return -1
+		}
+		return 1
+	}
+
+	switch v.Type {
+	case TypeInt32:
+		if v.Int32 < other.Int32 {
+			return -1
+		} else if v.Int32 > other.Int32 {
+			return 1
+		}
+		return 0
+	case TypeInt64:
+		if v.Int64 < other.Int64 {
+			return -1
+		} else if v.Int64 > other.Int64 {
+			return 1
+		}
+		return 0
+	case TypeText:
+		if v.Text < other.Text {
+			return -1
+		} else if v.Text > other.Text {
+			return 1
+		}
+		return 0
+	case TypeBool:
+		if v.Bool == other.Bool {
+			return 0
+		}
+		if !v.Bool {
+			return -1
+		}
+		return 1
+	case TypeTimestamp:
+		if v.Timestamp.Before(other.Timestamp) {
+			return -1
+		} else if v.Timestamp.After(other.Timestamp) {
+			return 1
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
 // Column defines a column in a table schema.
 type Column struct {
 	ID            int
@@ -158,9 +220,18 @@ type Column struct {
 	CheckExpr     string // CHECK constraint expression (stored as SQL string)
 }
 
+// ForeignKey represents a foreign key constraint in the catalog.
+type ForeignKey struct {
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	RefTable   string   `json:"ref_table"`
+	RefColumns []string `json:"ref_columns"`
+}
+
 // Schema represents the structure of a table.
 type Schema struct {
-	Columns []Column
+	Columns     []Column
+	ForeignKeys []ForeignKey
 }
 
 // NewSchema creates a schema from a slice of columns.

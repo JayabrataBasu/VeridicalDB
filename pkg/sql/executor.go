@@ -116,13 +116,63 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		cols[i] = col
 	}
 
+	var foreignKeys []catalog.ForeignKey
+
+	// Process table-level FKs
+	for _, fkDef := range stmt.ForeignKeys {
+		fk := catalog.ForeignKey{
+			Name:       fkDef.ConstraintName,
+			Columns:    fkDef.Columns,
+			RefTable:   fkDef.RefTable,
+			RefColumns: fkDef.RefColumns,
+		}
+		foreignKeys = append(foreignKeys, fk)
+	}
+
+	// Process inline FKs
+	for _, c := range stmt.Columns {
+		if c.ReferencesTable != "" {
+			refCols := []string{}
+			if c.ReferencesColumn != "" {
+				refCols = append(refCols, c.ReferencesColumn)
+			} else {
+				// Resolve PK of referenced table
+				refTable, err := e.tm.Catalog().GetTable(c.ReferencesTable)
+				if err != nil {
+					return nil, fmt.Errorf("referenced table %q not found", c.ReferencesTable)
+				}
+				var pkColName string
+				for _, rc := range refTable.Columns {
+					if rc.PrimaryKey {
+						if pkColName != "" {
+							return nil, fmt.Errorf("referenced table %q has composite primary key, must specify column", c.ReferencesTable)
+						}
+						pkColName = rc.Name
+					}
+				}
+				if pkColName == "" {
+					return nil, fmt.Errorf("referenced table %q has no primary key", c.ReferencesTable)
+				}
+				refCols = append(refCols, pkColName)
+			}
+
+			fk := catalog.ForeignKey{
+				Name:       fmt.Sprintf("fk_%s_%s_%d", stmt.TableName, c.Name, time.Now().UnixNano()),
+				Columns:    []string{c.Name},
+				RefTable:   c.ReferencesTable,
+				RefColumns: refCols,
+			}
+			foreignKeys = append(foreignKeys, fk)
+		}
+	}
+
 	// Use storage type from statement (default is "ROW")
 	storageType := strings.ToLower(stmt.StorageType)
 	if storageType == "" {
 		storageType = "row"
 	}
 
-	if err := e.tm.CreateTableWithStorage(stmt.TableName, cols, storageType); err != nil {
+	if err := e.tm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType); err != nil {
 		return nil, err
 	}
 
@@ -138,6 +188,119 @@ func (e *Executor) executeDrop(stmt *DropTableStmt) (*Result, error) {
 		return nil, err
 	}
 	return &Result{Message: fmt.Sprintf("Table '%s' dropped.", stmt.TableName)}, nil
+}
+
+func (e *Executor) checkForeignKeys(meta *catalog.TableMeta, values []catalog.Value) error {
+	for _, fk := range meta.Schema.ForeignKeys {
+		// Get values for FK columns
+		var fkValues []catalog.Value
+		hasNull := false
+		for _, colName := range fk.Columns {
+			_, idx := meta.Schema.ColumnByName(colName)
+			if idx == -1 {
+				return fmt.Errorf("column %q not found in table %q", colName, meta.Name)
+			}
+			val := values[idx]
+			if val.IsNull {
+				hasNull = true
+			}
+			fkValues = append(fkValues, val)
+		}
+
+		if hasNull {
+			continue
+		}
+
+		refTable, err := e.tm.Catalog().GetTable(fk.RefTable)
+		if err != nil {
+			return fmt.Errorf("referenced table %q not found", fk.RefTable)
+		}
+
+		found := false
+		err = e.scanTable(fk.RefTable, refTable.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+			match := true
+			for i, refColName := range fk.RefColumns {
+				_, refIdx := refTable.Schema.ColumnByName(refColName)
+				if refIdx == -1 {
+					return false, fmt.Errorf("referenced column %q not found in table %q", refColName, fk.RefTable)
+				}
+				if row[refIdx].Compare(fkValues[i]) != 0 {
+					match = false
+					break
+				}
+			}
+			if match {
+				found = true
+				return false, nil // Stop scanning
+			}
+			return true, nil // Continue
+		})
+		if err != nil {
+			return err
+		}
+
+		if !found {
+			return fmt.Errorf("insert or update on table %q violates foreign key constraint %q", meta.Name, fk.Name)
+		}
+	}
+	return nil
+}
+
+func (e *Executor) checkReferencingForeignKeys(meta *catalog.TableMeta, oldRow []catalog.Value) error {
+	// Iterate over all tables in catalog
+	tables := e.tm.Catalog().ListTables()
+	for _, tableName := range tables {
+		table, err := e.tm.Catalog().GetTable(tableName)
+		if err != nil {
+			continue
+		}
+
+		for _, fk := range table.Schema.ForeignKeys {
+			if fk.RefTable == meta.Name {
+				// This table references the table being modified
+
+				// Check if oldRow is referenced
+				// Construct values for referenced columns from oldRow
+				var refValues []catalog.Value
+				for _, refColName := range fk.RefColumns {
+					_, idx := meta.Schema.ColumnByName(refColName)
+					if idx == -1 {
+						return fmt.Errorf("column %q not found", refColName)
+					}
+					refValues = append(refValues, oldRow[idx])
+				}
+
+				// Check if any row in 'table' has these values in 'fk.Columns'
+				found := false
+				err = e.scanTable(tableName, table.Schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+					match := true
+					for i, colName := range fk.Columns {
+						_, idx := table.Schema.ColumnByName(colName)
+						if idx == -1 {
+							return false, fmt.Errorf("column %q not found", colName)
+						}
+						if row[idx].Compare(refValues[i]) != 0 {
+							match = false
+							break
+						}
+					}
+					if match {
+						found = true
+						return false, nil
+					}
+					return true, nil
+				})
+				if err != nil {
+					return err
+				}
+
+				if found {
+					return fmt.Errorf("update or delete on table %q violates foreign key constraint %q on table %q", meta.Name, fk.Name, tableName)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
@@ -258,6 +421,11 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 			}
 
+			// Check Foreign Key constraints
+			if err := e.checkForeignKeys(meta, newRow); err != nil {
+				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+			}
+
 			// Delete old row and insert updated row
 			if err := e.tm.Delete(conflictRID); err != nil {
 				return nil, fmt.Errorf("row %d: update delete failed: %w", rowIdx+1, err)
@@ -282,6 +450,11 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 
 		// Validate CHECK constraints
 		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
+		// Check Foreign Key constraints
+		if err := e.checkForeignKeys(meta, values); err != nil {
 			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
@@ -3563,6 +3736,16 @@ func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 
 	// Actually delete the rows
 	for _, rid := range ridsToDelete {
+		// Fetch row to check FKs
+		row, err := e.tm.Fetch(stmt.TableName, rid)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := e.checkReferencingForeignKeys(meta, row); err != nil {
+			return nil, err
+		}
+
 		if err := e.tm.Delete(rid); err != nil {
 			return nil, fmt.Errorf("delete failed: %w", err)
 		}
@@ -3633,6 +3816,16 @@ func (e *Executor) executeDeleteWithUsing(stmt *DeleteStmt, targetMeta *catalog.
 
 	// Actually delete the rows
 	for _, rid := range ridsToDelete {
+		// Fetch row to check FKs
+		row, err := e.tm.Fetch(stmt.TableName, rid)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := e.checkReferencingForeignKeys(targetMeta, row); err != nil {
+			return nil, err
+		}
+
 		if err := e.tm.Delete(rid); err != nil {
 			return nil, fmt.Errorf("delete failed: %w", err)
 		}

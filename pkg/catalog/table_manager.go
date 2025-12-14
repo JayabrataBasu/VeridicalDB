@@ -39,17 +39,17 @@ func (tm *TableManager) Catalog() *Catalog {
 }
 
 // CreateTable creates a new table with the given schema.
-func (tm *TableManager) CreateTable(name string, cols []Column) error {
-	return tm.CreateTableWithStorage(name, cols, "row")
+func (tm *TableManager) CreateTable(name string, cols []Column, foreignKeys []ForeignKey) error {
+	return tm.CreateTableWithStorage(name, cols, foreignKeys, "row")
 }
 
 // CreateTableWithStorage creates a new table with the given schema and storage type.
-func (tm *TableManager) CreateTableWithStorage(name string, cols []Column, storageType string) error {
+func (tm *TableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	// Register in catalog
-	_, err := tm.catalog.CreateTable(name, cols, storageType)
+	_, err := tm.catalog.CreateTable(name, cols, foreignKeys, storageType)
 	if err != nil {
 		return err
 	}

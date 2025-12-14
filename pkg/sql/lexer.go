@@ -159,6 +159,11 @@ const (
 	// CHECK constraint
 	TOKEN_CHECK
 
+	// Foreign Key constraint
+	TOKEN_REFERENCES
+	TOKEN_FOREIGN
+	TOKEN_CONSTRAINT
+
 	// Date/Time functions
 	TOKEN_NOW
 	TOKEN_CURRENT_TIMESTAMP
@@ -347,6 +352,9 @@ var keywords = map[string]TokenType{
 	"ELSE":              TOKEN_ELSE,
 	"END":               TOKEN_END,
 	"CHECK":             TOKEN_CHECK,
+	"REFERENCES":        TOKEN_REFERENCES,
+	"FOREIGN":           TOKEN_FOREIGN,
+	"CONSTRAINT":        TOKEN_CONSTRAINT,
 	"NOW":               TOKEN_NOW,
 	"CURRENT_TIMESTAMP": TOKEN_CURRENT_TIMESTAMP,
 	"CURRENT_DATE":      TOKEN_CURRENT_DATE,

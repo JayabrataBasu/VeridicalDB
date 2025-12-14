@@ -116,7 +116,7 @@ func TestCatalogPersistence(t *testing.T) {
 		{Name: "id", Type: TypeInt32, NotNull: true},
 		{Name: "name", Type: TypeText, NotNull: false},
 	}
-	_, err = cat.CreateTable("users", cols, "row")
+	_, err = cat.CreateTable("users", cols, nil, "row")
 	if err != nil {
 		t.Fatalf("CreateTable error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestTableManager(t *testing.T) {
 		{Name: "id", Type: TypeInt32, NotNull: true},
 		{Name: "name", Type: TypeText, NotNull: false},
 	}
-	if err := tm.CreateTable("users", cols); err != nil {
+	if err := tm.CreateTable("users", cols, nil); err != nil {
 		t.Fatalf("CreateTable error: %v", err)
 	}
 
@@ -208,7 +208,7 @@ func TestTableManagerPersistence(t *testing.T) {
 		{Name: "id", Type: TypeInt32, NotNull: true},
 		{Name: "value", Type: TypeInt64, NotNull: true},
 	}
-	if err := tm.CreateTable("counters", cols); err != nil {
+	if err := tm.CreateTable("counters", cols, nil); err != nil {
 		t.Fatalf("CreateTable error: %v", err)
 	}
 

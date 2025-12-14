@@ -146,7 +146,7 @@ func TestREPLWithTableManager(t *testing.T) {
 		{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 		{Name: "name", Type: catalog.TypeText, NotNull: false},
 	}
-	if err := tm.CreateTable("users", cols); err != nil {
+	if err := tm.CreateTable("users", cols, nil); err != nil {
 		t.Fatalf("CreateTable error: %v", err)
 	}
 

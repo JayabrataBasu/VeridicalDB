@@ -99,13 +99,63 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		cols[i] = col
 	}
 
+	var foreignKeys []catalog.ForeignKey
+
+	// Process table-level FKs
+	for _, fkDef := range stmt.ForeignKeys {
+		fk := catalog.ForeignKey{
+			Name:       fkDef.ConstraintName,
+			Columns:    fkDef.Columns,
+			RefTable:   fkDef.RefTable,
+			RefColumns: fkDef.RefColumns,
+		}
+		foreignKeys = append(foreignKeys, fk)
+	}
+
+	// Process inline FKs
+	for _, c := range stmt.Columns {
+		if c.ReferencesTable != "" {
+			refCols := []string{}
+			if c.ReferencesColumn != "" {
+				refCols = append(refCols, c.ReferencesColumn)
+			} else {
+				// Resolve PK of referenced table
+				refTable, err := e.mtm.Catalog().GetTable(c.ReferencesTable)
+				if err != nil {
+					return nil, fmt.Errorf("referenced table %q not found", c.ReferencesTable)
+				}
+				var pkColName string
+				for _, rc := range refTable.Columns {
+					if rc.PrimaryKey {
+						if pkColName != "" {
+							return nil, fmt.Errorf("referenced table %q has composite primary key, must specify column", c.ReferencesTable)
+						}
+						pkColName = rc.Name
+					}
+				}
+				if pkColName == "" {
+					return nil, fmt.Errorf("referenced table %q has no primary key", c.ReferencesTable)
+				}
+				refCols = append(refCols, pkColName)
+			}
+
+			fk := catalog.ForeignKey{
+				Name:       fmt.Sprintf("fk_%s_%s_%d", stmt.TableName, c.Name, time.Now().UnixNano()),
+				Columns:    []string{c.Name},
+				RefTable:   c.ReferencesTable,
+				RefColumns: refCols,
+			}
+			foreignKeys = append(foreignKeys, fk)
+		}
+	}
+
 	// Use storage type from statement (default is "ROW")
 	storageType := strings.ToLower(stmt.StorageType)
 	if storageType == "" {
 		storageType = "row"
 	}
 
-	if err := e.mtm.CreateTableWithStorage(stmt.TableName, cols, storageType); err != nil {
+	if err := e.mtm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType); err != nil {
 		return nil, err
 	}
 
