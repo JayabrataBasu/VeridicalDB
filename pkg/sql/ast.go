@@ -472,3 +472,33 @@ type WithClause struct {
 	CTEs      []CTE // list of CTE definitions
 	Recursive bool  // WITH RECURSIVE (applies to all CTEs)
 }
+
+// PrepareStmt represents PREPARE statement.
+type PrepareStmt struct {
+Name      string
+Statement Statement
+}
+
+func (s *PrepareStmt) statementNode() {}
+
+// ExecuteStmt represents EXECUTE statement.
+type ExecuteStmt struct {
+Name   string
+Params []Expression
+}
+
+func (s *ExecuteStmt) statementNode() {}
+
+// DeallocateStmt represents DEALLOCATE statement.
+type DeallocateStmt struct {
+Name string
+}
+
+func (s *DeallocateStmt) statementNode() {}
+
+// PlaceholderExpr represents a parameter placeholder (, , etc).
+type PlaceholderExpr struct {
+Index int // 1-based index
+}
+
+func (e *PlaceholderExpr) exprNode() {}

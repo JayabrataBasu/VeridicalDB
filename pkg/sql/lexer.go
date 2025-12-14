@@ -168,6 +168,12 @@ const (
 	TOKEN_NOW
 	TOKEN_CURRENT_TIMESTAMP
 	TOKEN_CURRENT_DATE
+
+	// Prepared Statements
+	TOKEN_PREPARE
+	TOKEN_EXECUTE
+	TOKEN_DEALLOCATE
+	TOKEN_PLACEHOLDER // $1, $2, etc.
 	TOKEN_YEAR
 	TOKEN_MONTH
 	TOKEN_DAY
@@ -352,6 +358,9 @@ var keywords = map[string]TokenType{
 	"ELSE":              TOKEN_ELSE,
 	"END":               TOKEN_END,
 	"CHECK":             TOKEN_CHECK,
+	"PREPARE":           TOKEN_PREPARE,
+	"EXECUTE":           TOKEN_EXECUTE,
+	"DEALLOCATE":        TOKEN_DEALLOCATE,
 	"REFERENCES":        TOKEN_REFERENCES,
 	"FOREIGN":           TOKEN_FOREIGN,
 	"CONSTRAINT":        TOKEN_CONSTRAINT,
@@ -539,13 +548,19 @@ func (l *Lexer) NextToken() Token {
 			tok = Token{Type: TOKEN_NE, Literal: "!=", Pos: l.pos - 1}
 			l.readChar()
 		} else {
-			tok = Token{Type: TOKEN_ILLEGAL, Literal: string(l.ch), Pos: l.pos}
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: "!", Pos: l.pos}
 			l.readChar()
 		}
-	case '\'':
-		tok.Type = TOKEN_STRING
-		tok.Literal = l.readString()
+	case '$':
 		tok.Pos = l.pos
+		tok.Literal = l.readPlaceholder()
+		tok.Type = TOKEN_PLACEHOLDER
+		return tok
+	case '\'':
+		tok.Pos = l.pos
+		tok.Literal = l.readString()
+		tok.Type = TOKEN_STRING
+		return tok
 	default:
 		if isLetter(l.ch) {
 			tok.Pos = l.pos
@@ -578,6 +593,15 @@ func (l *Lexer) readNumber() string {
 	if l.ch == '-' {
 		l.readChar()
 	}
+	for isDigit(l.ch) {
+		l.readChar()
+	}
+	return l.input[pos:l.pos]
+}
+
+func (l *Lexer) readPlaceholder() string {
+	pos := l.pos
+	l.readChar() // consume '$'
 	for isDigit(l.ch) {
 		l.readChar()
 	}

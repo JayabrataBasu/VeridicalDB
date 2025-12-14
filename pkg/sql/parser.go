@@ -98,6 +98,12 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseExplain()
 	case TOKEN_MERGE:
 		return p.parseMerge()
+	case TOKEN_PREPARE:
+		return p.parsePrepare()
+	case TOKEN_EXECUTE:
+		return p.parseExecute()
+	case TOKEN_DEALLOCATE:
+		return p.parseDeallocate()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -2844,6 +2850,9 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	case TOKEN_EXTRACT:
 		return p.parseExtractExpression()
 
+	case TOKEN_PLACEHOLDER:
+		return p.parsePlaceholder()
+
 	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE:
 		return p.parseDateFunction()
 
@@ -3600,4 +3609,99 @@ func (p *Parser) parseFrameBound() (string, error) {
 	}
 
 	return "", fmt.Errorf("invalid frame bound: %v", p.cur.Type)
+}
+
+func (p *Parser) parsePrepare() (*PrepareStmt, error) {
+	p.nextToken() // consume PREPARE
+
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected identifier for prepared statement name")
+	}
+	name := p.cur.Literal
+	p.nextToken()
+
+	// Optional AS
+	if p.curTokenIs(TOKEN_AS) {
+		p.nextToken()
+	}
+
+	// Parse the statement
+	stmt, err := p.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	return &PrepareStmt{Name: name, Statement: stmt}, nil
+}
+
+func (p *Parser) parseExecute() (*ExecuteStmt, error) {
+	p.nextToken() // consume EXECUTE
+
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected identifier for prepared statement name")
+	}
+	name := p.cur.Literal
+	p.nextToken()
+
+	var params []Expression
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume (
+
+		if !p.curTokenIs(TOKEN_RPAREN) {
+			expr, err := p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+			params = append(params, expr)
+
+			for p.curTokenIs(TOKEN_COMMA) {
+				p.nextToken()
+				expr, err := p.parseExpression()
+				if err != nil {
+					return nil, err
+				}
+				params = append(params, expr)
+			}
+		}
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, err
+		}
+	}
+
+	return &ExecuteStmt{Name: name, Params: params}, nil
+}
+
+func (p *Parser) parseDeallocate() (*DeallocateStmt, error) {
+	p.nextToken() // consume DEALLOCATE
+
+	// Optional PREPARE keyword
+	if p.curTokenIs(TOKEN_PREPARE) {
+		p.nextToken()
+	}
+
+	if !p.curTokenIs(TOKEN_IDENT) {
+		return nil, fmt.Errorf("expected identifier for prepared statement name")
+	}
+	name := p.cur.Literal
+	p.nextToken()
+
+	return &DeallocateStmt{Name: name}, nil
+}
+
+func (p *Parser) parsePlaceholder() (Expression, error) {
+	idxStr := p.cur.Literal
+	// Strip the leading $
+	if len(idxStr) > 0 && idxStr[0] == '$' {
+		idxStr = idxStr[1:]
+	}
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid placeholder index: %s", p.cur.Literal)
+	}
+	if idx < 1 {
+		return nil, fmt.Errorf("placeholder index must be >= 1")
+	}
+	p.nextToken()
+	return &PlaceholderExpr{Index: idx}, nil
 }

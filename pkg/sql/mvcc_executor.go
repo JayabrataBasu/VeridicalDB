@@ -3152,3 +3152,9 @@ func valueToInt64MVCC(v catalog.Value) int64 {
 		return 0
 	}
 }
+
+// EvaluateExpression evaluates an expression with no row context.
+// This is useful for evaluating parameters in EXECUTE statements.
+func (e *MVCCExecutor) EvaluateExpression(expr Expression) (catalog.Value, error) {
+return e.evalExpr(expr, nil, nil)
+}

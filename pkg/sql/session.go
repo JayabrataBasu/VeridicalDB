@@ -23,29 +23,34 @@ type Session struct {
 
 	// autocommit mode: if true, each statement runs in its own transaction
 	autocommit bool
+
+	// preparedStmts stores prepared statements by name
+	preparedStmts map[string]Statement
 }
 
 // NewSession creates a new database session.
 func NewSession(mtm *catalog.MVCCTableManager) *Session {
 	return &Session{
-		mtm:        mtm,
-		executor:   NewMVCCExecutor(mtm),
-		txnMgr:     mtm.TxnManager(),
-		lockMgr:    nil, // No locking by default
-		idxMgr:     nil, // No indexes by default
-		autocommit: true,
+		mtm:           mtm,
+		executor:      NewMVCCExecutor(mtm),
+		txnMgr:        mtm.TxnManager(),
+		lockMgr:       nil, // No locking by default
+		idxMgr:        nil, // No indexes by default
+		autocommit:    true,
+		preparedStmts: make(map[string]Statement),
 	}
 }
 
 // NewSessionWithLocks creates a new database session with lock support.
 func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *Session {
 	return &Session{
-		mtm:        mtm,
-		executor:   NewMVCCExecutor(mtm),
-		txnMgr:     mtm.TxnManager(),
-		lockMgr:    lockMgr,
-		idxMgr:     nil, // No indexes by default
-		autocommit: true,
+		mtm:           mtm,
+		executor:      NewMVCCExecutor(mtm),
+		txnMgr:        mtm.TxnManager(),
+		lockMgr:       lockMgr,
+		idxMgr:        nil, // No indexes by default
+		autocommit:    true,
+		preparedStmts: make(map[string]Statement),
 	}
 }
 
@@ -81,6 +86,16 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleCommit()
 	case *RollbackStmt:
 		return s.handleRollback()
+	}
+
+	// Handle prepared statements
+	switch typedStmt := stmt.(type) {
+	case *PrepareStmt:
+		return s.handlePrepare(typedStmt)
+	case *ExecuteStmt:
+		return s.handleExecute(typedStmt)
+	case *DeallocateStmt:
+		return s.handleDeallocate(typedStmt)
 	}
 
 	// For DDL statements (CREATE/DROP), we don't need a transaction
@@ -362,4 +377,59 @@ func (s *Session) handleDropIndex(stmt *DropIndexStmt) (*Result, error) {
 	return &Result{
 		Message: fmt.Sprintf("Index '%s' dropped.", stmt.IndexName),
 	}, nil
+}
+
+// Prepare stores a prepared statement.
+func (s *Session) Prepare(name string, stmt Statement) {
+	s.preparedStmts[name] = stmt
+}
+
+// GetPrepared retrieves a prepared statement.
+func (s *Session) GetPrepared(name string) Statement {
+	return s.preparedStmts[name]
+}
+
+// Deallocate removes a prepared statement.
+func (s *Session) Deallocate(name string) {
+	delete(s.preparedStmts, name)
+}
+
+func (s *Session) handlePrepare(stmt *PrepareStmt) (*Result, error) {
+	s.preparedStmts[stmt.Name] = stmt.Statement
+	return &Result{Message: "PREPARE"}, nil
+}
+
+func (s *Session) handleDeallocate(stmt *DeallocateStmt) (*Result, error) {
+	if stmt.Name == "ALL" {
+		s.preparedStmts = make(map[string]Statement)
+	} else {
+		delete(s.preparedStmts, stmt.Name)
+	}
+	return &Result{Message: "DEALLOCATE"}, nil
+}
+
+func (s *Session) handleExecute(stmt *ExecuteStmt) (*Result, error) {
+	prepared, ok := s.preparedStmts[stmt.Name]
+	if !ok {
+		return nil, fmt.Errorf("prepared statement %q does not exist", stmt.Name)
+	}
+
+	// Evaluate parameters
+	params := make([]catalog.Value, len(stmt.Params))
+	for i, expr := range stmt.Params {
+		val, err := s.executor.EvaluateExpression(expr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate parameter %d: %w", i+1, err)
+		}
+		params[i] = val
+	}
+
+	// Substitute parameters
+	newStmt, err := SubstituteParams(prepared, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to substitute parameters: %w", err)
+	}
+
+	// Execute the substituted statement
+	return s.Execute(newStmt)
 }
