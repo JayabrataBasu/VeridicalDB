@@ -13,6 +13,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
@@ -100,6 +101,9 @@ func main() {
 	}
 	logger.Info("TableManager initialized", "tables", len(tm.ListTables()))
 
+	// Initialize MVCCTableManager
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
+
 	// Set up checkpointer
 	checkpointer.SetPageFlusher(tm.Checkpoint)
 	checkpointer.StartBackground()
@@ -112,10 +116,30 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		// Future: Run as a TCP server (Stage 5)
-		logger.Info("Non-interactive mode not yet implemented")
-		fmt.Println("Non-interactive (server) mode will be available in Stage 5.")
-		fmt.Println("For now, use --interactive=true (default) to start the REPL.")
+		// Run as a PostgreSQL wire protocol server
+		logger.Info("Starting PostgreSQL wire protocol server", "port", cfg.Server.Port)
+
+		pgServer := pgwire.NewServer(pgwire.ServerConfig{
+			Port:          cfg.Server.Port,
+			Logger:        logger,
+			MTM:           mtm,
+			TxnMgr:        txnMgr,
+			ServerVersion: cli.Version,
+		})
+
+		if err := pgServer.Start(cfg.Server.Port); err != nil {
+			logger.Error("Failed to start pgwire server", "error", err)
+			os.Exit(1)
+		}
+		defer pgServer.Stop()
+
+		logger.Info("PostgreSQL wire protocol server started", "port", cfg.Server.Port)
+		fmt.Printf("VeridicalDB is ready to accept connections on port %d\n", cfg.Server.Port)
+		fmt.Println("Connect using: psql -h localhost -p", cfg.Server.Port)
+
+		// Wait for shutdown signal
+		<-sigChan
+		logger.Info("Shutting down server...")
 	}
 
 	logger.Info("VeridicalDB shutdown complete")
