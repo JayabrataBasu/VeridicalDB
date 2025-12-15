@@ -46,7 +46,7 @@ func NewShardNode(info *ShardInfo, dataDir string, pageSize int) (*ShardNode, er
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 

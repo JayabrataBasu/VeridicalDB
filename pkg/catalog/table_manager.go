@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -26,14 +27,23 @@ func NewTableManager(dataDir string, pageSize int, walLog *wal.WAL) (*TableManag
 		return nil, err
 	}
 	store := storage.NewStorage(dataDir, pageSize, walLog)
-	return &TableManager{
+	tm := &TableManager{
 		catalog:        cat,
 		storage:        store,
 		columnarTables: make(map[string]*storage.ColumnarEngine),
 		dataDir:        dataDir,
 		pageSize:       pageSize,
 		wal:            walLog,
-	}, nil
+	}
+
+	// Perform crash recovery
+	if walLog != nil {
+		if err := tm.StartRecovery(); err != nil {
+			return nil, fmt.Errorf("crash recovery failed: %w", err)
+		}
+	}
+
+	return tm, nil
 }
 
 // Catalog returns the underlying catalog.
@@ -341,4 +351,66 @@ func (tm *TableManager) TruncateTable(tableName string) (int, error) {
 	// In a real implementation, we would track row count and clear the file
 	// For now, just return 0 as we don't track exact counts
 	return 0, nil
+}
+
+// StartRecovery performs WAL-based crash recovery.
+func (tm *TableManager) StartRecovery() error {
+	recovery := wal.NewRecovery(tm.wal)
+
+	recovery.SetRedoHandler(func(rec *wal.Record) error {
+		rid := storage.RID{Table: rec.TableName, Page: rec.PageID, Slot: rec.SlotID}
+		switch rec.Type {
+		case wal.RecordInsert:
+			return tm.storage.ReplayInsert(rid, rec.Data)
+		case wal.RecordDelete:
+			return tm.storage.ReplayDelete(rid)
+		case wal.RecordUpdate:
+			if len(rec.Data) < 4 {
+				return fmt.Errorf("invalid update record")
+			}
+			oldLen := binary.LittleEndian.Uint32(rec.Data[0:4])
+			if len(rec.Data) < 4+int(oldLen) {
+				return fmt.Errorf("invalid update record data length")
+			}
+			newData := rec.Data[4+oldLen:]
+			return tm.storage.ReplayUpdate(rid, newData)
+		}
+		return nil
+	})
+
+	recovery.SetUndoHandler(func(rec *wal.Record) error {
+		rid := storage.RID{Table: rec.TableName, Page: rec.PageID, Slot: rec.SlotID}
+		switch rec.Type {
+		case wal.RecordInsert:
+			// Undo Insert -> Delete
+			return tm.storage.ReplayDelete(rid)
+		case wal.RecordDelete:
+			// Undo Delete -> Insert old data
+			return tm.storage.ReplayInsert(rid, rec.Data)
+		case wal.RecordUpdate:
+			// Undo Update -> Update with old data
+			if len(rec.Data) < 4 {
+				return fmt.Errorf("invalid update record")
+			}
+			oldLen := binary.LittleEndian.Uint32(rec.Data[0:4])
+			if len(rec.Data) < 4+int(oldLen) {
+				return fmt.Errorf("invalid update record data length")
+			}
+			oldData := rec.Data[4 : 4+oldLen]
+			return tm.storage.ReplayUpdate(rid, oldData)
+		}
+		return nil
+	})
+
+	stats, err := recovery.Recover()
+	if err != nil {
+		return err
+	}
+
+	if stats.RecordsRedone > 0 || stats.RecordsUndone > 0 {
+		fmt.Printf("Recovery completed: %d redone, %d undone, %d winners, %d losers\n",
+			stats.RecordsRedone, stats.RecordsUndone, stats.WinnersCount, stats.LosersCount)
+	}
+
+	return nil
 }

@@ -60,9 +60,10 @@ func (s *Storage) Insert(table string, data []byte) (RID, error) {
 			return RID{}, err
 		}
 		// if page uninitialized, init it
-		if len(pageBuf) >= 2 && (pageBuf[0] != 0 || pageBuf[1] != 0) {
+		// Check magic at offset 8 (after LSN)
+		if len(pageBuf) >= 10 {
 			// assume initialized if magic matches
-			if binary.LittleEndian.Uint16(pageBuf[0:2]) != pageMagic {
+			if binary.LittleEndian.Uint16(pageBuf[8:10]) != pageMagic {
 				initPage(pageBuf)
 			}
 		} else {
@@ -147,4 +148,96 @@ func (s *Storage) Update(rid RID, data []byte) error {
 
 func tableFileName(table string) string {
 	return filepath.Join("tables", table+".tbl")
+}
+
+// ReplayInsert inserts a record into a specific page and slot.
+// Used for WAL recovery.
+func (s *Storage) ReplayInsert(rid RID, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(rid.Table), s.pageSize, s.wal)
+	if err != nil {
+		return err
+	}
+	defer pager.Close()
+
+	pageBuf := make([]byte, s.pageSize)
+	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+		// If page doesn't exist (EOF), we might need to create it.
+		// But ReadPage usually returns error or zeroed buf.
+		// If it's a new page, we init it.
+		initPage(pageBuf)
+	}
+
+	// Check magic
+	if binary.LittleEndian.Uint16(pageBuf[8:10]) != pageMagic {
+		initPage(pageBuf)
+	}
+
+	if err := insertTupleAt(pageBuf, int(rid.Slot), data); err != nil {
+		return err
+	}
+
+	return pager.WritePage(rid.Page, pageBuf)
+}
+
+// ReplayDelete deletes a record at a specific page and slot.
+// Used for WAL recovery.
+func (s *Storage) ReplayDelete(rid RID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(rid.Table), s.pageSize, s.wal)
+	if err != nil {
+		return err
+	}
+	defer pager.Close()
+
+	pageBuf := make([]byte, s.pageSize)
+	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+		return err
+	}
+
+	// Check magic
+	if binary.LittleEndian.Uint16(pageBuf[8:10]) != pageMagic {
+		return fmt.Errorf("page not initialized")
+	}
+
+	if err := deleteTuple(pageBuf, int(rid.Slot)); err != nil {
+		// If slot already empty, that's fine for replay (idempotent)
+		return nil
+	}
+
+	return pager.WritePage(rid.Page, pageBuf)
+}
+
+// ReplayUpdate updates a record at a specific page and slot.
+// Used for WAL recovery.
+func (s *Storage) ReplayUpdate(rid RID, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	pager, err := OpenPagerWithWAL(s.dataDir, tableFileName(rid.Table), s.pageSize, s.wal)
+	if err != nil {
+		return err
+	}
+	defer pager.Close()
+
+	pageBuf := make([]byte, s.pageSize)
+	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+		return err
+	}
+
+	// Check magic
+	if binary.LittleEndian.Uint16(pageBuf[8:10]) != pageMagic {
+		return fmt.Errorf("page not initialized")
+	}
+
+	// For update, we use insertTupleAt which handles overwrite
+	if err := insertTupleAt(pageBuf, int(rid.Slot), data); err != nil {
+		return err
+	}
+
+	return pager.WritePage(rid.Page, pageBuf)
 }

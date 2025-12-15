@@ -14,6 +14,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 const (
@@ -47,7 +48,7 @@ type REPL struct {
 }
 
 // NewREPL creates a new REPL instance.
-func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager) *REPL {
+func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger) *REPL {
 	var executor *sql.Executor
 	var mtm *catalog.MVCCTableManager
 	var session *sql.Session
@@ -59,7 +60,7 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 		if txnMgr == nil {
 			txnMgr = txn.NewManager()
 		}
-		mtm = catalog.NewMVCCTableManager(tm, txnMgr)
+		mtm = catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
 		session = sql.NewSession(mtm)
 	}
 
@@ -75,8 +76,8 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 }
 
 // RunInteractive starts the REPL in interactive mode.
-func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager) error {
-	repl := NewREPL(os.Stdin, os.Stdout, logger, tm, txnMgr)
+func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger) error {
+	repl := NewREPL(os.Stdin, os.Stdout, logger, tm, txnMgr, txnLogger)
 	return repl.Run()
 }
 

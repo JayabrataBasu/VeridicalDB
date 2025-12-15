@@ -30,7 +30,7 @@ func setupTestServer(t *testing.T) (*Server, int, func()) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 	lockMgr := lock.NewManager()
 	logger := log.New(os.Stderr, log.LevelError, log.FormatText)
 

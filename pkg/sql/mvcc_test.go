@@ -24,7 +24,7 @@ func setupMVCCTest(t *testing.T) (*Session, func()) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 	session := NewSession(mtm)
 
 	cleanup := func() {

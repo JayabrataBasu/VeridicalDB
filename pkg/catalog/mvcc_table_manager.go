@@ -5,20 +5,23 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 // MVCCTableManager wraps TableManager with MVCC support.
 // It handles transaction visibility and proper tuple versioning.
 type MVCCTableManager struct {
-	tm     *TableManager
-	txnMgr *txn.Manager
+	tm        *TableManager
+	txnMgr    *txn.Manager
+	txnLogger *wal.TxnLogger
 }
 
 // NewMVCCTableManager creates an MVCC-aware table manager.
-func NewMVCCTableManager(tm *TableManager, txnMgr *txn.Manager) *MVCCTableManager {
+func NewMVCCTableManager(tm *TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger) *MVCCTableManager {
 	return &MVCCTableManager{
-		tm:     tm,
-		txnMgr: txnMgr,
+		tm:        tm,
+		txnMgr:    txnMgr,
+		txnLogger: txnLogger,
 	}
 }
 
@@ -67,6 +70,13 @@ func (m *MVCCTableManager) Insert(tableName string, values []Value, tx *txn.Tran
 		return storage.RID{}, err
 	}
 
+	// Log to WAL
+	if m.txnLogger != nil {
+		if _, err := m.txnLogger.LogInsert(tx.ID, tableName, rid.Page, rid.Slot, mvccData); err != nil {
+			return storage.RID{}, fmt.Errorf("log insert: %w", err)
+		}
+	}
+
 	return rid, nil
 }
 
@@ -106,13 +116,17 @@ func (m *MVCCTableManager) FetchWithMVCC(tableName string, rid storage.RID) (*MV
 // This is called during DELETE and UPDATE operations.
 func (m *MVCCTableManager) MarkDeleted(rid storage.RID, tx *txn.Transaction) error {
 	// Fetch the current data
-	data, err := m.tm.storage.Fetch(rid)
+	oldData, err := m.tm.storage.Fetch(rid)
 	if err != nil {
 		return err
 	}
 
+	// Make a copy for logging old state
+	originalData := make([]byte, len(oldData))
+	copy(originalData, oldData)
+
 	// Check if we can modify this tuple
-	header, _, err := txn.UnwrapMVCC(data)
+	header, _, err := txn.UnwrapMVCC(oldData)
 	if err != nil {
 		return err
 	}
@@ -125,14 +139,25 @@ func (m *MVCCTableManager) MarkDeleted(rid storage.RID, tx *txn.Transaction) err
 		return fmt.Errorf("cannot modify tuple: already modified")
 	}
 
-	// Update XMax in the data
-	if err := txn.SetXMax(data, tx.ID); err != nil {
+	// Update XMax in the data (in place in oldData slice)
+	if err := txn.SetXMax(oldData, tx.ID); err != nil {
 		return err
 	}
 
 	// Write back to storage
 	// We need to use a low-level update that writes the data back
-	return m.tm.storage.Update(rid, data)
+	if err := m.tm.storage.Update(rid, oldData); err != nil {
+		return err
+	}
+
+	// Log to WAL
+	if m.txnLogger != nil {
+		if _, err := m.txnLogger.LogUpdate(tx.ID, rid.Table, rid.Page, rid.Slot, originalData, oldData); err != nil {
+			return fmt.Errorf("log update: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // Scan iterates over all tuples in a table, calling fn for each visible tuple.

@@ -25,7 +25,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestCreateIndexWithoutManager(t *testing.T) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 
 	session := NewSession(mtm) // No IndexManager set
 

@@ -28,7 +28,7 @@ func TestPreparedStatements(t *testing.T) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 	session := NewSession(mtm)
 
 	// Create table
@@ -110,7 +110,7 @@ func TestPreparedInsert(t *testing.T) {
 	}
 
 	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr)
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 	session := NewSession(mtm)
 
 	// Create table
