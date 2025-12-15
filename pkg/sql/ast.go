@@ -678,3 +678,81 @@ type ShowTriggersStmt struct {
 }
 
 func (s *ShowTriggersStmt) statementNode() {}
+
+// ==================== Full-Text Search AST Nodes ====================
+
+// TSVectorExpr represents to_tsvector(config, text) or to_tsvector(text).
+type TSVectorExpr struct {
+	Config string     // Optional configuration (e.g., 'english')
+	Text   Expression // The text to convert
+}
+
+func (e *TSVectorExpr) exprNode() {}
+
+// TSQueryExpr represents to_tsquery(config, query) or to_tsquery(query).
+type TSQueryExpr struct {
+	Config    string     // Optional configuration (e.g., 'english')
+	Query     Expression // The query text
+	PlainText bool       // true for plainto_tsquery (space = AND)
+	WebSearch bool       // true for websearch_to_tsquery
+}
+
+func (e *TSQueryExpr) exprNode() {}
+
+// TSMatchExpr represents the @@ text search match operator.
+// vector @@ query or text @@ query
+type TSMatchExpr struct {
+	Left  Expression // TSVector or text
+	Right Expression // TSQuery or text
+}
+
+func (e *TSMatchExpr) exprNode() {}
+
+// TSRankExpr represents ts_rank(vector, query) or ts_rank(vector, query, normalization).
+type TSRankExpr struct {
+	Vector        Expression // TSVector
+	Query         Expression // TSQuery
+	Normalization Expression // Optional normalization integer
+}
+
+func (e *TSRankExpr) exprNode() {}
+
+// TSHeadlineExpr represents ts_headline(config, text, query, options).
+type TSHeadlineExpr struct {
+	Config  string     // Optional configuration
+	Text    Expression // The document text
+	Query   Expression // The search query
+	Options Expression // Optional options string
+}
+
+func (e *TSHeadlineExpr) exprNode() {}
+
+// CreateFTSIndexStmt represents CREATE FULLTEXT INDEX statement.
+// CREATE FULLTEXT INDEX name ON table(columns)
+type CreateFTSIndexStmt struct {
+	IndexName   string
+	TableName   string
+	Columns     []string
+	IfNotExists bool
+}
+
+func (s *CreateFTSIndexStmt) statementNode() {}
+
+// DropFTSIndexStmt represents DROP FULLTEXT INDEX statement.
+type DropFTSIndexStmt struct {
+	IndexName string
+	IfExists  bool
+}
+
+func (s *DropFTSIndexStmt) statementNode() {}
+
+// MatchAgainstExpr represents MySQL-style MATCH ... AGAINST syntax.
+// MATCH(col1, col2) AGAINST('search terms' IN NATURAL LANGUAGE MODE)
+type MatchAgainstExpr struct {
+	Columns       []string   // Columns to search
+	Query         Expression // Search query
+	InBoolMode    bool       // IN BOOLEAN MODE
+	WithExpansion bool       // WITH QUERY EXPANSION
+}
+
+func (e *MatchAgainstExpr) exprNode() {}

@@ -1005,6 +1005,10 @@ func (p *Parser) isFunctionToken() bool {
 	// Grouping function (for GROUPING SETS/CUBE/ROLLUP)
 	case TOKEN_GROUPING:
 		return true
+	// Full-Text Search functions
+	case TOKEN_TO_TSVECTOR, TOKEN_TO_TSQUERY, TOKEN_PLAINTO_TSQUERY, TOKEN_WEBSEARCH,
+		TOKEN_TS_RANK, TOKEN_TS_HEADLINE, TOKEN_MATCH:
+		return true
 	}
 	return false
 }
@@ -2003,6 +2007,18 @@ func (p *Parser) parseCreate() (Statement, error) {
 		p.nextToken()
 	}
 
+	// CREATE FULLTEXT INDEX
+	if p.curTokenIs(TOKEN_FULLTEXT) {
+		if isUnique {
+			return nil, fmt.Errorf("UNIQUE not valid for FULLTEXT INDEX")
+		}
+		p.nextToken() // consume FULLTEXT
+		if !p.curTokenIs(TOKEN_INDEX) {
+			return nil, fmt.Errorf("expected INDEX after FULLTEXT")
+		}
+		return p.parseCreateFTSIndex()
+	}
+
 	if p.curTokenIs(TOKEN_INDEX) {
 		return p.parseCreateIndex(isUnique)
 	}
@@ -2740,6 +2756,16 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 		return nil, fmt.Errorf("expected IN, BETWEEN, or LIKE after NOT in comparison")
 	}
 
+	// Handle @@ text search match operator
+	if p.curTokenIs(TOKEN_MATCH) {
+		p.nextToken() // consume @@
+		right, err := p.parseAddExpr()
+		if err != nil {
+			return nil, err
+		}
+		return &TSMatchExpr{Left: left, Right: right}, nil
+	}
+
 	switch p.cur.Type {
 	case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
 		op := p.cur.Type
@@ -3033,6 +3059,18 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 	// GROUPING() function for grouping sets
 	case TOKEN_GROUPING:
 		return p.parseFunctionCall()
+
+	// Full-Text Search functions
+	case TOKEN_TO_TSVECTOR:
+		return p.parseTSVectorFunc()
+	case TOKEN_TO_TSQUERY, TOKEN_PLAINTO_TSQUERY, TOKEN_WEBSEARCH:
+		return p.parseTSQueryFunc()
+	case TOKEN_TS_RANK:
+		return p.parseTSRankFunc()
+	case TOKEN_TS_HEADLINE:
+		return p.parseTSHeadlineFunc()
+	case TOKEN_MATCH:
+		return p.parseMatchAgainst()
 
 	case TOKEN_CAST:
 		return p.parseCastExpression()
@@ -4420,6 +4458,367 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 		return nil, err
 	}
 	stmt.TableName = tableName
+
+	return stmt, nil
+}
+
+// ==================== Full-Text Search Parser Functions ====================
+
+// parseTSVectorFunc parses to_tsvector([config,] text).
+func (p *Parser) parseTSVectorFunc() (Expression, error) {
+	p.nextToken() // consume TO_TSVECTOR
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after to_tsvector")
+	}
+
+	// Parse first argument
+	arg1, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	result := &TSVectorExpr{}
+
+	if p.curTokenIs(TOKEN_COMMA) {
+		// Two arguments: config and text
+		p.nextToken() // consume comma
+		// First arg is config (must be a string literal)
+		if lit, ok := arg1.(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+			result.Config = lit.Value.Text
+		} else {
+			return nil, fmt.Errorf("to_tsvector config must be a string literal")
+		}
+		// Parse text argument
+		result.Text, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// One argument: just text
+		result.Text = arg1
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after to_tsvector arguments")
+	}
+
+	return result, nil
+}
+
+// parseTSQueryFunc parses to_tsquery, plainto_tsquery, or websearch_to_tsquery.
+func (p *Parser) parseTSQueryFunc() (Expression, error) {
+	funcType := p.cur.Type
+	p.nextToken() // consume function name
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after ts query function")
+	}
+
+	// Parse first argument
+	arg1, err := p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	result := &TSQueryExpr{
+		PlainText: funcType == TOKEN_PLAINTO_TSQUERY,
+		WebSearch: funcType == TOKEN_WEBSEARCH,
+	}
+
+	if p.curTokenIs(TOKEN_COMMA) {
+		// Two arguments: config and query
+		p.nextToken() // consume comma
+		if lit, ok := arg1.(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+			result.Config = lit.Value.Text
+		} else {
+			return nil, fmt.Errorf("ts query config must be a string literal")
+		}
+		result.Query, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// One argument: just query
+		result.Query = arg1
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after ts query function arguments")
+	}
+
+	return result, nil
+}
+
+// parseTSRankFunc parses ts_rank(vector, query [, normalization]).
+func (p *Parser) parseTSRankFunc() (Expression, error) {
+	p.nextToken() // consume TS_RANK
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after ts_rank")
+	}
+
+	result := &TSRankExpr{}
+	var err error
+
+	// Parse vector argument
+	result.Vector, err = p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	if !p.curTokenIs(TOKEN_COMMA) {
+		return nil, fmt.Errorf("expected ',' after ts_rank vector argument")
+	}
+	p.nextToken() // consume comma
+
+	// Parse query argument
+	result.Query, err = p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Optional normalization argument
+	if p.curTokenIs(TOKEN_COMMA) {
+		p.nextToken() // consume comma
+		result.Normalization, err = p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after ts_rank arguments")
+	}
+
+	return result, nil
+}
+
+// parseTSHeadlineFunc parses ts_headline([config,] text, query [, options]).
+func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
+	p.nextToken() // consume TS_HEADLINE
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after ts_headline")
+	}
+
+	result := &TSHeadlineExpr{}
+	args := make([]Expression, 0, 4)
+
+	// Parse all arguments
+	for {
+		arg, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, arg)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after ts_headline arguments")
+	}
+
+	// Determine which arguments are which based on count
+	switch len(args) {
+	case 2:
+		// ts_headline(text, query)
+		result.Text = args[0]
+		result.Query = args[1]
+	case 3:
+		// ts_headline(config, text, query) or ts_headline(text, query, options)
+		if lit, ok := args[0].(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+			// First arg looks like a config
+			result.Config = lit.Value.Text
+			result.Text = args[1]
+			result.Query = args[2]
+		} else {
+			// First arg is text
+			result.Text = args[0]
+			result.Query = args[1]
+			result.Options = args[2]
+		}
+	case 4:
+		// ts_headline(config, text, query, options)
+		if lit, ok := args[0].(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+			result.Config = lit.Value.Text
+		}
+		result.Text = args[1]
+		result.Query = args[2]
+		result.Options = args[3]
+	default:
+		return nil, fmt.Errorf("ts_headline requires 2-4 arguments, got %d", len(args))
+	}
+
+	return result, nil
+}
+
+// parseMatchAgainst parses MySQL-style MATCH(cols) AGAINST(query).
+func (p *Parser) parseMatchAgainst() (Expression, error) {
+	p.nextToken() // consume MATCH
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after MATCH")
+	}
+
+	result := &MatchAgainstExpr{}
+	var err error
+
+	// Parse column list
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected column name in MATCH")
+		}
+		col, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		result.Columns = append(result.Columns, col)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after MATCH columns")
+	}
+
+	// Parse AGAINST
+	if !p.curTokenIs(TOKEN_AGAINST) {
+		return nil, fmt.Errorf("expected AGAINST after MATCH()")
+	}
+	p.nextToken() // consume AGAINST
+
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after AGAINST")
+	}
+
+	// Parse query
+	result.Query, err = p.parseExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for optional modifiers: IN BOOLEAN MODE, WITH QUERY EXPANSION
+	if p.curTokenIs(TOKEN_IN) {
+		p.nextToken() // consume IN
+		// Expect BOOLEAN
+		if p.cur.Literal == "BOOLEAN" || strings.ToUpper(p.cur.Literal) == "BOOLEAN" {
+			p.nextToken() // consume BOOLEAN
+			// Expect MODE
+			if p.cur.Literal == "MODE" || strings.ToUpper(p.cur.Literal) == "MODE" {
+				p.nextToken() // consume MODE
+				result.InBoolMode = true
+			}
+		} else if strings.ToUpper(p.cur.Literal) == "NATURAL" {
+			p.nextToken() // consume NATURAL
+			// NATURAL LANGUAGE MODE - default, just skip
+			if strings.ToUpper(p.cur.Literal) == "LANGUAGE" {
+				p.nextToken()
+				if strings.ToUpper(p.cur.Literal) == "MODE" {
+					p.nextToken()
+				}
+			}
+		}
+	}
+
+	if p.curTokenIs(TOKEN_WITH) {
+		p.nextToken() // consume WITH
+		// Expect QUERY EXPANSION
+		if strings.ToUpper(p.cur.Literal) == "QUERY" {
+			p.nextToken()
+			if strings.ToUpper(p.cur.Literal) == "EXPANSION" {
+				p.nextToken()
+				result.WithExpansion = true
+			}
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after AGAINST query")
+	}
+
+	return result, nil
+}
+
+// parseCreateFTSIndex parses: CREATE FULLTEXT INDEX [IF NOT EXISTS] name ON table(columns)
+func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
+	p.nextToken() // consume INDEX
+
+	stmt := &CreateFTSIndexStmt{}
+
+	// Optional IF NOT EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if !p.curTokenIs(TOKEN_NOT) {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF NOT")
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Index name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected index name")
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.IndexName = name
+
+	// ON
+	if !p.curTokenIs(TOKEN_ON) {
+		return nil, fmt.Errorf("expected ON after index name")
+	}
+	p.nextToken() // consume ON
+
+	// Table name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected table name after ON")
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
+
+	// Column list
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after table name")
+	}
+
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected column name")
+		}
+		col, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Columns = append(stmt.Columns, col)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after column list")
+	}
 
 	return stmt, nil
 }

@@ -5603,13 +5603,13 @@ func TestRecursiveCTE(t *testing.T) {
 	t.Run("recursive CTE - employee hierarchy", func(t *testing.T) {
 		// Find all employees who report (directly or indirectly) to employee id 1 (CEO)
 		result := executeSQL(t, exec, `
-			WITH RECURSIVE reports AS (
-				SELECT id, name, manager_id FROM employees WHERE manager_id = 1
-				UNION ALL
-				SELECT e.id, e.name, e.manager_id FROM employees e JOIN reports r ON e.manager_id = r.id
-			)
-			SELECT * FROM reports
-		`)
+                        WITH RECURSIVE reports AS (
+                                SELECT id, name, manager_id FROM employees WHERE manager_id = 1
+                                UNION ALL
+                                SELECT e.id, e.name, e.manager_id FROM employees e JOIN reports r ON e.manager_id = r.id
+                        )
+                        SELECT * FROM reports
+                `)
 
 		// Should get: VP1, VP2 (direct reports)
 		// Then: Manager1, Manager2 (report to VP1)
@@ -5622,4 +5622,186 @@ func TestRecursiveCTE(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ==================== Full-Text Search Tests ====================
+
+func TestFTSLexer(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []TokenType
+	}{
+		{
+			name:     "to_tsvector function",
+			input:    "SELECT to_tsvector('english', content) FROM docs",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_TO_TSVECTOR, TOKEN_LPAREN, TOKEN_STRING, TOKEN_COMMA, TOKEN_IDENT, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+		},
+		{
+			name:     "to_tsquery function",
+			input:    "SELECT to_tsquery('cat & dog')",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_TO_TSQUERY, TOKEN_LPAREN, TOKEN_STRING, TOKEN_RPAREN, TOKEN_EOF},
+		},
+		{
+			name:     "text search match operator",
+			input:    "SELECT * FROM docs WHERE content @@ 'cat'",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_STAR, TOKEN_FROM, TOKEN_IDENT, TOKEN_WHERE, TOKEN_IDENT, TOKEN_MATCH, TOKEN_STRING, TOKEN_EOF},
+		},
+		{
+			name:     "ts_rank function",
+			input:    "SELECT ts_rank(content, 'cat') FROM docs",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_TS_RANK, TOKEN_LPAREN, TOKEN_IDENT, TOKEN_COMMA, TOKEN_STRING, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+		},
+		{
+			name:     "ts_headline function",
+			input:    "SELECT ts_headline(content, 'cat') FROM docs",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_TS_HEADLINE, TOKEN_LPAREN, TOKEN_IDENT, TOKEN_COMMA, TOKEN_STRING, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+		},
+		{
+			name:     "plainto_tsquery function",
+			input:    "SELECT plainto_tsquery('cat and dog')",
+			expected: []TokenType{TOKEN_SELECT, TOKEN_PLAINTO_TSQUERY, TOKEN_LPAREN, TOKEN_STRING, TOKEN_RPAREN, TOKEN_EOF},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lexer := NewLexer(tt.input)
+			var tokens []TokenType
+			for {
+				tok := lexer.NextToken()
+				tokens = append(tokens, tok.Type)
+				if tok.Type == TOKEN_EOF || tok.Type == TOKEN_ILLEGAL {
+					break
+				}
+			}
+			if len(tokens) != len(tt.expected) {
+				t.Errorf("token count mismatch: got %d, expected %d", len(tokens), len(tt.expected))
+				t.Errorf("got tokens: %v", tokens)
+				t.Errorf("expected: %v", tt.expected)
+				return
+			}
+			for i, tok := range tokens {
+				if tok != tt.expected[i] {
+					t.Errorf("token[%d] = %v, expected %v", i, tok, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+func TestFTSParser(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "to_tsvector expression",
+			input: "SELECT to_tsvector('english', content) FROM docs",
+		},
+		{
+			name:  "to_tsquery expression",
+			input: "SELECT to_tsquery('cat & dog') FROM docs",
+		},
+		{
+			name:  "text search match",
+			input: "SELECT * FROM docs WHERE to_tsvector(content) @@ to_tsquery('cat')",
+		},
+		{
+			name:  "ts_rank expression",
+			input: "SELECT ts_rank(to_tsvector(content), to_tsquery('cat')) FROM docs",
+		},
+		{
+			name:  "plainto_tsquery expression",
+			input: "SELECT plainto_tsquery('cat and dog') FROM docs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Errorf("failed to parse %q: %v", tt.input, err)
+				return
+			}
+			if stmt == nil {
+				t.Errorf("parsed statement is nil for %q", tt.input)
+			}
+		})
+	}
+}
+
+func TestFTSExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	// Create a test table
+	_, err := session.ExecuteSQL("CREATE TABLE articles (id INT PRIMARY KEY, title TEXT, content TEXT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	testData := []string{
+		"INSERT INTO articles VALUES (1, 'Quick Brown Fox', 'The quick brown fox jumps over the lazy dog')",
+		"INSERT INTO articles VALUES (2, 'Lazy Cat', 'A lazy cat sleeps in the sun all day')",
+		"INSERT INTO articles VALUES (3, 'Dog and Cat', 'Dogs and cats are popular pets')",
+		"INSERT INTO articles VALUES (4, 'Fox News', 'The fox is a clever animal')",
+	}
+
+	for _, sql := range testData {
+		_, err := session.ExecuteSQL(sql)
+		if err != nil {
+			t.Fatalf("Failed to insert data: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		query      string
+		expectRows int
+	}{
+		{
+			name:       "text search match - fox",
+			query:      "SELECT id, title FROM articles WHERE content @@ 'fox'",
+			expectRows: 2, // articles 1 and 4
+		},
+		{
+			name:       "text search match - cat",
+			query:      "SELECT id, title FROM articles WHERE content @@ 'cat'",
+			expectRows: 2, // articles 2 and 3
+		},
+		{
+			name:       "text search match - no results",
+			query:      "SELECT id, title FROM articles WHERE content @@ 'elephant'",
+			expectRows: 0,
+		},
+		{
+			name:       "to_tsvector select",
+			query:      "SELECT to_tsvector('english', content) FROM articles WHERE id = 1",
+			expectRows: 1,
+		},
+		{
+			name:       "ts_rank select",
+			query:      "SELECT ts_rank(content, 'fox') FROM articles WHERE id = 1",
+			expectRows: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := session.ExecuteSQL(tc.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tc.expectRows {
+				t.Errorf("expected %d rows, got %d", tc.expectRows, len(result.Rows))
+				for i, row := range result.Rows {
+					t.Logf("Row %d: %v", i, row)
+				}
+			}
+		})
+	}
 }

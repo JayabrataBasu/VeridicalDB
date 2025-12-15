@@ -666,6 +666,25 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 	case *JSONExistsExpr:
 		return e.evalJSONExists(ex, schema, row)
 
+	// Full-Text Search expressions
+	case *TSVectorExpr:
+		return e.evalTSVector(ex, schema, row)
+
+	case *TSQueryExpr:
+		return e.evalTSQuery(ex, schema, row)
+
+	case *TSMatchExpr:
+		return e.evalTSMatch(ex, schema, row)
+
+	case *TSRankExpr:
+		return e.evalTSRank(ex, schema, row)
+
+	case *TSHeadlineExpr:
+		return e.evalTSHeadline(ex, schema, row)
+
+	case *MatchAgainstExpr:
+		return e.evalMatchAgainst(ex, schema, row)
+
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
 	}
@@ -853,6 +872,17 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return ex.Value.Bool, nil
 		}
 		return false, fmt.Errorf("expected boolean expression")
+
+	case *TSMatchExpr:
+		// Evaluate Full-Text Search match expression
+		result, err := e.evalTSMatch(ex, schema, row)
+		if err != nil {
+			return false, err
+		}
+		if result.Type == catalog.TypeBool {
+			return result.Bool, nil
+		}
+		return false, fmt.Errorf("FTS match expression did not return boolean")
 
 	default:
 		return false, fmt.Errorf("unsupported condition type: %T", expr)
@@ -3727,4 +3757,509 @@ func (e *MVCCExecutor) fireAfterDeleteTriggers(tableName string, oldRow []catalo
 		OldRow:    oldRow,
 		Schema:    schema,
 	})
+}
+
+// ==================== Full-Text Search Evaluation Functions ====================
+
+// evalTSVector evaluates to_tsvector() - converts text to a text search vector.
+func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Evaluate the text expression
+	textVal, err := e.evalExpr(expr.Text, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	// Get the text content
+	var text string
+	if textVal.IsNull {
+		return catalog.Null(catalog.TypeText), nil
+	}
+
+	switch textVal.Type {
+	case catalog.TypeText:
+		text = textVal.Text
+	case catalog.TypeJSON:
+		text = textVal.JSON
+	default:
+		return catalog.Value{}, fmt.Errorf("to_tsvector requires text argument, got %v", textVal.Type)
+	}
+
+	// Create TSVector representation
+	tsv := ftsNewTSVector(text)
+	return catalog.NewText(tsv), nil
+}
+
+// evalTSQuery evaluates to_tsquery(), plainto_tsquery(), websearch_to_tsquery().
+func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Evaluate the query expression
+	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if queryVal.IsNull {
+		return catalog.Null(catalog.TypeText), nil
+	}
+
+	var query string
+	if queryVal.Type == catalog.TypeText {
+		query = queryVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("tsquery requires text argument")
+	}
+
+	// Create TSQuery representation
+	tsq := ftsNewTSQuery(query, expr.PlainText)
+	return catalog.NewText(tsq), nil
+}
+
+// evalTSMatch evaluates the @@ text search match operator.
+func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Evaluate left (vector/text) and right (query/text)
+	leftVal, err := e.evalExpr(expr.Left, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+	rightVal, err := e.evalExpr(expr.Right, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if leftVal.IsNull || rightVal.IsNull {
+		return catalog.Null(catalog.TypeBool), nil
+	}
+
+	// Get text from both sides
+	var leftText, rightText string
+	if leftVal.Type == catalog.TypeText {
+		leftText = leftVal.Text
+	} else {
+		leftText = leftVal.String()
+	}
+	if rightVal.Type == catalog.TypeText {
+		rightText = rightVal.Text
+	} else {
+		rightText = rightVal.String()
+	}
+
+	// Perform text search match
+	matches := ftsMatch(leftText, rightText)
+	return catalog.NewBool(matches), nil
+}
+
+// evalTSRank evaluates ts_rank() - calculates relevance ranking.
+func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Evaluate vector and query
+	vectorVal, err := e.evalExpr(expr.Vector, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if vectorVal.IsNull || queryVal.IsNull {
+		return catalog.Null(catalog.TypeFloat64), nil
+	}
+
+	// Get text representations
+	var vectorText, queryText string
+	if vectorVal.Type == catalog.TypeText {
+		vectorText = vectorVal.Text
+	} else {
+		vectorText = vectorVal.String()
+	}
+	if queryVal.Type == catalog.TypeText {
+		queryText = queryVal.Text
+	} else {
+		queryText = queryVal.String()
+	}
+
+	// Calculate rank
+	rank := ftsRank(vectorText, queryText)
+	return catalog.NewFloat64(rank), nil
+}
+
+// evalTSHeadline evaluates ts_headline() - generates result headlines with highlighted terms.
+func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Evaluate text and query
+	textVal, err := e.evalExpr(expr.Text, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if textVal.IsNull || queryVal.IsNull {
+		return catalog.Null(catalog.TypeText), nil
+	}
+
+	var text, query string
+	if textVal.Type == catalog.TypeText {
+		text = textVal.Text
+	} else {
+		text = textVal.String()
+	}
+	if queryVal.Type == catalog.TypeText {
+		query = queryVal.Text
+	} else {
+		query = queryVal.String()
+	}
+
+	// Generate headline with highlighted terms
+	headline := ftsHeadline(text, query)
+	return catalog.NewText(headline), nil
+}
+
+// evalMatchAgainst evaluates MySQL-style MATCH...AGAINST expression.
+func (e *MVCCExecutor) evalMatchAgainst(expr *MatchAgainstExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	// Get query text
+	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if queryVal.IsNull {
+		return catalog.NewFloat64(0), nil
+	}
+
+	var queryText string
+	if queryVal.Type == catalog.TypeText {
+		queryText = queryVal.Text
+	} else {
+		queryText = queryVal.String()
+	}
+
+	// Concatenate all specified columns
+	var combinedText strings.Builder
+	for i, colName := range expr.Columns {
+		colIdx := -1
+		for j, col := range schema.Columns {
+			if col.Name == colName {
+				colIdx = j
+				break
+			}
+		}
+		if colIdx == -1 {
+			return catalog.Value{}, fmt.Errorf("column %q not found", colName)
+		}
+		if colIdx < len(row) {
+			if i > 0 {
+				combinedText.WriteString(" ")
+			}
+			if row[colIdx].Type == catalog.TypeText {
+				combinedText.WriteString(row[colIdx].Text)
+			}
+		}
+	}
+
+	// Calculate relevance score
+	score := ftsRank(combinedText.String(), queryText)
+
+	// In boolean mode, return 0 or 1
+	if expr.InBoolMode {
+		if ftsMatch(combinedText.String(), queryText) {
+			return catalog.NewFloat64(1.0), nil
+		}
+		return catalog.NewFloat64(0.0), nil
+	}
+
+	return catalog.NewFloat64(score), nil
+}
+
+// ==================== FTS Helper Functions ====================
+
+// ftsNewTSVector creates a tsvector string representation from text.
+func ftsNewTSVector(text string) string {
+	// Simple tokenization and normalization
+	words := strings.Fields(strings.ToLower(text))
+	seen := make(map[string][]int)
+
+	for pos, word := range words {
+		// Basic normalization - remove non-alphanumeric
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, word)
+
+		if len(normalized) > 1 && !isStopWord(normalized) {
+			// Simple stemming (just remove common suffixes)
+			stemmed := simpleStem(normalized)
+			seen[stemmed] = append(seen[stemmed], pos+1)
+		}
+	}
+
+	// Build tsvector string
+	var parts []string
+	for term, positions := range seen {
+		posStr := make([]string, len(positions))
+		for i, p := range positions {
+			posStr[i] = fmt.Sprintf("%d", p)
+		}
+		parts = append(parts, fmt.Sprintf("'%s':%s", term, strings.Join(posStr, ",")))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+// ftsNewTSQuery creates a tsquery string representation.
+func ftsNewTSQuery(query string, plainText bool) string {
+	words := strings.Fields(strings.ToLower(query))
+	var terms []string
+
+	for _, word := range words {
+		// Skip operators in boolean mode
+		if word == "&" || word == "|" || word == "!" {
+			if !plainText {
+				terms = append(terms, word)
+			}
+			continue
+		}
+
+		// Normalize
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, word)
+
+		if len(normalized) > 0 && !isStopWord(normalized) {
+			stemmed := simpleStem(normalized)
+			terms = append(terms, fmt.Sprintf("'%s'", stemmed))
+		}
+	}
+
+	if plainText {
+		return strings.Join(terms, " & ")
+	}
+	return strings.Join(terms, " ")
+}
+
+// ftsMatch performs a full-text search match.
+func ftsMatch(document, query string) bool {
+	// Tokenize document
+	docWords := make(map[string]bool)
+	for _, word := range strings.Fields(strings.ToLower(document)) {
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, word)
+		if len(normalized) > 1 {
+			docWords[simpleStem(normalized)] = true
+		}
+	}
+
+	// Check if all query terms are present
+	queryTerms := strings.Fields(strings.ToLower(query))
+	matchCount := 0
+	totalTerms := 0
+
+	for _, term := range queryTerms {
+		// Skip operators
+		if term == "&" || term == "|" || term == "!" {
+			continue
+		}
+
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, term)
+
+		if len(normalized) > 0 && !isStopWord(normalized) {
+			totalTerms++
+			stemmed := simpleStem(normalized)
+			if docWords[stemmed] {
+				matchCount++
+			}
+		}
+	}
+
+	// Match if at least half of terms found (or all for strict matching)
+	return totalTerms > 0 && matchCount > 0
+}
+
+// ftsRank calculates a relevance score (simplified TF-IDF).
+func ftsRank(document, query string) float64 {
+	// Count term frequencies in document
+	docWords := make(map[string]int)
+	totalWords := 0
+	for _, word := range strings.Fields(strings.ToLower(document)) {
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, word)
+		if len(normalized) > 1 {
+			stemmed := simpleStem(normalized)
+			docWords[stemmed]++
+			totalWords++
+		}
+	}
+
+	if totalWords == 0 {
+		return 0
+	}
+
+	// Calculate score based on query term frequencies
+	queryTerms := strings.Fields(strings.ToLower(query))
+	score := 0.0
+
+	for _, term := range queryTerms {
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, term)
+
+		if len(normalized) > 0 && !isStopWord(normalized) {
+			stemmed := simpleStem(normalized)
+			if count, exists := docWords[stemmed]; exists {
+				// TF component
+				tf := float64(count) / float64(totalWords)
+				score += tf
+			}
+		}
+	}
+
+	return score
+}
+
+// ftsHeadline generates a headline with search terms highlighted.
+func ftsHeadline(document, query string) string {
+	// Extract query terms
+	queryTerms := make(map[string]bool)
+	for _, term := range strings.Fields(strings.ToLower(query)) {
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, term)
+		if len(normalized) > 0 {
+			queryTerms[simpleStem(normalized)] = true
+		}
+	}
+
+	// Find sentences containing query terms
+	words := strings.Fields(document)
+	if len(words) == 0 {
+		return ""
+	}
+
+	// Find windows around matching terms
+	var highlights []string
+	windowSize := 10
+
+	for i, word := range words {
+		normalized := strings.Map(func(r rune) rune {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				return r
+			}
+			return -1
+		}, strings.ToLower(word))
+
+		if len(normalized) > 0 && queryTerms[simpleStem(normalized)] {
+			// Found a match - extract window
+			start := i - windowSize/2
+			if start < 0 {
+				start = 0
+			}
+			end := i + windowSize/2
+			if end > len(words) {
+				end = len(words)
+			}
+
+			snippet := words[start:end]
+			// Highlight the matching word
+			for j, w := range snippet {
+				wNorm := strings.Map(func(r rune) rune {
+					if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+						return r
+					}
+					return -1
+				}, strings.ToLower(w))
+				if queryTerms[simpleStem(wNorm)] {
+					snippet[j] = "<b>" + w + "</b>"
+				}
+			}
+
+			prefix := ""
+			suffix := ""
+			if start > 0 {
+				prefix = "..."
+			}
+			if end < len(words) {
+				suffix = "..."
+			}
+
+			highlights = append(highlights, prefix+strings.Join(snippet, " ")+suffix)
+
+			// Skip ahead to avoid overlapping highlights
+			if len(highlights) >= 3 {
+				break
+			}
+		}
+	}
+
+	if len(highlights) == 0 {
+		// No matches - return beginning of document
+		end := windowSize
+		if end > len(words) {
+			end = len(words)
+		}
+		return strings.Join(words[:end], " ") + "..."
+	}
+
+	return strings.Join(highlights, " ... ")
+}
+
+// simpleStem performs basic suffix removal for stemming.
+func simpleStem(word string) string {
+	// Very basic Porter-style stemming
+	suffixes := []string{"ing", "ed", "es", "er", "ly", "tion", "ness", "ment", "ful", "less", "able", "ible", "ous", "ive", "al"}
+
+	for _, suffix := range suffixes {
+		if len(word) > len(suffix)+2 && strings.HasSuffix(word, suffix) {
+			return word[:len(word)-len(suffix)]
+		}
+	}
+
+	// Handle plural 's'
+	if len(word) > 3 && strings.HasSuffix(word, "s") && !strings.HasSuffix(word, "ss") {
+		return word[:len(word)-1]
+	}
+
+	return word
+}
+
+// isStopWord checks if a word is a common stop word.
+func isStopWord(word string) bool {
+	stopWords := map[string]bool{
+		"a": true, "an": true, "and": true, "are": true, "as": true, "at": true,
+		"be": true, "by": true, "for": true, "from": true, "has": true, "he": true,
+		"in": true, "is": true, "it": true, "its": true, "of": true, "on": true,
+		"or": true, "that": true, "the": true, "to": true, "was": true, "were": true,
+		"will": true, "with": true, "this": true, "but": true, "they": true,
+		"have": true, "had": true, "what": true, "when": true, "where": true,
+		"who": true, "which": true, "why": true, "how": true, "all": true,
+		"each": true, "every": true, "both": true, "few": true, "more": true,
+		"most": true, "other": true, "some": true, "such": true, "no": true,
+		"nor": true, "not": true, "only": true, "own": true, "same": true,
+		"so": true, "than": true, "too": true, "very": true, "can": true,
+		"just": true, "should": true, "now": true, "i": true, "me": true,
+		"my": true, "we": true, "our": true, "you": true, "your": true,
+	}
+	return stopWords[word]
 }

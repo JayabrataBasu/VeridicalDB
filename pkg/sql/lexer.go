@@ -303,6 +303,19 @@ const (
 	TOKEN_QUESTION_OR  // ?| (JSON any key exists)
 	TOKEN_QUESTION_AND // ?& (JSON all keys exist)
 	// TOKEN_CONCAT is already defined earlier for || concatenation
+
+	// Full-Text Search
+	TOKEN_TSVECTOR        // tsvector type
+	TOKEN_TSQUERY         // tsquery type
+	TOKEN_TO_TSVECTOR     // to_tsvector() function
+	TOKEN_TO_TSQUERY      // to_tsquery() function
+	TOKEN_PLAINTO_TSQUERY // plainto_tsquery() function
+	TOKEN_MATCH           // @@ operator (text search match)
+	TOKEN_FULLTEXT        // FULLTEXT keyword for index
+	TOKEN_AGAINST         // AGAINST keyword (MySQL-style)
+	TOKEN_WEBSEARCH       // websearch_to_tsquery
+	TOKEN_TS_RANK         // ts_rank() function
+	TOKEN_TS_HEADLINE     // ts_headline() function
 )
 
 var keywords = map[string]TokenType{
@@ -496,6 +509,18 @@ var keywords = map[string]TokenType{
 	"OLD":               TOKEN_OLD,
 	"JSON":              TOKEN_JSON_TYPE,
 	"JSONB":             TOKEN_JSON_TYPE,
+	// Full-Text Search keywords
+	"TSVECTOR":             TOKEN_TSVECTOR,
+	"TSQUERY":              TOKEN_TSQUERY,
+	"TO_TSVECTOR":          TOKEN_TO_TSVECTOR,
+	"TO_TSQUERY":           TOKEN_TO_TSQUERY,
+	"PLAINTO_TSQUERY":      TOKEN_PLAINTO_TSQUERY,
+	"FULLTEXT":             TOKEN_FULLTEXT,
+	"AGAINST":              TOKEN_AGAINST,
+	"WEBSEARCH_TO_TSQUERY": TOKEN_WEBSEARCH,
+	"TS_RANK":              TOKEN_TS_RANK,
+	"TS_HEADLINE":          TOKEN_TS_HEADLINE,
+	"MATCH":                TOKEN_MATCH,
 }
 
 // Token represents a lexical token.
@@ -613,9 +638,14 @@ func (l *Lexer) NextToken() Token {
 			l.readChar()
 		}
 	case '@':
-		// Check for JSON operator @>
-		if l.peekChar() == '>' {
-			startPos := l.pos
+		startPos := l.pos
+		if l.peekChar() == '@' {
+			// @@ text search match operator
+			l.readChar() // consume first @
+			tok = Token{Type: TOKEN_MATCH, Literal: "@@", Pos: startPos}
+			l.readChar() // consume second @
+		} else if l.peekChar() == '>' {
+			// @> JSON contains operator
 			l.readChar() // consume @
 			tok = Token{Type: TOKEN_AT_GT, Literal: "@>", Pos: startPos}
 			l.readChar() // consume >

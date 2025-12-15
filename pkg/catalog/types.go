@@ -15,6 +15,7 @@ const (
 	TypeUnknown DataType = iota
 	TypeInt32
 	TypeInt64
+	TypeFloat64
 	TypeText
 	TypeBool
 	TypeTimestamp
@@ -28,6 +29,8 @@ func (t DataType) String() string {
 		return "INT"
 	case TypeInt64:
 		return "BIGINT"
+	case TypeFloat64:
+		return "FLOAT"
 	case TypeText:
 		return "TEXT"
 	case TypeBool:
@@ -48,6 +51,8 @@ func ParseDataType(s string) DataType {
 		return TypeInt32
 	case "BIGINT", "INT64":
 		return TypeInt64
+	case "FLOAT", "FLOAT64", "DOUBLE", "REAL", "DECIMAL", "NUMERIC":
+		return TypeFloat64
 	case "TEXT", "STRING", "VARCHAR":
 		return TypeText
 	case "BOOL", "BOOLEAN":
@@ -64,7 +69,7 @@ func ParseDataType(s string) DataType {
 // IsFixedWidth returns true if the type has a fixed byte width.
 func (t DataType) IsFixedWidth() bool {
 	switch t {
-	case TypeInt32, TypeInt64, TypeBool, TypeTimestamp:
+	case TypeInt32, TypeInt64, TypeFloat64, TypeBool, TypeTimestamp:
 		return true
 	default:
 		return false
@@ -76,7 +81,7 @@ func (t DataType) FixedWidth() int {
 	switch t {
 	case TypeInt32:
 		return 4
-	case TypeInt64, TypeTimestamp:
+	case TypeInt64, TypeFloat64, TypeTimestamp:
 		return 8
 	case TypeBool:
 		return 1
@@ -91,6 +96,7 @@ type Value struct {
 	IsNull    bool
 	Int32     int32
 	Int64     int64
+	Float64   float64
 	Text      string
 	Bool      bool
 	Timestamp time.Time
@@ -105,6 +111,11 @@ func NewInt32(v int32) Value {
 // NewInt64 creates an INT64 value.
 func NewInt64(v int64) Value {
 	return Value{Type: TypeInt64, Int64: v}
+}
+
+// NewFloat64 creates a FLOAT64 value.
+func NewFloat64(v float64) Value {
+	return Value{Type: TypeFloat64, Float64: v}
 }
 
 // NewText creates a TEXT value.
@@ -142,6 +153,8 @@ func (v Value) String() string {
 		return strconv.FormatInt(int64(v.Int32), 10)
 	case TypeInt64:
 		return strconv.FormatInt(v.Int64, 10)
+	case TypeFloat64:
+		return strconv.FormatFloat(v.Float64, 'g', -1, 64)
 	case TypeText:
 		return v.Text
 	case TypeBool:
@@ -190,6 +203,13 @@ func (v Value) Compare(other Value) int {
 		if v.Int64 < other.Int64 {
 			return -1
 		} else if v.Int64 > other.Int64 {
+			return 1
+		}
+		return 0
+	case TypeFloat64:
+		if v.Float64 < other.Float64 {
+			return -1
+		} else if v.Float64 > other.Float64 {
 			return 1
 		}
 		return 0
