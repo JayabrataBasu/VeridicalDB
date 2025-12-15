@@ -553,3 +553,35 @@ type RevokeStmt struct {
 }
 
 func (s *RevokeStmt) statementNode() {}
+
+// CreateDatabaseStmt represents CREATE DATABASE statement.
+// CREATE DATABASE name [WITH OWNER = 'owner']
+type CreateDatabaseStmt struct {
+	Name        string
+	Owner       string // optional
+	IfNotExists bool
+}
+
+func (s *CreateDatabaseStmt) statementNode() {}
+
+// DropDatabaseStmt represents DROP DATABASE statement.
+// DROP DATABASE [IF EXISTS] name
+type DropDatabaseStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (s *DropDatabaseStmt) statementNode() {}
+
+// UseDatabaseStmt represents USE database statement.
+// USE database_name
+type UseDatabaseStmt struct {
+	Name string
+}
+
+func (s *UseDatabaseStmt) statementNode() {}
+
+// ShowDatabasesStmt represents SHOW DATABASES statement.
+type ShowDatabasesStmt struct{}
+
+func (s *ShowDatabasesStmt) statementNode() {}

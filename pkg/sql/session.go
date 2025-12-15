@@ -16,9 +16,10 @@ type Session struct {
 	mtm      *catalog.MVCCTableManager
 	executor *MVCCExecutor
 	txnMgr   *txn.Manager
-	lockMgr  *lock.Manager       // Optional, can be nil for single-threaded mode
-	idxMgr   *btree.IndexManager // Optional, can be nil if indexes not used
-	userCat  *auth.UserCatalog   // Optional, can be nil if auth disabled
+	lockMgr  *lock.Manager            // Optional, can be nil for single-threaded mode
+	idxMgr   *btree.IndexManager      // Optional, can be nil if indexes not used
+	userCat  *auth.UserCatalog        // Optional, can be nil if auth disabled
+	dbMgr    *catalog.DatabaseManager // Optional, for multi-database support
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -31,6 +32,9 @@ type Session struct {
 
 	// currentUser is the authenticated user for this session
 	currentUser string
+
+	// currentDatabase is the current database namespace for this session
+	currentDatabase string
 }
 
 // NewSession creates a new database session.
@@ -74,6 +78,31 @@ func (s *Session) SetIndexManager(idxMgr *btree.IndexManager) {
 // SetUserCatalog sets the user catalog for authentication.
 func (s *Session) SetUserCatalog(userCat *auth.UserCatalog) {
 	s.userCat = userCat
+}
+
+// SetDatabaseManager sets the database manager for multi-database support.
+func (s *Session) SetDatabaseManager(dbMgr *catalog.DatabaseManager) {
+	s.dbMgr = dbMgr
+	// Default to "default" database if not set
+	if s.currentDatabase == "" {
+		s.currentDatabase = "default"
+	}
+}
+
+// CurrentDatabase returns the current database for this session.
+func (s *Session) CurrentDatabase() string {
+	return s.currentDatabase
+}
+
+// SetCurrentDatabase sets the current database for this session.
+func (s *Session) SetCurrentDatabase(dbName string) error {
+	if s.dbMgr != nil {
+		if !s.dbMgr.DatabaseExists(dbName) {
+			return fmt.Errorf("database %q does not exist", dbName)
+		}
+	}
+	s.currentDatabase = dbName
+	return nil
 }
 
 // SetCurrentUser sets the authenticated user for this session.
@@ -152,6 +181,13 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleGrant(typedStmt)
 	case *RevokeStmt:
 		return s.handleRevoke(typedStmt)
+	// Database management statements
+	case *CreateDatabaseStmt:
+		return s.handleCreateDatabase(typedStmt)
+	case *DropDatabaseStmt:
+		return s.handleDropDatabase(typedStmt)
+	case *UseDatabaseStmt:
+		return s.handleUseDatabase(typedStmt)
 	}
 
 	// For DML statements, we need a transaction
@@ -616,4 +652,84 @@ func (s *Session) handleRevoke(stmt *RevokeStmt) (*Result, error) {
 	}
 
 	return &Result{Message: fmt.Sprintf("REVOKE %s ON %s FROM %s", stmt.Privilege, stmt.TableName, stmt.Username)}, nil
+}
+
+// handleCreateDatabase handles CREATE DATABASE statement.
+func (s *Session) handleCreateDatabase(stmt *CreateDatabaseStmt) (*Result, error) {
+	if s.dbMgr == nil {
+		return nil, fmt.Errorf("multi-database support not enabled")
+	}
+
+	// Check if current user is superuser (if auth is enabled)
+	if s.userCat != nil && s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can create databases")
+		}
+	}
+
+	owner := stmt.Owner
+	if owner == "" {
+		owner = s.currentUser
+	}
+
+	var err error
+	if stmt.IfNotExists {
+		_, err = s.dbMgr.CreateDatabaseIfNotExists(stmt.Name, owner)
+	} else {
+		_, err = s.dbMgr.CreateDatabase(stmt.Name, owner)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create database: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CREATE DATABASE %s", stmt.Name)}, nil
+}
+
+// handleDropDatabase handles DROP DATABASE statement.
+func (s *Session) handleDropDatabase(stmt *DropDatabaseStmt) (*Result, error) {
+	if s.dbMgr == nil {
+		return nil, fmt.Errorf("multi-database support not enabled")
+	}
+
+	// Check if current user is superuser (if auth is enabled)
+	if s.userCat != nil && s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can drop databases")
+		}
+	}
+
+	// Cannot drop current database
+	if stmt.Name == s.currentDatabase {
+		return nil, fmt.Errorf("cannot drop the currently selected database")
+	}
+
+	if err := s.dbMgr.DropDatabase(stmt.Name, stmt.IfExists); err != nil {
+		return nil, fmt.Errorf("drop database: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("DROP DATABASE %s", stmt.Name)}, nil
+}
+
+// handleUseDatabase handles USE database statement.
+func (s *Session) handleUseDatabase(stmt *UseDatabaseStmt) (*Result, error) {
+	if s.dbMgr == nil {
+		// Even without dbMgr, allow switching if we just track the name
+		s.currentDatabase = stmt.Name
+		return &Result{Message: fmt.Sprintf("Database changed to %s", stmt.Name)}, nil
+	}
+
+	if !s.dbMgr.DatabaseExists(stmt.Name) {
+		return nil, fmt.Errorf("database %q does not exist", stmt.Name)
+	}
+
+	s.currentDatabase = stmt.Name
+	return &Result{Message: fmt.Sprintf("Database changed to %s", stmt.Name)}, nil
 }

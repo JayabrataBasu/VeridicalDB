@@ -48,27 +48,20 @@ These features have parsing support but incomplete execution. **Complete these f
 Common SQL features needed for practical use.
 
 ### 2.1 FOREIGN KEY Constraints
-- **Status:** Not implemented
-- **What's Needed:**
-  - Parser: `REFERENCES table(column)` in column definition
-  - Parser: `FOREIGN KEY (col) REFERENCES table(col)` as table constraint
-  - AST: Add `ForeignKey` struct to `ColumnDef` or separate constraint list
-  - Catalog: Store foreign key relationships in table metadata
-  - Executor: On INSERT/UPDATE, verify referenced row exists
-  - Executor: On DELETE/UPDATE of referenced table, check for violations
-- **ON DELETE/UPDATE actions (future):**
-  - `CASCADE` - Delete/update referencing rows
-  - `SET NULL` - Set FK column to NULL
-  - `SET DEFAULT` - Set FK column to default
-  - `RESTRICT` / `NO ACTION` - Prevent operation
-- **Files to Modify:**
-  - `pkg/sql/lexer.go` - Add `TOKEN_REFERENCES`, `TOKEN_FOREIGN`
-  - `pkg/sql/ast.go` - Add `ForeignKeyDef` struct
-  - `pkg/sql/parser.go` - Parse FK syntax
-  - `pkg/catalog/types.go` - Add FK to schema
-  - `pkg/sql/executor.go` - Enforce FK on INSERT/UPDATE/DELETE
-- **Difficulty:** Hard
-- **Estimated Time:** 8-12 hours
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Lexer, Parser, Catalog, and Executor support for Foreign Key constraints.
+  - Inline `REFERENCES table(col)` syntax and table-level `FOREIGN KEY (cols) REFERENCES table(cols)` parsing.
+  - Enforcement on INSERT/UPDATE to validate referenced rows and on DELETE/UPDATE to prevent violations (RESTRICT behavior).
+  - Tests: `TestForeignKeyConstraints` in `pkg/sql/foreign_key_test.go`.
+- **Files Modified:**
+  - `pkg/sql/lexer.go` - Added `TOKEN_REFERENCES`, `TOKEN_FOREIGN`
+  - `pkg/sql/ast.go` - Added `ForeignKeyDef` struct and related AST updates
+  - `pkg/sql/parser.go` - Parsing support for FK syntax
+  - `pkg/catalog/types.go` - FK metadata in schema
+  - `pkg/sql/executor.go` - Enforcement logic on data-modifying statements
+**Difficulty:** Hard
+**Completed Date:** Dec 15, 2025
 
 ### 2.2 INSERT ... ON CONFLICT (UPSERT) ✅ COMPLETED
 - **Status:** ✅ Fully implemented
@@ -263,14 +256,24 @@ Advanced features for future enhancement.
 - **Estimated Time:** 40+ hours
 
 ### 4.6 Multi-Database Namespaces
-- **Status:** Designed in DESIGN.md, not implemented
-- **What's Needed:**
-  - `CREATE DATABASE`, `DROP DATABASE`, `USE database`
-  - Directory-per-database layout
-  - Session-level current database tracking
-- **Files to Modify:** As detailed in DESIGN.md
-- **Difficulty:** Medium
-- **Estimated Time:** 16-24 hours
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - `CREATE DATABASE [IF NOT EXISTS] name [WITH OWNER = 'owner']`
+  - `DROP DATABASE [IF EXISTS] name`
+  - `USE database` to switch current database
+  - `SHOW DATABASES` to list all databases
+  - Directory-per-database layout with tables/, indexes/, wal/, meta.json
+  - Session-level current database tracking (`currentDatabase` field)
+  - DatabaseManager in `pkg/catalog/database_manager.go` with persistence
+  - Default database created on first initialization
+- **Files Modified:**
+  - `pkg/sql/lexer.go` - Added DATABASE, USE, OWNER tokens
+  - `pkg/sql/ast.go` - Added CreateDatabaseStmt, DropDatabaseStmt, UseDatabaseStmt, ShowDatabasesStmt
+  - `pkg/sql/parser.go` - Parse database DDL statements
+  - `pkg/catalog/database_manager.go` - New file for multi-database management
+  - `pkg/sql/session.go` - Added dbMgr, currentDatabase, handlers
+- **Tests:** `TestDatabaseManager_*` in `pkg/catalog/database_manager_test.go`, `TestParseDatabaseStatements` in `pkg/sql/database_test.go`
+- **Completed Date:** Dec 15, 2025
 
 ### 4.7 Replication
 - **What's Needed:**
@@ -287,10 +290,10 @@ Advanced features for future enhancement.
 ### Partially Implemented
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
-| Recursive CTEs | ✅ Complete | Dec 2024 |
-| View Execution | ✅ Complete | Dec 2024 |
-| Window Frame Execution | ✅ Complete | Dec 2024 |
-| NTH_VALUE() | ✅ Complete | Dec 2024 |
+| Recursive CTEs | ✅ Complete | Dec 2025 |
+| View Execution | ✅ Complete | Dec 2025 |
+| Window Frame Execution | ✅ Complete | Dec 2025 |
+| NTH_VALUE() | ✅ Complete | Dec 2025 |
 
 ### High Priority
 | Feature | Status | Completed Date |
@@ -319,7 +322,7 @@ Advanced features for future enhancement.
 | Table Partitioning | ⬜ Not Started | |
 | Triggers | ⬜ Not Started | |
 | Stored Procedures | ⬜ Not Started | |
-| Multi-Database | ⬜ Not Started | |
+| Multi-Database | ✅ Complete | Dec 15, 2025 |
 | Replication | ⬜ Not Started | |
 
 ---
@@ -343,13 +346,18 @@ Advanced features for future enhancement.
   - [x] 3.1 Information Schema ✅
   - [x] 3.4 Checkpointing ✅
   - [x] 3.2 Prepared Statements ✅ (Dec 15, 2025)
-  - [x] 3.6 User Authentication ✅ (Dec 16, 2025)
+  - [x] 3.6 User Authentication ✅ (Dec 15, 2025)
   - [x] 3.3 Crash Recovery ✅ (Dec 15, 2025)
-  - [x] 3.5 PostgreSQL Wire Protocol ✅ (Dec 15, 2025)
   - [x] 3.5 PostgreSQL Wire Protocol ✅ (Dec 15, 2025)
 
 4. **Phase 4: Low Priority Features**
-   - (As time and interest permits)
+   - [x] 4.6 Multi-Database Namespaces ✅ (Dec 15, 2025)
+   - [ ] 4.4 Triggers
+   - [ ] 4.1 JSON Data Type
+   - [ ] 4.3 Table Partitioning
+   - [ ] 4.2 Full-Text Search
+   - [ ] 4.5 Stored Procedures
+   - [ ] 4.7 Replication
 
 ---
 

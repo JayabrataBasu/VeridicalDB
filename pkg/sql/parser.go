@@ -108,6 +108,8 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseGrant()
 	case TOKEN_REVOKE:
 		return p.parseRevoke()
+	case TOKEN_USE:
+		return p.parseUseDatabase()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -2017,6 +2019,14 @@ func (p *Parser) parseCreate() (Statement, error) {
 		return p.parseCreateUser()
 	}
 
+	// CREATE DATABASE
+	if p.curTokenIs(TOKEN_DATABASE) {
+		if isUnique || orReplace {
+			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE DATABASE")
+		}
+		return p.parseCreateDatabase()
+	}
+
 	if isUnique {
 		return nil, fmt.Errorf("UNIQUE keyword only valid for CREATE INDEX")
 	}
@@ -2484,6 +2494,10 @@ func (p *Parser) parseDrop() (Statement, error) {
 
 	if p.curTokenIs(TOKEN_USER) {
 		return p.parseDropUser()
+	}
+
+	if p.curTokenIs(TOKEN_DATABASE) {
+		return p.parseDropDatabase()
 	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3366,6 +3380,17 @@ func (p *Parser) parseShow() (*ShowStmt, error) {
 		return &ShowStmt{ShowType: "TABLES"}, nil
 	}
 
+	if p.curTokenIs(TOKEN_DATABASE) {
+		p.nextToken() // consume DATABASE (or DATABASES)
+		return &ShowStmt{ShowType: "DATABASES"}, nil
+	}
+
+	// Also accept plural DATABASES as identifier
+	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "DATABASES" {
+		p.nextToken()
+		return &ShowStmt{ShowType: "DATABASES"}, nil
+	}
+
 	if p.curTokenIs(TOKEN_CREATE) {
 		p.nextToken() // consume CREATE
 		if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3933,6 +3958,110 @@ func (p *Parser) parseRevoke() (*RevokeStmt, error) {
 		return nil, err
 	}
 	stmt.Username = username
+
+	return stmt, nil
+}
+
+// parseCreateDatabase parses: CREATE DATABASE [IF NOT EXISTS] name [WITH OWNER = 'owner']
+func (p *Parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
+	p.nextToken() // consume DATABASE
+
+	stmt := &CreateDatabaseStmt{}
+
+	// Optional IF NOT EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if !p.curTokenIs(TOKEN_NOT) {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF NOT")
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Database name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected database name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// Optional WITH OWNER = 'owner'
+	if p.curTokenIs(TOKEN_WITH) {
+		p.nextToken() // consume WITH
+		if !p.curTokenIs(TOKEN_OWNER) {
+			return nil, fmt.Errorf("expected OWNER after WITH")
+		}
+		p.nextToken() // consume OWNER
+		if !p.curTokenIs(TOKEN_EQ) {
+			return nil, fmt.Errorf("expected = after OWNER")
+		}
+		p.nextToken() // consume =
+		if !p.curTokenIs(TOKEN_STRING) && !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected owner name, got %v", p.cur.Type)
+		}
+		if p.curTokenIs(TOKEN_STRING) {
+			stmt.Owner = p.cur.Literal
+		} else {
+			stmt.Owner, err = p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+		}
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parseDropDatabase parses: DROP DATABASE [IF EXISTS] name
+func (p *Parser) parseDropDatabase() (*DropDatabaseStmt, error) {
+	p.nextToken() // consume DATABASE
+
+	stmt := &DropDatabaseStmt{}
+
+	// Optional IF EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF")
+		}
+		stmt.IfExists = true
+	}
+
+	// Database name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected database name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	return stmt, nil
+}
+
+// parseUseDatabase parses: USE database_name
+func (p *Parser) parseUseDatabase() (*UseDatabaseStmt, error) {
+	p.nextToken() // consume USE
+
+	stmt := &UseDatabaseStmt{}
+
+	// Database name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected database name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
 
 	return stmt, nil
 }

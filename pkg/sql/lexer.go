@@ -271,6 +271,11 @@ const (
 	TOKEN_REVOKE
 	TOKEN_ROLE
 	TOKEN_SUPERUSER
+
+	// Multi-Database Namespaces
+	TOKEN_DATABASE
+	TOKEN_USE
+	TOKEN_OWNER
 )
 
 var keywords = map[string]TokenType{
@@ -449,6 +454,9 @@ var keywords = map[string]TokenType{
 	"REVOKE":            TOKEN_REVOKE,
 	"ROLE":              TOKEN_ROLE,
 	"SUPERUSER":         TOKEN_SUPERUSER,
+	"DATABASE":          TOKEN_DATABASE,
+	"USE":               TOKEN_USE,
+	"OWNER":             TOKEN_OWNER,
 }
 
 // Token represents a lexical token.
