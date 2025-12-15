@@ -104,6 +104,10 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseExecute()
 	case TOKEN_DEALLOCATE:
 		return p.parseDeallocate()
+	case TOKEN_GRANT:
+		return p.parseGrant()
+	case TOKEN_REVOKE:
+		return p.parseRevoke()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -2005,6 +2009,14 @@ func (p *Parser) parseCreate() (Statement, error) {
 		return p.parseCreateView(orReplace)
 	}
 
+	// CREATE USER
+	if p.curTokenIs(TOKEN_USER) {
+		if isUnique || orReplace {
+			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE USER")
+		}
+		return p.parseCreateUser()
+	}
+
 	if isUnique {
 		return nil, fmt.Errorf("UNIQUE keyword only valid for CREATE INDEX")
 	}
@@ -2458,7 +2470,7 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 	return stmt, nil
 }
 
-// parseDrop parses: DROP TABLE name or DROP INDEX name or DROP VIEW name
+// parseDrop parses: DROP TABLE name or DROP INDEX name or DROP VIEW name or DROP USER name
 func (p *Parser) parseDrop() (Statement, error) {
 	p.nextToken() // consume DROP
 
@@ -2468,6 +2480,10 @@ func (p *Parser) parseDrop() (Statement, error) {
 
 	if p.curTokenIs(TOKEN_VIEW) {
 		return p.parseDropView()
+	}
+
+	if p.curTokenIs(TOKEN_USER) {
+		return p.parseDropUser()
 	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3229,10 +3245,15 @@ func (p *Parser) parseExtractExpression() (Expression, error) {
 	}, nil
 }
 
-// parseAlter parses: ALTER TABLE table_name action
+// parseAlter parses: ALTER TABLE table_name action or ALTER USER username ...
 // Actions: ADD [COLUMN] col_def, DROP COLUMN col_name, RENAME TO new_name, RENAME COLUMN old TO new
-func (p *Parser) parseAlter() (*AlterTableStmt, error) {
+func (p *Parser) parseAlter() (Statement, error) {
 	p.nextToken() // consume ALTER
+
+	// Check for ALTER USER
+	if p.curTokenIs(TOKEN_USER) {
+		return p.parseAlterUser()
+	}
 
 	// Expect TABLE
 	if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3704,4 +3725,214 @@ func (p *Parser) parsePlaceholder() (Expression, error) {
 	}
 	p.nextToken()
 	return &PlaceholderExpr{Index: idx}, nil
+}
+
+// parseCreateUser parses: CREATE USER username WITH PASSWORD 'password' [SUPERUSER]
+func (p *Parser) parseCreateUser() (*CreateUserStmt, error) {
+	p.nextToken() // consume USER
+
+	stmt := &CreateUserStmt{}
+
+	// Username
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected username, got %v", p.cur.Type)
+	}
+	username, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Username = username
+
+	// Expect WITH
+	if !p.curTokenIs(TOKEN_WITH) {
+		return nil, fmt.Errorf("expected WITH after username")
+	}
+	p.nextToken() // consume WITH
+
+	// Expect PASSWORD
+	if !p.curTokenIs(TOKEN_PASSWORD) {
+		return nil, fmt.Errorf("expected PASSWORD after WITH")
+	}
+	p.nextToken() // consume PASSWORD
+
+	// Password string
+	if !p.curTokenIs(TOKEN_STRING) {
+		return nil, fmt.Errorf("expected password string")
+	}
+	stmt.Password = p.cur.Literal
+	p.nextToken()
+
+	// Optional SUPERUSER
+	if p.curTokenIs(TOKEN_SUPERUSER) {
+		stmt.Superuser = true
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parseDropUser parses: DROP USER [IF EXISTS] username
+func (p *Parser) parseDropUser() (*DropUserStmt, error) {
+	p.nextToken() // consume USER
+
+	stmt := &DropUserStmt{}
+
+	// Optional IF EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF")
+		}
+		stmt.IfExists = true
+	}
+
+	// Username
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected username, got %v", p.cur.Type)
+	}
+	username, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Username = username
+
+	return stmt, nil
+}
+
+// parseAlterUser parses: ALTER USER username WITH PASSWORD 'newpassword' | SUPERUSER | NOSUPERUSER
+func (p *Parser) parseAlterUser() (*AlterUserStmt, error) {
+	p.nextToken() // consume USER
+
+	stmt := &AlterUserStmt{}
+
+	// Username
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected username, got %v", p.cur.Type)
+	}
+	username, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Username = username
+
+	// Expect WITH
+	if !p.curTokenIs(TOKEN_WITH) {
+		return nil, fmt.Errorf("expected WITH after username")
+	}
+	p.nextToken() // consume WITH
+
+	// PASSWORD or SUPERUSER/NOSUPERUSER
+	if p.curTokenIs(TOKEN_PASSWORD) {
+		p.nextToken() // consume PASSWORD
+		if !p.curTokenIs(TOKEN_STRING) {
+			return nil, fmt.Errorf("expected password string")
+		}
+		stmt.NewPassword = p.cur.Literal
+		p.nextToken()
+	} else if p.curTokenIs(TOKEN_SUPERUSER) {
+		stmt.SetSuperuser = true
+		p.nextToken()
+	} else if p.cur.Literal == "NOSUPERUSER" {
+		stmt.UnsetSuperuser = true
+		p.nextToken()
+	} else {
+		return nil, fmt.Errorf("expected PASSWORD, SUPERUSER, or NOSUPERUSER after WITH")
+	}
+
+	return stmt, nil
+}
+
+// parseGrant parses: GRANT privilege ON table TO user
+func (p *Parser) parseGrant() (*GrantStmt, error) {
+	p.nextToken() // consume GRANT
+
+	stmt := &GrantStmt{}
+
+	// Privilege (SELECT, INSERT, UPDATE, DELETE, ALL)
+	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SELECT) && !p.curTokenIs(TOKEN_INSERT) &&
+		!p.curTokenIs(TOKEN_UPDATE) && !p.curTokenIs(TOKEN_DELETE) && !p.curTokenIs(TOKEN_ALL) {
+		return nil, fmt.Errorf("expected privilege (SELECT, INSERT, UPDATE, DELETE, ALL)")
+	}
+	stmt.Privilege = strings.ToUpper(p.cur.Literal)
+	p.nextToken()
+
+	// Expect ON
+	if err := p.expect(TOKEN_ON); err != nil {
+		return nil, fmt.Errorf("expected ON after privilege")
+	}
+
+	// Table name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
+
+	// Expect TO
+	if err := p.expect(TOKEN_TO); err != nil {
+		return nil, fmt.Errorf("expected TO after table name")
+	}
+
+	// Username
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected username, got %v", p.cur.Type)
+	}
+	username, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Username = username
+
+	return stmt, nil
+}
+
+// parseRevoke parses: REVOKE privilege ON table FROM user
+func (p *Parser) parseRevoke() (*RevokeStmt, error) {
+	p.nextToken() // consume REVOKE
+
+	stmt := &RevokeStmt{}
+
+	// Privilege
+	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SELECT) && !p.curTokenIs(TOKEN_INSERT) &&
+		!p.curTokenIs(TOKEN_UPDATE) && !p.curTokenIs(TOKEN_DELETE) && !p.curTokenIs(TOKEN_ALL) {
+		return nil, fmt.Errorf("expected privilege (SELECT, INSERT, UPDATE, DELETE, ALL)")
+	}
+	stmt.Privilege = strings.ToUpper(p.cur.Literal)
+	p.nextToken()
+
+	// Expect ON
+	if err := p.expect(TOKEN_ON); err != nil {
+		return nil, fmt.Errorf("expected ON after privilege")
+	}
+
+	// Table name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
+
+	// Expect FROM
+	if !p.curTokenIs(TOKEN_FROM) {
+		return nil, fmt.Errorf("expected FROM after table name")
+	}
+	p.nextToken() // consume FROM
+
+	// Username
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected username, got %v", p.cur.Type)
+	}
+	username, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Username = username
+
+	return stmt, nil
 }

@@ -263,6 +263,14 @@ const (
 	// CTE (Common Table Expressions)
 	TOKEN_WITH
 	TOKEN_RECURSIVE
+
+	// User Authentication
+	TOKEN_USER
+	TOKEN_PASSWORD
+	TOKEN_GRANT
+	TOKEN_REVOKE
+	TOKEN_ROLE
+	TOKEN_SUPERUSER
 )
 
 var keywords = map[string]TokenType{
@@ -435,6 +443,12 @@ var keywords = map[string]TokenType{
 	"ROLLUP":            TOKEN_ROLLUP,
 	"WITH":              TOKEN_WITH,
 	"RECURSIVE":         TOKEN_RECURSIVE,
+	"USER":              TOKEN_USER,
+	"PASSWORD":          TOKEN_PASSWORD,
+	"GRANT":             TOKEN_GRANT,
+	"REVOKE":            TOKEN_REVOKE,
+	"ROLE":              TOKEN_ROLE,
+	"SUPERUSER":         TOKEN_SUPERUSER,
 }
 
 // Token represents a lexical token.

@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
@@ -17,6 +18,7 @@ type Session struct {
 	txnMgr   *txn.Manager
 	lockMgr  *lock.Manager       // Optional, can be nil for single-threaded mode
 	idxMgr   *btree.IndexManager // Optional, can be nil if indexes not used
+	userCat  *auth.UserCatalog   // Optional, can be nil if auth disabled
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -26,6 +28,9 @@ type Session struct {
 
 	// preparedStmts stores prepared statements by name
 	preparedStmts map[string]Statement
+
+	// currentUser is the authenticated user for this session
+	currentUser string
 }
 
 // NewSession creates a new database session.
@@ -64,6 +69,36 @@ func (s *Session) SetIndexManager(idxMgr *btree.IndexManager) {
 	s.idxMgr = idxMgr
 	// Also set on executor for DML index maintenance
 	s.executor.SetIndexManager(idxMgr)
+}
+
+// SetUserCatalog sets the user catalog for authentication.
+func (s *Session) SetUserCatalog(userCat *auth.UserCatalog) {
+	s.userCat = userCat
+}
+
+// SetCurrentUser sets the authenticated user for this session.
+func (s *Session) SetCurrentUser(username string) {
+	s.currentUser = username
+}
+
+// CurrentUser returns the authenticated user for this session.
+func (s *Session) CurrentUser() string {
+	return s.currentUser
+}
+
+// Authenticate verifies the username and password.
+func (s *Session) Authenticate(username, password string) error {
+	if s.userCat == nil {
+		// No authentication required if user catalog not set
+		s.currentUser = username
+		return nil
+	}
+	_, err := s.userCat.Authenticate(username, password)
+	if err != nil {
+		return err
+	}
+	s.currentUser = username
+	return nil
 }
 
 // ExecuteSQL parses and executes a SQL string.
@@ -106,6 +141,17 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleCreateIndex(typedStmt)
 	case *DropIndexStmt:
 		return s.handleDropIndex(typedStmt)
+	// User management statements
+	case *CreateUserStmt:
+		return s.handleCreateUser(typedStmt)
+	case *DropUserStmt:
+		return s.handleDropUser(typedStmt)
+	case *AlterUserStmt:
+		return s.handleAlterUser(typedStmt)
+	case *GrantStmt:
+		return s.handleGrant(typedStmt)
+	case *RevokeStmt:
+		return s.handleRevoke(typedStmt)
 	}
 
 	// For DML statements, we need a transaction
@@ -432,4 +478,142 @@ func (s *Session) handleExecute(stmt *ExecuteStmt) (*Result, error) {
 
 	// Execute the substituted statement
 	return s.Execute(newStmt)
+}
+
+// handleCreateUser handles CREATE USER statement.
+func (s *Session) handleCreateUser(stmt *CreateUserStmt) (*Result, error) {
+	if s.userCat == nil {
+		return nil, fmt.Errorf("user management not enabled (no user catalog)")
+	}
+
+	// Check if current user is superuser (must be authenticated to create users)
+	if s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can create users")
+		}
+	}
+
+	if err := s.userCat.CreateUser(stmt.Username, stmt.Password, stmt.Superuser); err != nil {
+		return nil, fmt.Errorf("create user: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CREATE USER %s", stmt.Username)}, nil
+}
+
+// handleDropUser handles DROP USER statement.
+func (s *Session) handleDropUser(stmt *DropUserStmt) (*Result, error) {
+	if s.userCat == nil {
+		return nil, fmt.Errorf("user management not enabled (no user catalog)")
+	}
+
+	// Check if current user is superuser
+	if s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can drop users")
+		}
+	}
+
+	if err := s.userCat.DropUser(stmt.Username, stmt.IfExists); err != nil {
+		return nil, fmt.Errorf("drop user: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("DROP USER %s", stmt.Username)}, nil
+}
+
+// handleAlterUser handles ALTER USER statement.
+func (s *Session) handleAlterUser(stmt *AlterUserStmt) (*Result, error) {
+	if s.userCat == nil {
+		return nil, fmt.Errorf("user management not enabled (no user catalog)")
+	}
+
+	// Check if current user is superuser (or altering themselves for password only)
+	if s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		// Users can change their own password, but not superuser status
+		if !user.Superuser && s.currentUser != stmt.Username {
+			return nil, fmt.Errorf("permission denied: only superusers can alter other users")
+		}
+		if !user.Superuser && (stmt.SetSuperuser || stmt.UnsetSuperuser) {
+			return nil, fmt.Errorf("permission denied: only superusers can change superuser status")
+		}
+	}
+
+	if stmt.NewPassword != "" {
+		if err := s.userCat.AlterPassword(stmt.Username, stmt.NewPassword); err != nil {
+			return nil, fmt.Errorf("alter password: %w", err)
+		}
+	}
+
+	if stmt.SetSuperuser {
+		if err := s.userCat.SetSuperuser(stmt.Username, true); err != nil {
+			return nil, fmt.Errorf("set superuser: %w", err)
+		}
+	}
+
+	if stmt.UnsetSuperuser {
+		if err := s.userCat.SetSuperuser(stmt.Username, false); err != nil {
+			return nil, fmt.Errorf("unset superuser: %w", err)
+		}
+	}
+
+	return &Result{Message: fmt.Sprintf("ALTER USER %s", stmt.Username)}, nil
+}
+
+// handleGrant handles GRANT statement.
+func (s *Session) handleGrant(stmt *GrantStmt) (*Result, error) {
+	if s.userCat == nil {
+		return nil, fmt.Errorf("user management not enabled (no user catalog)")
+	}
+
+	// Check if current user is superuser
+	if s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can grant privileges")
+		}
+	}
+
+	if err := s.userCat.Grant(stmt.Username, stmt.TableName, auth.Priv(stmt.Privilege)); err != nil {
+		return nil, fmt.Errorf("grant: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("GRANT %s ON %s TO %s", stmt.Privilege, stmt.TableName, stmt.Username)}, nil
+}
+
+// handleRevoke handles REVOKE statement.
+func (s *Session) handleRevoke(stmt *RevokeStmt) (*Result, error) {
+	if s.userCat == nil {
+		return nil, fmt.Errorf("user management not enabled (no user catalog)")
+	}
+
+	// Check if current user is superuser
+	if s.currentUser != "" {
+		user, err := s.userCat.GetUser(s.currentUser)
+		if err != nil {
+			return nil, fmt.Errorf("cannot verify current user: %w", err)
+		}
+		if !user.Superuser {
+			return nil, fmt.Errorf("permission denied: only superusers can revoke privileges")
+		}
+	}
+
+	if err := s.userCat.Revoke(stmt.Username, stmt.TableName, auth.Priv(stmt.Privilege)); err != nil {
+		return nil, fmt.Errorf("revoke: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("REVOKE %s ON %s FROM %s", stmt.Privilege, stmt.TableName, stmt.Username)}, nil
 }

@@ -475,30 +475,81 @@ type WithClause struct {
 
 // PrepareStmt represents PREPARE statement.
 type PrepareStmt struct {
-Name      string
-Statement Statement
+	Name      string
+	Statement Statement
 }
 
 func (s *PrepareStmt) statementNode() {}
 
 // ExecuteStmt represents EXECUTE statement.
 type ExecuteStmt struct {
-Name   string
-Params []Expression
+	Name   string
+	Params []Expression
 }
 
 func (s *ExecuteStmt) statementNode() {}
 
 // DeallocateStmt represents DEALLOCATE statement.
 type DeallocateStmt struct {
-Name string
+	Name string
 }
 
 func (s *DeallocateStmt) statementNode() {}
 
 // PlaceholderExpr represents a parameter placeholder (, , etc).
 type PlaceholderExpr struct {
-Index int // 1-based index
+	Index int // 1-based index
 }
 
 func (e *PlaceholderExpr) exprNode() {}
+
+// CreateUserStmt represents CREATE USER statement.
+// CREATE USER username WITH PASSWORD 'password' [SUPERUSER]
+type CreateUserStmt struct {
+	Username  string
+	Password  string
+	Superuser bool
+}
+
+func (s *CreateUserStmt) statementNode() {}
+
+// DropUserStmt represents DROP USER statement.
+// DROP USER [IF EXISTS] username
+type DropUserStmt struct {
+	Username string
+	IfExists bool
+}
+
+func (s *DropUserStmt) statementNode() {}
+
+// AlterUserStmt represents ALTER USER statement.
+// ALTER USER username WITH PASSWORD 'newpassword'
+// ALTER USER username WITH SUPERUSER / NOSUPERUSER
+type AlterUserStmt struct {
+	Username       string
+	NewPassword    string // empty if not changing password
+	SetSuperuser   bool   // true if setting SUPERUSER
+	UnsetSuperuser bool   // true if setting NOSUPERUSER
+}
+
+func (s *AlterUserStmt) statementNode() {}
+
+// GrantStmt represents GRANT statement (basic version).
+// GRANT privilege ON table TO user
+type GrantStmt struct {
+	Privilege string // SELECT, INSERT, UPDATE, DELETE, ALL
+	TableName string
+	Username  string
+}
+
+func (s *GrantStmt) statementNode() {}
+
+// RevokeStmt represents REVOKE statement (basic version).
+// REVOKE privilege ON table FROM user
+type RevokeStmt struct {
+	Privilege string
+	TableName string
+	Username  string
+}
+
+func (s *RevokeStmt) statementNode() {}

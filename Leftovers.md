@@ -1,6 +1,7 @@
 # VeridicalDB: Remaining Features Implementation Plan
 
 **Created:** December 13, 2025  
+**Updated:** December 15, 2025
 **Purpose:** Track and complete all remaining SQL features in priority order
 
 ---
@@ -139,39 +140,25 @@ Production readiness and tooling compatibility.
 - **Test:** `TestInformationSchema` in `pkg/observability/system_catalog_test.go`.
 
 ### 3.2 Prepared Statements
-
-### 3.2 Prepared Statements
-- **Status:** Not implemented
-- **What's Needed:**
-  - Parser: Handle `$1`, `$2` or `?` placeholders
-  - Session: Store prepared statement with name
-  - Executor: Bind parameters at execution time
-- **Syntax:**
-  ```sql
-  PREPARE get_user AS SELECT * FROM users WHERE id = $1;
-  EXECUTE get_user(42);
-  DEALLOCATE get_user;
-  ```
-- **Files to Modify:**
-  - `pkg/sql/lexer.go` - Add placeholder tokens
-  - `pkg/sql/ast.go` - Add `PrepareStmt`, `ExecuteStmt`, `DeallocateStmt`
-  - `pkg/sql/parser.go` - Parse PREPARE/EXECUTE
-  - `pkg/sql/session.go` - Store prepared statements
-  - `pkg/sql/executor.go` - Parameter binding
-- **Difficulty:** Medium
-- **Estimated Time:** 6-8 hours
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Parser: Handles `$1`, `$2` placeholders and parses `PREPARE`/`EXECUTE`/`DEALLOCATE`.
+  - Session: `Session` stores prepared statements by name and parameters.
+  - Executor: Parameters are bound at execution time and used by the planner/executor.
+- **Files Modified:**
+  - `pkg/sql/parser.go`, `pkg/sql/session.go`, `pkg/sql/executor.go`, `pkg/sql/prepared_stmt_test.go`
+- **Tests:** `TestPreparedStatements` and `TestPreparedInsert` in `pkg/sql/prepared_stmt_test.go`.
+- **Completed Date:** Dec 15, 2025
 
 ### 3.3 Crash Recovery (WAL Replay)
-- **Status:** WAL exists, recovery not implemented
-- **What's Needed:**
-  - On startup, scan WAL for uncommitted transactions
-  - Replay committed transactions not reflected in data files
-  - Handle incomplete transactions (rollback)
-- **Files to Modify:**
-  - `pkg/wal/recovery.go` - Already exists, enhance
-  - `pkg/catalog/table_manager.go` - Call recovery on startup
-- **Difficulty:** Hard
-- **Estimated Time:** 8-12 hours
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Page-level deterministic replay via `insertTupleAt` in `pkg/storage/heap_page.go`.
+  - Storage replay methods: `ReplayInsert`, `ReplayDelete`, `ReplayUpdate` in `pkg/storage/storage.go`.
+  - `TableManager.StartRecovery()` wires `wal.Recovery` with Redo/Undo handlers to apply/rollback records on startup.
+  - MVCC layer writes WAL records via `TxnLogger` to capture old/new row images for redo/undo.
+- **Tests:** `TestCrashRecoveryIntegration` in `pkg/catalog/recovery_test.go`.
+- **Completed Date:** Dec 15, 2025
 
 ### 3.4 Checkpointing ✅ COMPLETED
 - **Status:** ✅ Fully implemented
@@ -184,40 +171,46 @@ Production readiness and tooling compatibility.
 - **Test:** `TestCheckpointIntegration` in `pkg/wal/checkpoint_integration_test.go`.
 
 ### 3.5 PostgreSQL Wire Protocol
-- **Status:** Not implemented (basic TCP framework exists)
-- **What's Needed:**
-  - Implement PostgreSQL frontend/backend protocol
-  - Message types: Query, Parse, Bind, Execute, Sync, etc.
-  - Authentication handshake
-  - Row description and data row messages
-- **Reference:** https://www.postgresql.org/docs/current/protocol.html
-- **Files to Modify:**
-  - `pkg/net/protocol.go` - New file for PG protocol
-  - `pkg/net/server.go` - Use PG protocol handler
-- **Difficulty:** Hard
-- **Estimated Time:** 16-24 hours
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Implemented `pkg/pgwire` with `protocol.go` and `server.go` for the PostgreSQL 3.0 wire protocol.
+  - Startup/auth handshake implemented (SSL rejection, AuthenticationOK), ParameterStatus and BackendKeyData sent on startup.
+  - Simple Query protocol (`Q`) executed via the existing SQL executor; RowDescription/DataRow/CommandComplete messages implemented.
+  - Extended Query protocol implemented with `Parse`/`Bind`/`Describe`/`Execute`/`Sync`/`Close` message handling (basic features and tests).
+  - Integrated into `cmd/server/main.go` to run as a pgwire server in non-interactive mode.
+- **Tests:** `pkg/pgwire/pgwire_test.go` (startup, SSL request handling, simple query execution, message encoding/decoding).
+- **Completed Date:** Dec 15, 2025
 
 ### 3.6 User Authentication
-- **Status:** Not implemented
-- **What's Needed:**
-  - User table in system catalog
-  - Password hashing (bcrypt or similar)
-  - Session authentication check
-  - GRANT/REVOKE for privileges (future)
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - User catalog in `pkg/auth/auth.go` with `User` struct and `UserCatalog` management.
+  - Password hashing with SHA256 and random salt.
+  - Session authentication via `Session.Authenticate()` method.
+  - GRANT/REVOKE privilege management for per-table access control.
+  - Superuser role with automatic all-privileges access.
+  - Default admin user created on first initialization.
+  - JSON persistence for user data.
 - **Syntax:**
   ```sql
   CREATE USER alice WITH PASSWORD 'secret';
-  DROP USER alice;
+  CREATE USER admin WITH PASSWORD 'pass' SUPERUSER;
+  DROP USER [IF EXISTS] alice;
   ALTER USER alice WITH PASSWORD 'newsecret';
+  ALTER USER alice WITH SUPERUSER;
+  ALTER USER alice WITH NOSUPERUSER;
+  GRANT SELECT ON table TO alice;
+  GRANT ALL ON table TO alice;
+  REVOKE INSERT ON table FROM alice;
   ```
-- **Files to Modify:**
-  - `pkg/sql/lexer.go` - Add USER, PASSWORD, GRANT, REVOKE tokens
-  - `pkg/sql/ast.go` - Add user management statements
-  - `pkg/sql/parser.go` - Parse user statements
-  - `pkg/catalog/` - User storage
-  - `pkg/sql/session.go` - Authentication
-- **Difficulty:** Medium
-- **Estimated Time:** 6-8 hours
+- **Files Modified:**
+  - `pkg/sql/lexer.go` - Added USER, PASSWORD, GRANT, REVOKE, SUPERUSER tokens.
+  - `pkg/sql/ast.go` - Added CreateUserStmt, DropUserStmt, AlterUserStmt, GrantStmt, RevokeStmt.
+  - `pkg/sql/parser.go` - Parse user management statements.
+  - `pkg/auth/auth.go` - User storage, hashing, authentication, privileges.
+  - `pkg/sql/session.go` - Authentication integration, handler methods.
+- **Tests:** `TestUserCatalog_*` in `pkg/auth/auth_test.go`.
+- **Completed Date:** Dec 16, 2025
 
 ---
 
@@ -312,11 +305,11 @@ Advanced features for future enhancement.
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
 | Information Schema | ✅ Complete | Dec 2025 |
-| Prepared Statements | ⬜ Not Started | |
-| Crash Recovery | ⬜ Not Started | |
+| Prepared Statements | ✅ Complete | Dec 15, 2025 |
+| Crash Recovery | ✅ Complete | Dec 15, 2025 |
 | Checkpointing | ✅ Complete | Dec 2025 |
-| PostgreSQL Wire Protocol | ⬜ Not Started | |
-| User Authentication | ⬜ Not Started | |
+| PostgreSQL Wire Protocol | ✅ Complete | Dec 15, 2025 |
+| User Authentication | ✅ Complete | Dec 16, 2025 |
 
 ### Low Priority
 | Feature | Status | Completed Date |
@@ -347,12 +340,13 @@ Advanced features for future enhancement.
    - [x] 2.1 FOREIGN KEY ✅
 
 3. **Phase 3: Medium Priority Features**
-   - [x] 3.1 Information Schema ✅
-   - [x] 3.4 Checkpointing ✅
-   - [ ] 3.2 Prepared Statements (~6-8 hours)
-   - [ ] 3.6 User Authentication (~6-8 hours)
-   - [ ] 3.3 Crash Recovery (~8-12 hours)
-   - [ ] 3.5 PostgreSQL Wire Protocol (~16-24 hours)
+  - [x] 3.1 Information Schema ✅
+  - [x] 3.4 Checkpointing ✅
+  - [x] 3.2 Prepared Statements ✅ (Dec 15, 2025)
+  - [x] 3.6 User Authentication ✅ (Dec 16, 2025)
+  - [x] 3.3 Crash Recovery ✅ (Dec 15, 2025)
+  - [x] 3.5 PostgreSQL Wire Protocol ✅ (Dec 15, 2025)
+  - [x] 3.5 PostgreSQL Wire Protocol ✅ (Dec 15, 2025)
 
 4. **Phase 4: Low Priority Features**
    - (As time and interest permits)
