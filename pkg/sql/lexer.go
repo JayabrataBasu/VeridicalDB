@@ -316,6 +316,14 @@ const (
 	TOKEN_WEBSEARCH       // websearch_to_tsquery
 	TOKEN_TS_RANK         // ts_rank() function
 	TOKEN_TS_HEADLINE     // ts_headline() function
+
+	// Table Partitioning
+	TOKEN_LIST       // LIST partitioning
+	TOKEN_HASH       // HASH partitioning
+	TOKEN_MAXVALUE   // MAXVALUE for range partitions
+	TOKEN_LESS       // LESS for LESS THAN
+	TOKEN_THAN       // THAN for LESS THAN
+	TOKEN_PARTITIONS // PARTITIONS keyword
 )
 
 var keywords = map[string]TokenType{
@@ -521,6 +529,13 @@ var keywords = map[string]TokenType{
 	"TS_RANK":              TOKEN_TS_RANK,
 	"TS_HEADLINE":          TOKEN_TS_HEADLINE,
 	"MATCH":                TOKEN_MATCH,
+	// Table Partitioning
+	"LIST":       TOKEN_LIST,
+	"HASH":       TOKEN_HASH,
+	"MAXVALUE":   TOKEN_MAXVALUE,
+	"LESS":       TOKEN_LESS,
+	"THAN":       TOKEN_THAN,
+	"PARTITIONS": TOKEN_PARTITIONS,
 }
 
 // Token represents a lexical token.

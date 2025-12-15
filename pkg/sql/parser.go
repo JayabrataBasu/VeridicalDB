@@ -2139,6 +2139,15 @@ func (p *Parser) parseCreate() (Statement, error) {
 		}
 	}
 
+	// Optional PARTITION BY clause
+	if p.curTokenIs(TOKEN_PARTITION) {
+		partSpec, err := p.parsePartitionBy()
+		if err != nil {
+			return nil, err
+		}
+		stmt.PartitionSpec = partSpec
+	}
+
 	return stmt, nil
 }
 
@@ -4821,4 +4830,200 @@ func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
 	}
 
 	return stmt, nil
+}
+
+// parsePartitionBy parses PARTITION BY clause.
+// Syntax:
+//
+//	PARTITION BY RANGE (column) (partition_defs)
+//	PARTITION BY LIST (column) (partition_defs)
+//	PARTITION BY HASH (column) PARTITIONS n
+func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
+	if err := p.expect(TOKEN_PARTITION); err != nil {
+		return nil, err
+	}
+	if err := p.expect(TOKEN_BY); err != nil {
+		return nil, fmt.Errorf("expected BY after PARTITION")
+	}
+
+	spec := &PartitionSpec{}
+
+	// Parse partition type: RANGE, LIST, or HASH
+	switch {
+	case p.curTokenIs(TOKEN_RANGE):
+		spec.Type = PartitionRange
+		p.nextToken()
+	case p.curTokenIs(TOKEN_LIST):
+		spec.Type = PartitionList
+		p.nextToken()
+	case p.curTokenIs(TOKEN_HASH):
+		spec.Type = PartitionHash
+		p.nextToken()
+	default:
+		return nil, fmt.Errorf("expected RANGE, LIST, or HASH after PARTITION BY, got %v", p.cur.Literal)
+	}
+
+	// Parse partition columns
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after partition type")
+	}
+
+	for {
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected column name in partition key")
+		}
+		col, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		spec.Columns = append(spec.Columns, col)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after partition columns")
+	}
+
+	// For HASH partitioning, parse PARTITIONS n
+	if spec.Type == PartitionHash {
+		if p.curTokenIs(TOKEN_PARTITIONS) {
+			p.nextToken()
+			if !p.curTokenIs(TOKEN_INT) {
+				return nil, fmt.Errorf("expected number after PARTITIONS")
+			}
+			n, err := strconv.Atoi(p.cur.Literal)
+			if err != nil {
+				return nil, fmt.Errorf("invalid partition count: %v", p.cur.Literal)
+			}
+			spec.NumBuckets = n
+			p.nextToken()
+
+			// Auto-generate partition names for HASH
+			for i := 0; i < n; i++ {
+				spec.Partitions = append(spec.Partitions, PartitionDef{
+					Name: fmt.Sprintf("p%d", i),
+				})
+			}
+		} else {
+			return nil, fmt.Errorf("HASH partitioning requires PARTITIONS clause")
+		}
+		return spec, nil
+	}
+
+	// For RANGE and LIST, parse partition definitions
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' before partition definitions")
+	}
+
+	for {
+		partDef, err := p.parsePartitionDef(spec.Type)
+		if err != nil {
+			return nil, err
+		}
+		spec.Partitions = append(spec.Partitions, partDef)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after partition definitions")
+	}
+
+	return spec, nil
+}
+
+// parsePartitionDef parses a single partition definition.
+// RANGE: PARTITION name VALUES LESS THAN (value) or PARTITION name VALUES LESS THAN MAXVALUE
+// LIST:  PARTITION name VALUES IN (value1, value2, ...)
+func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error) {
+	def := PartitionDef{}
+
+	if err := p.expect(TOKEN_PARTITION); err != nil {
+		return def, fmt.Errorf("expected PARTITION keyword")
+	}
+
+	// Partition name
+	if !p.isIdentifierOrContextualKeyword() {
+		return def, fmt.Errorf("expected partition name")
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return def, err
+	}
+	def.Name = name
+
+	if err := p.expect(TOKEN_VALUES); err != nil {
+		return def, fmt.Errorf("expected VALUES after partition name")
+	}
+
+	switch partType {
+	case PartitionRange:
+		// VALUES LESS THAN (value) or VALUES LESS THAN MAXVALUE
+		if err := p.expect(TOKEN_LESS); err != nil {
+			return def, fmt.Errorf("expected LESS after VALUES for RANGE partition")
+		}
+		if err := p.expect(TOKEN_THAN); err != nil {
+			return def, fmt.Errorf("expected THAN after LESS")
+		}
+
+		if p.curTokenIs(TOKEN_MAXVALUE) {
+			def.Bound.IsMaxValue = true
+			p.nextToken()
+		} else {
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return def, fmt.Errorf("expected '(' or MAXVALUE after LESS THAN")
+			}
+			expr, err := p.parseExpression()
+			if err != nil {
+				return def, fmt.Errorf("error parsing partition bound: %v", err)
+			}
+			def.Bound.LessThan = expr
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return def, fmt.Errorf("expected ')' after partition bound value")
+			}
+		}
+
+	case PartitionList:
+		// VALUES IN (value1, value2, ...)
+		if !p.curTokenIs(TOKEN_IN) {
+			return def, fmt.Errorf("expected IN after VALUES for LIST partition")
+		}
+		p.nextToken() // consume IN
+
+		if err := p.expect(TOKEN_LPAREN); err != nil {
+			return def, fmt.Errorf("expected '(' after IN")
+		}
+
+		for {
+			expr, err := p.parseExpression()
+			if err != nil {
+				return def, fmt.Errorf("error parsing list value: %v", err)
+			}
+			def.Bound.Values = append(def.Bound.Values, expr)
+
+			if p.curTokenIs(TOKEN_COMMA) {
+				p.nextToken()
+			} else {
+				break
+			}
+		}
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return def, fmt.Errorf("expected ')' after list values")
+		}
+
+	default:
+		return def, fmt.Errorf("unexpected partition type in parsePartitionDef")
+	}
+
+	return def, nil
 }

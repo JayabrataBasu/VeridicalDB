@@ -11,12 +11,13 @@ import (
 
 // TableMeta holds metadata for a table.
 type TableMeta struct {
-	ID          int          `json:"id"`
-	Name        string       `json:"name"`
-	StorageType string       `json:"storage_type"` // "row" or "column" (future)
-	Schema      *Schema      `json:"-"`
-	Columns     []Column     `json:"columns"`
-	ForeignKeys []ForeignKey `json:"foreign_keys"`
+	ID            int            `json:"id"`
+	Name          string         `json:"name"`
+	StorageType   string         `json:"storage_type"` // "row" or "column" (future)
+	Schema        *Schema        `json:"-"`
+	Columns       []Column       `json:"columns"`
+	ForeignKeys   []ForeignKey   `json:"foreign_keys"`
+	PartitionSpec *PartitionSpec `json:"partition_spec,omitempty"` // Optional partitioning
 }
 
 // Catalog manages table metadata, persisted to a JSON file.

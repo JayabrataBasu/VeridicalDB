@@ -5805,3 +5805,156 @@ func TestFTSExecution(t *testing.T) {
 		})
 	}
 }
+
+// TestPartitionLexer tests lexer recognition of partition-related tokens.
+func TestPartitionLexer(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		tokens []TokenType
+	}{
+		{
+			name:   "PARTITION BY RANGE",
+			input:  "PARTITION BY RANGE",
+			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_RANGE},
+		},
+		{
+			name:   "PARTITION BY LIST",
+			input:  "PARTITION BY LIST",
+			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_LIST},
+		},
+		{
+			name:   "PARTITION BY HASH",
+			input:  "PARTITION BY HASH",
+			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_HASH},
+		},
+		{
+			name:   "VALUES LESS THAN",
+			input:  "VALUES LESS THAN",
+			tokens: []TokenType{TOKEN_VALUES, TOKEN_LESS, TOKEN_THAN},
+		},
+		{
+			name:   "MAXVALUE",
+			input:  "MAXVALUE",
+			tokens: []TokenType{TOKEN_MAXVALUE},
+		},
+		{
+			name:   "PARTITIONS",
+			input:  "PARTITIONS 4",
+			tokens: []TokenType{TOKEN_PARTITIONS, TOKEN_INT},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lexer := NewLexer(tt.input)
+			for i, expected := range tt.tokens {
+				tok := lexer.NextToken()
+				if tok.Type != expected {
+					t.Errorf("token %d: got %v, want %v", i, tok.Type, expected)
+				}
+			}
+		})
+	}
+}
+
+// TestPartitionParser tests parsing of CREATE TABLE with PARTITION BY.
+func TestPartitionParser(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectType  PartitionType
+		expectCols  []string
+		expectParts int
+	}{
+		{
+			name:        "RANGE partition",
+			input:       `CREATE TABLE sales (id INT, sale_year INT) PARTITION BY RANGE (sale_year) (PARTITION p2020 VALUES LESS THAN (2021), PARTITION p2021 VALUES LESS THAN (2022), PARTITION p_future VALUES LESS THAN MAXVALUE)`,
+			expectType:  PartitionRange,
+			expectCols:  []string{"sale_year"},
+			expectParts: 3,
+		},
+		{
+			name:        "LIST partition",
+			input:       `CREATE TABLE orders (id INT, region TEXT) PARTITION BY LIST (region) (PARTITION p_us VALUES IN ('US', 'USA'), PARTITION p_eu VALUES IN ('UK', 'DE', 'FR'))`,
+			expectType:  PartitionList,
+			expectCols:  []string{"region"},
+			expectParts: 2,
+		},
+		{
+			name:        "HASH partition",
+			input:       `CREATE TABLE users (id INT, name TEXT) PARTITION BY HASH (id) PARTITIONS 4`,
+			expectType:  PartitionHash,
+			expectCols:  []string{"id"},
+			expectParts: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+
+			createStmt, ok := stmt.(*CreateTableStmt)
+			if !ok {
+				t.Fatalf("Expected CreateTableStmt, got %T", stmt)
+			}
+
+			if createStmt.PartitionSpec == nil {
+				t.Fatal("PartitionSpec is nil")
+			}
+
+			if createStmt.PartitionSpec.Type != tt.expectType {
+				t.Errorf("Partition type = %v, want %v", createStmt.PartitionSpec.Type, tt.expectType)
+			}
+
+			if len(createStmt.PartitionSpec.Columns) != len(tt.expectCols) {
+				t.Errorf("Partition columns = %v, want %v", createStmt.PartitionSpec.Columns, tt.expectCols)
+			} else {
+				for i, col := range createStmt.PartitionSpec.Columns {
+					if col != tt.expectCols[i] {
+						t.Errorf("Partition column[%d] = %q, want %q", i, col, tt.expectCols[i])
+					}
+				}
+			}
+
+			if len(createStmt.PartitionSpec.Partitions) != tt.expectParts {
+				t.Errorf("Partition count = %d, want %d", len(createStmt.PartitionSpec.Partitions), tt.expectParts)
+			}
+		})
+	}
+}
+
+// TestPartitionParserErrors tests error cases in partition parsing.
+func TestPartitionParserErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "Missing partition type",
+			input: `CREATE TABLE t (id INT) PARTITION BY`,
+		},
+		{
+			name:  "HASH without PARTITIONS",
+			input: `CREATE TABLE t (id INT) PARTITION BY HASH (id)`,
+		},
+		{
+			name:  "RANGE missing VALUES",
+			input: `CREATE TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION p1)`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			_, err := parser.Parse()
+			if err == nil {
+				t.Error("Expected parse error, got nil")
+			}
+		})
+	}
+}

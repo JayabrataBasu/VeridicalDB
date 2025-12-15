@@ -37,12 +37,46 @@ type ForeignKeyDef struct {
 	RefColumns     []string // Referenced columns in the other table
 }
 
+// PartitionType represents the type of partitioning.
+type PartitionType int
+
+const (
+	PartitionNone PartitionType = iota
+	PartitionRange
+	PartitionList
+	PartitionHash
+)
+
+// PartitionBoundDef represents partition boundary definition.
+type PartitionBoundDef struct {
+	// For RANGE: less than value
+	LessThan   Expression
+	IsMaxValue bool
+	// For LIST: list of values
+	Values []Expression
+}
+
+// PartitionDef represents a partition definition.
+type PartitionDef struct {
+	Name  string
+	Bound PartitionBoundDef
+}
+
+// PartitionSpec represents the partition specification in CREATE TABLE.
+type PartitionSpec struct {
+	Type       PartitionType
+	Columns    []string
+	Partitions []PartitionDef
+	NumBuckets int // For HASH partitioning
+}
+
 // CreateTableStmt represents CREATE TABLE statement.
 type CreateTableStmt struct {
-	TableName   string
-	Columns     []ColumnDef
-	ForeignKeys []ForeignKeyDef
-	StorageType string // "ROW" (default) or "COLUMN"
+	TableName     string
+	Columns       []ColumnDef
+	ForeignKeys   []ForeignKeyDef
+	StorageType   string         // "ROW" (default) or "COLUMN"
+	PartitionSpec *PartitionSpec // Optional partition specification
 }
 
 func (s *CreateTableStmt) statementNode() {}
