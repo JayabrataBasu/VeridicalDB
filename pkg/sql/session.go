@@ -13,13 +13,14 @@ import (
 // Session represents a database session with transaction state.
 // Each REPL connection has its own session.
 type Session struct {
-	mtm      *catalog.MVCCTableManager
-	executor *MVCCExecutor
-	txnMgr   *txn.Manager
-	lockMgr  *lock.Manager            // Optional, can be nil for single-threaded mode
-	idxMgr   *btree.IndexManager      // Optional, can be nil if indexes not used
-	userCat  *auth.UserCatalog        // Optional, can be nil if auth disabled
-	dbMgr    *catalog.DatabaseManager // Optional, for multi-database support
+	mtm        *catalog.MVCCTableManager
+	executor   *MVCCExecutor
+	txnMgr     *txn.Manager
+	lockMgr    *lock.Manager            // Optional, can be nil for single-threaded mode
+	idxMgr     *btree.IndexManager      // Optional, can be nil if indexes not used
+	userCat    *auth.UserCatalog        // Optional, can be nil if auth disabled
+	dbMgr      *catalog.DatabaseManager // Optional, for multi-database support
+	triggerCat *catalog.TriggerCatalog  // Optional, for trigger support
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -87,6 +88,13 @@ func (s *Session) SetDatabaseManager(dbMgr *catalog.DatabaseManager) {
 	if s.currentDatabase == "" {
 		s.currentDatabase = "default"
 	}
+}
+
+// SetTriggerCatalog sets the trigger catalog for trigger support.
+func (s *Session) SetTriggerCatalog(triggerCat *catalog.TriggerCatalog) {
+	s.triggerCat = triggerCat
+	// Also set on executor for DML trigger firing
+	s.executor.SetTriggerCatalog(triggerCat)
 }
 
 // CurrentDatabase returns the current database for this session.
@@ -188,6 +196,11 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleDropDatabase(typedStmt)
 	case *UseDatabaseStmt:
 		return s.handleUseDatabase(typedStmt)
+	// Trigger management statements
+	case *CreateTriggerStmt:
+		return s.handleCreateTrigger(typedStmt)
+	case *DropTriggerStmt:
+		return s.handleDropTrigger(typedStmt)
 	}
 
 	// For DML statements, we need a transaction
@@ -732,4 +745,62 @@ func (s *Session) handleUseDatabase(stmt *UseDatabaseStmt) (*Result, error) {
 
 	s.currentDatabase = stmt.Name
 	return &Result{Message: fmt.Sprintf("Database changed to %s", stmt.Name)}, nil
+}
+
+// handleCreateTrigger handles CREATE TRIGGER statement.
+func (s *Session) handleCreateTrigger(stmt *CreateTriggerStmt) (*Result, error) {
+	if s.triggerCat == nil {
+		return nil, fmt.Errorf("trigger support not enabled")
+	}
+
+	// Verify the table exists
+	if _, err := s.mtm.Catalog().GetTable(stmt.TableName); err != nil {
+		return nil, fmt.Errorf("table %q does not exist", stmt.TableName)
+	}
+
+	// Check if trigger already exists
+	if s.triggerCat.TriggerExists(stmt.Name, stmt.TableName) {
+		if stmt.IfNotExists {
+			return &Result{Message: fmt.Sprintf("trigger %q already exists (ignored)", stmt.Name)}, nil
+		}
+		return nil, fmt.Errorf("trigger %q already exists on table %q", stmt.Name, stmt.TableName)
+	}
+
+	// Convert AST timing/event to catalog timing/event
+	trigger := &catalog.TriggerMeta{
+		Name:         stmt.Name,
+		TableName:    stmt.TableName,
+		Timing:       catalog.TriggerTiming(stmt.Timing),
+		Event:        catalog.TriggerEvent(stmt.Event),
+		ForEachRow:   stmt.ForEachRow,
+		FunctionName: stmt.FunctionName,
+		Enabled:      true,
+	}
+
+	if err := s.triggerCat.CreateTrigger(trigger); err != nil {
+		return nil, fmt.Errorf("create trigger: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CREATE TRIGGER %s", stmt.Name)}, nil
+}
+
+// handleDropTrigger handles DROP TRIGGER statement.
+func (s *Session) handleDropTrigger(stmt *DropTriggerStmt) (*Result, error) {
+	if s.triggerCat == nil {
+		return nil, fmt.Errorf("trigger support not enabled")
+	}
+
+	// Check if trigger exists
+	if !s.triggerCat.TriggerExists(stmt.Name, stmt.TableName) {
+		if stmt.IfExists {
+			return &Result{Message: fmt.Sprintf("trigger %q does not exist (ignored)", stmt.Name)}, nil
+		}
+		return nil, fmt.Errorf("trigger %q does not exist on table %q", stmt.Name, stmt.TableName)
+	}
+
+	if err := s.triggerCat.DropTrigger(stmt.Name, stmt.TableName); err != nil {
+		return nil, fmt.Errorf("drop trigger: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("DROP TRIGGER %s", stmt.Name)}, nil
 }

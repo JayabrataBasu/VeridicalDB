@@ -585,3 +585,56 @@ func (s *UseDatabaseStmt) statementNode() {}
 type ShowDatabasesStmt struct{}
 
 func (s *ShowDatabasesStmt) statementNode() {}
+
+// TriggerTiming specifies when a trigger fires.
+type TriggerTiming int
+
+const (
+	TriggerBefore TriggerTiming = iota
+	TriggerAfter
+	TriggerInsteadOf
+)
+
+// TriggerEvent specifies the event that fires a trigger.
+type TriggerEvent int
+
+const (
+	TriggerInsert TriggerEvent = iota
+	TriggerUpdate
+	TriggerDelete
+)
+
+// CreateTriggerStmt represents CREATE TRIGGER statement.
+// CREATE TRIGGER name {BEFORE | AFTER | INSTEAD OF} {INSERT | UPDATE | DELETE}
+// ON table [FOR EACH {ROW | STATEMENT}]
+// EXECUTE FUNCTION function_name(args)
+type CreateTriggerStmt struct {
+	Name         string
+	TableName    string
+	Timing       TriggerTiming
+	Event        TriggerEvent
+	ForEachRow   bool   // true = FOR EACH ROW, false = FOR EACH STATEMENT
+	FunctionName string // The trigger function to execute
+	FunctionArgs []Expression
+	IfNotExists  bool
+}
+
+func (s *CreateTriggerStmt) statementNode() {}
+
+// DropTriggerStmt represents DROP TRIGGER statement.
+// DROP TRIGGER [IF EXISTS] name ON table
+type DropTriggerStmt struct {
+	Name      string
+	TableName string
+	IfExists  bool
+}
+
+func (s *DropTriggerStmt) statementNode() {}
+
+// ShowTriggersStmt represents SHOW TRIGGERS statement.
+// SHOW TRIGGERS [ON table]
+type ShowTriggersStmt struct {
+	TableName string // empty for all triggers
+}
+
+func (s *ShowTriggersStmt) statementNode() {}

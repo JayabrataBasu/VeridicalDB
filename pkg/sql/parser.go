@@ -2027,6 +2027,14 @@ func (p *Parser) parseCreate() (Statement, error) {
 		return p.parseCreateDatabase()
 	}
 
+	// CREATE TRIGGER
+	if p.curTokenIs(TOKEN_TRIGGER) {
+		if isUnique || orReplace {
+			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE TRIGGER")
+		}
+		return p.parseCreateTrigger()
+	}
+
 	if isUnique {
 		return nil, fmt.Errorf("UNIQUE keyword only valid for CREATE INDEX")
 	}
@@ -2498,6 +2506,10 @@ func (p *Parser) parseDrop() (Statement, error) {
 
 	if p.curTokenIs(TOKEN_DATABASE) {
 		return p.parseDropDatabase()
+	}
+
+	if p.curTokenIs(TOKEN_TRIGGER) {
+		return p.parseDropTrigger()
 	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3391,6 +3403,24 @@ func (p *Parser) parseShow() (*ShowStmt, error) {
 		return &ShowStmt{ShowType: "DATABASES"}, nil
 	}
 
+	// SHOW TRIGGERS [ON table]
+	if p.curTokenIs(TOKEN_TRIGGER) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "TRIGGERS") {
+		p.nextToken() // consume TRIGGER(S)
+		tableName := ""
+		if p.curTokenIs(TOKEN_ON) {
+			p.nextToken() // consume ON
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected table name after ON")
+			}
+			var err error
+			tableName, err = p.parseIdentifier()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return &ShowStmt{ShowType: "TRIGGERS", TableName: tableName}, nil
+	}
+
 	if p.curTokenIs(TOKEN_CREATE) {
 		p.nextToken() // consume CREATE
 		if err := p.expect(TOKEN_TABLE); err != nil {
@@ -4062,6 +4092,186 @@ func (p *Parser) parseUseDatabase() (*UseDatabaseStmt, error) {
 		return nil, err
 	}
 	stmt.Name = name
+
+	return stmt, nil
+}
+
+// parseCreateTrigger parses: CREATE TRIGGER name {BEFORE|AFTER|INSTEAD OF} {INSERT|UPDATE|DELETE}
+// ON table [FOR EACH {ROW|STATEMENT}] EXECUTE FUNCTION func_name(args)
+func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
+	p.nextToken() // consume TRIGGER
+
+	stmt := &CreateTriggerStmt{}
+
+	// Optional IF NOT EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if !p.curTokenIs(TOKEN_NOT) {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF NOT")
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Trigger name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected trigger name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// Timing: BEFORE, AFTER, or INSTEAD OF
+	switch {
+	case p.curTokenIs(TOKEN_BEFORE):
+		stmt.Timing = TriggerBefore
+		p.nextToken()
+	case p.curTokenIs(TOKEN_AFTER):
+		stmt.Timing = TriggerAfter
+		p.nextToken()
+	case p.curTokenIs(TOKEN_INSTEAD):
+		p.nextToken() // consume INSTEAD
+		if !p.curTokenIs(TOKEN_OF) {
+			return nil, fmt.Errorf("expected OF after INSTEAD")
+		}
+		p.nextToken() // consume OF
+		stmt.Timing = TriggerInsteadOf
+	default:
+		return nil, fmt.Errorf("expected BEFORE, AFTER, or INSTEAD OF, got %v", p.cur.Type)
+	}
+
+	// Event: INSERT, UPDATE, or DELETE
+	switch {
+	case p.curTokenIs(TOKEN_INSERT):
+		stmt.Event = TriggerInsert
+		p.nextToken()
+	case p.curTokenIs(TOKEN_UPDATE):
+		stmt.Event = TriggerUpdate
+		p.nextToken()
+	case p.curTokenIs(TOKEN_DELETE):
+		stmt.Event = TriggerDelete
+		p.nextToken()
+	default:
+		return nil, fmt.Errorf("expected INSERT, UPDATE, or DELETE, got %v", p.cur.Type)
+	}
+
+	// ON table_name
+	if !p.curTokenIs(TOKEN_ON) {
+		return nil, fmt.Errorf("expected ON after event, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume ON
+
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected table name after ON")
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
+
+	// Optional: FOR EACH {ROW|STATEMENT}
+	// Default to FOR EACH STATEMENT if not specified
+	stmt.ForEachRow = false
+	if p.curTokenIs(TOKEN_FOR) {
+		p.nextToken() // consume FOR
+		if !p.curTokenIs(TOKEN_EACH) {
+			return nil, fmt.Errorf("expected EACH after FOR")
+		}
+		p.nextToken() // consume EACH
+		if p.curTokenIs(TOKEN_ROW) {
+			stmt.ForEachRow = true
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_STATEMENT) {
+			stmt.ForEachRow = false
+			p.nextToken()
+		} else {
+			return nil, fmt.Errorf("expected ROW or STATEMENT after FOR EACH")
+		}
+	}
+
+	// EXECUTE FUNCTION func_name(args) or EXECUTE PROCEDURE func_name(args)
+	if !p.curTokenIs(TOKEN_EXECUTE) {
+		return nil, fmt.Errorf("expected EXECUTE, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume EXECUTE
+
+	// Accept either FUNCTION or PROCEDURE (they're synonyms in PostgreSQL)
+	if p.curTokenIs(TOKEN_IDENT) && (strings.ToUpper(p.cur.Literal) == "FUNCTION" || strings.ToUpper(p.cur.Literal) == "PROCEDURE") {
+		p.nextToken()
+	} else {
+		return nil, fmt.Errorf("expected FUNCTION or PROCEDURE after EXECUTE")
+	}
+
+	// Function name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected function name")
+	}
+	funcName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.FunctionName = funcName
+
+	// Optional parentheses for function args ()
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume (
+		// For now, skip any arguments until we reach )
+		for !p.curTokenIs(TOKEN_RPAREN) && !p.curTokenIs(TOKEN_EOF) {
+			p.nextToken()
+		}
+		if p.curTokenIs(TOKEN_RPAREN) {
+			p.nextToken() // consume )
+		}
+	}
+
+	return stmt, nil
+}
+
+// parseDropTrigger parses: DROP TRIGGER [IF EXISTS] name ON table_name
+func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
+	p.nextToken() // consume TRIGGER
+
+	stmt := &DropTriggerStmt{}
+
+	// Optional IF EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF")
+		}
+		stmt.IfExists = true
+	}
+
+	// Trigger name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected trigger name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// ON table_name
+	if !p.curTokenIs(TOKEN_ON) {
+		return nil, fmt.Errorf("expected ON after trigger name")
+	}
+	p.nextToken() // consume ON
+
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected table name after ON")
+	}
+	tableName, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.TableName = tableName
 
 	return stmt, nil
 }

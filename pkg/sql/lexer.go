@@ -276,6 +276,18 @@ const (
 	TOKEN_DATABASE
 	TOKEN_USE
 	TOKEN_OWNER
+
+	// Triggers
+	TOKEN_TRIGGER
+	TOKEN_BEFORE
+	TOKEN_AFTER
+	TOKEN_INSTEAD
+	TOKEN_OF
+	TOKEN_FOR
+	TOKEN_EACH
+	TOKEN_STATEMENT
+	TOKEN_NEW
+	TOKEN_OLD
 )
 
 var keywords = map[string]TokenType{
@@ -457,6 +469,16 @@ var keywords = map[string]TokenType{
 	"DATABASE":          TOKEN_DATABASE,
 	"USE":               TOKEN_USE,
 	"OWNER":             TOKEN_OWNER,
+	"TRIGGER":           TOKEN_TRIGGER,
+	"BEFORE":            TOKEN_BEFORE,
+	"AFTER":             TOKEN_AFTER,
+	"INSTEAD":           TOKEN_INSTEAD,
+	"OF":                TOKEN_OF,
+	"FOR":               TOKEN_FOR,
+	"EACH":              TOKEN_EACH,
+	"STATEMENT":         TOKEN_STATEMENT,
+	"NEW":               TOKEN_NEW,
+	"OLD":               TOKEN_OLD,
 }
 
 // Token represents a lexical token.

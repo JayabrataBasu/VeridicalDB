@@ -15,8 +15,9 @@ import (
 
 // MVCCExecutor executes SQL statements with MVCC transaction support.
 type MVCCExecutor struct {
-	mtm      *catalog.MVCCTableManager
-	indexMgr *btree.IndexManager
+	mtm        *catalog.MVCCTableManager
+	indexMgr   *btree.IndexManager
+	triggerCat *catalog.TriggerCatalog
 }
 
 // NewMVCCExecutor creates a new MVCC-aware executor.
@@ -27,6 +28,11 @@ func NewMVCCExecutor(mtm *catalog.MVCCTableManager) *MVCCExecutor {
 // SetIndexManager sets the index manager for index maintenance during DML operations.
 func (e *MVCCExecutor) SetIndexManager(mgr *btree.IndexManager) {
 	e.indexMgr = mgr
+}
+
+// SetTriggerCatalog sets the trigger catalog for trigger firing during DML operations.
+func (e *MVCCExecutor) SetTriggerCatalog(cat *catalog.TriggerCatalog) {
+	e.triggerCat = cat
 }
 
 // Execute executes a SQL statement within a transaction context.
@@ -244,6 +250,11 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
+		// Fire BEFORE INSERT triggers
+		if err := e.fireBeforeInsertTriggers(stmt.TableName, values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("row %d: BEFORE INSERT trigger failed: %w", rowIdx+1, err)
+		}
+
 		// Insert with MVCC
 		rid, err := e.mtm.Insert(stmt.TableName, values, tx)
 		if err != nil {
@@ -253,6 +264,11 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		// Update indexes for the new row
 		if err := e.updateIndexesOnInsert(stmt.TableName, rid, values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("row %d: index update failed: %w", rowIdx+1, err)
+		}
+
+		// Fire AFTER INSERT triggers
+		if err := e.fireAfterInsertTriggers(stmt.TableName, values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("row %d: AFTER INSERT trigger failed: %w", rowIdx+1, err)
 		}
 
 		totalInserted++
@@ -466,6 +482,11 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 
 	// Perform updates: mark old tuple deleted, insert new tuple
 	for _, u := range toUpdate {
+		// Fire BEFORE UPDATE triggers
+		if err := e.fireBeforeUpdateTriggers(stmt.TableName, u.oldRow, u.newRow, meta.Schema); err != nil {
+			return nil, fmt.Errorf("BEFORE UPDATE trigger failed: %w", err)
+		}
+
 		// Remove old index entries
 		if err := e.updateIndexesOnDelete(stmt.TableName, u.rid, u.oldRow, meta.Schema); err != nil {
 			return nil, fmt.Errorf("update index remove failed: %w", err)
@@ -485,6 +506,11 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 		// Add new index entries
 		if err := e.updateIndexesOnInsert(stmt.TableName, newRID, u.newRow, meta.Schema); err != nil {
 			return nil, fmt.Errorf("update index insert failed: %w", err)
+		}
+
+		// Fire AFTER UPDATE triggers
+		if err := e.fireAfterUpdateTriggers(stmt.TableName, u.oldRow, u.newRow, meta.Schema); err != nil {
+			return nil, fmt.Errorf("AFTER UPDATE trigger failed: %w", err)
 		}
 	}
 
@@ -539,6 +565,11 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 
 	// Mark tuples as deleted and clean up indexes
 	for _, d := range toDelete {
+		// Fire BEFORE DELETE triggers
+		if err := e.fireBeforeDeleteTriggers(stmt.TableName, d.values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("BEFORE DELETE trigger failed: %w", err)
+		}
+
 		// Remove index entries
 		if err := e.updateIndexesOnDelete(stmt.TableName, d.rid, d.values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("delete index cleanup failed: %w", err)
@@ -546,6 +577,11 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 
 		if err := e.mtm.MarkDeleted(d.rid, tx); err != nil {
 			return nil, fmt.Errorf("delete failed: %w", err)
+		}
+
+		// Fire AFTER DELETE triggers
+		if err := e.fireAfterDeleteTriggers(stmt.TableName, d.values, meta.Schema); err != nil {
+			return nil, fmt.Errorf("AFTER DELETE trigger failed: %w", err)
 		}
 	}
 
@@ -1706,6 +1742,54 @@ func (e *MVCCExecutor) executeShow(stmt *ShowStmt) (*Result, error) {
 			Columns: []string{"Create Table"},
 			Rows:    [][]catalog.Value{{catalog.NewText(ddl)}},
 		}, nil
+
+	case "DATABASES":
+		// List all databases - handled at session level, return placeholder
+		return &Result{
+			Columns: []string{"database_name"},
+			Rows:    [][]catalog.Value{{catalog.NewText("default")}},
+			Message: "SHOW DATABASES should be handled by session with DatabaseManager",
+		}, nil
+
+	case "TRIGGERS":
+		// List triggers (optionally filtered by table)
+		if e.triggerCat == nil {
+			return &Result{
+				Columns: []string{"trigger_name", "table_name", "timing", "event", "function"},
+				Rows:    [][]catalog.Value{},
+				Message: "Trigger support not enabled",
+			}, nil
+		}
+		var triggers []*catalog.TriggerMeta
+		if stmt.TableName != "" {
+			triggers = e.triggerCat.GetTriggersForTable(stmt.TableName)
+		} else {
+			triggers = e.triggerCat.ListAllTriggers()
+		}
+		result := &Result{
+			Columns: []string{"trigger_name", "table_name", "timing", "event", "for_each", "function", "enabled"},
+			Rows:    make([][]catalog.Value, 0, len(triggers)),
+		}
+		for _, t := range triggers {
+			forEach := "STATEMENT"
+			if t.ForEachRow {
+				forEach = "ROW"
+			}
+			enabled := "YES"
+			if !t.Enabled {
+				enabled = "NO"
+			}
+			result.Rows = append(result.Rows, []catalog.Value{
+				catalog.NewText(t.Name),
+				catalog.NewText(t.TableName),
+				catalog.NewText(t.Timing.String()),
+				catalog.NewText(t.Event.String()),
+				catalog.NewText(forEach),
+				catalog.NewText(t.FunctionName),
+				catalog.NewText(enabled),
+			})
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported SHOW type: %s", stmt.ShowType)
@@ -3156,5 +3240,96 @@ func valueToInt64MVCC(v catalog.Value) int64 {
 // EvaluateExpression evaluates an expression with no row context.
 // This is useful for evaluating parameters in EXECUTE statements.
 func (e *MVCCExecutor) EvaluateExpression(expr Expression) (catalog.Value, error) {
-return e.evalExpr(expr, nil, nil)
+	return e.evalExpr(expr, nil, nil)
+}
+
+// TriggerContext holds context information for trigger execution.
+type TriggerContext struct {
+	TableName string
+	OldRow    []catalog.Value // For UPDATE/DELETE triggers
+	NewRow    []catalog.Value // For INSERT/UPDATE triggers
+	Schema    *catalog.Schema
+}
+
+// fireTriggers fires all triggers matching the given timing and event.
+// This is a placeholder implementation that logs trigger execution.
+// A full implementation would execute the trigger function.
+func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTiming, event catalog.TriggerEvent, ctx *TriggerContext) error {
+	if e.triggerCat == nil {
+		return nil // Triggers not enabled
+	}
+
+	triggers := e.triggerCat.GetTriggersForTableEvent(tableName, timing, event)
+	for _, trigger := range triggers {
+		if !trigger.Enabled {
+			continue
+		}
+		// Log trigger execution (in a full implementation, this would call the trigger function)
+		// For now, we just note that triggers are being fired
+		_ = trigger.FunctionName // Would call this function with ctx
+
+		// TODO: Implement actual trigger function execution
+		// This would require:
+		// 1. Looking up the function definition
+		// 2. Binding OLD and NEW row variables
+		// 3. Executing the function body
+		// 4. Handling return values (for BEFORE triggers)
+	}
+	return nil
+}
+
+// fireBeforeInsertTriggers fires BEFORE INSERT triggers.
+func (e *MVCCExecutor) fireBeforeInsertTriggers(tableName string, newRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerBefore, catalog.TriggerInsert, &TriggerContext{
+		TableName: tableName,
+		NewRow:    newRow,
+		Schema:    schema,
+	})
+}
+
+// fireAfterInsertTriggers fires AFTER INSERT triggers.
+func (e *MVCCExecutor) fireAfterInsertTriggers(tableName string, newRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerAfter, catalog.TriggerInsert, &TriggerContext{
+		TableName: tableName,
+		NewRow:    newRow,
+		Schema:    schema,
+	})
+}
+
+// fireBeforeUpdateTriggers fires BEFORE UPDATE triggers.
+func (e *MVCCExecutor) fireBeforeUpdateTriggers(tableName string, oldRow, newRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerBefore, catalog.TriggerUpdate, &TriggerContext{
+		TableName: tableName,
+		OldRow:    oldRow,
+		NewRow:    newRow,
+		Schema:    schema,
+	})
+}
+
+// fireAfterUpdateTriggers fires AFTER UPDATE triggers.
+func (e *MVCCExecutor) fireAfterUpdateTriggers(tableName string, oldRow, newRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerAfter, catalog.TriggerUpdate, &TriggerContext{
+		TableName: tableName,
+		OldRow:    oldRow,
+		NewRow:    newRow,
+		Schema:    schema,
+	})
+}
+
+// fireBeforeDeleteTriggers fires BEFORE DELETE triggers.
+func (e *MVCCExecutor) fireBeforeDeleteTriggers(tableName string, oldRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerBefore, catalog.TriggerDelete, &TriggerContext{
+		TableName: tableName,
+		OldRow:    oldRow,
+		Schema:    schema,
+	})
+}
+
+// fireAfterDeleteTriggers fires AFTER DELETE triggers.
+func (e *MVCCExecutor) fireAfterDeleteTriggers(tableName string, oldRow []catalog.Value, schema *catalog.Schema) error {
+	return e.fireTriggers(tableName, catalog.TriggerAfter, catalog.TriggerDelete, &TriggerContext{
+		TableName: tableName,
+		OldRow:    oldRow,
+		Schema:    schema,
+	})
 }
