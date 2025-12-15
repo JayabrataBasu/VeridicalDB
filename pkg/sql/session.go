@@ -97,6 +97,11 @@ func (s *Session) SetTriggerCatalog(triggerCat *catalog.TriggerCatalog) {
 	s.executor.SetTriggerCatalog(triggerCat)
 }
 
+// Catalog returns the underlying catalog for table metadata.
+func (s *Session) Catalog() *catalog.Catalog {
+	return s.mtm.Catalog()
+}
+
 // CurrentDatabase returns the current database for this session.
 func (s *Session) CurrentDatabase() string {
 	return s.currentDatabase

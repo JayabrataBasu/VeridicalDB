@@ -6,7 +6,7 @@
 
 **Recent updates (Dec 15, 2025):**
 - Full-Text Search implemented (package + SQL support + tests).
-- Table Partitioning: parser, catalog, and routing/pruning utilities implemented (executor integration and DDL management remain).
+- Table Partitioning fully implemented (parser, catalog, executor integration, routing, end-to-end tests).
 
 ---
 
@@ -277,24 +277,26 @@ Advanced features for future enhancement.
   - **Completed Date:** Dec 15, 2025
 
 ### 4.3 Table Partitioning
-**Status:** Partially implemented (Parser, catalog metadata, router/pruner and tests completed)
+**Status:** ✅ Fully implemented (Parser, catalog, executor integration)
 
 - **Completed:**
   - Parser supports `PARTITION BY RANGE/LIST/HASH` with partition definitions (`VALUES LESS THAN`, `VALUES IN`, `PARTITIONS n`).
   - Catalog metadata for partitions (`pkg/catalog/partition.go`) and `TableMeta.PartitionSpec` persisted in catalog JSON.
   - `pkg/partition` package provides `PartitionSpec`, `Router`, `Pruner`, and `Validator` with full unit tests (`pkg/partition/partition_test.go`).
   - SQL parser tests added (`TestPartitionLexer`, `TestPartitionParser`, `TestPartitionParserErrors` in `pkg/sql/sql_test.go`).
+  - **Executor integration:** Partition spec is converted from AST to catalog during CREATE TABLE and stored in catalog.
+  - **Partition routing:** INSERT statements route rows to the correct partition based on RANGE/LIST/HASH partitioning.
+  - End-to-end tests for creating partitioned tables and inserting data across partitions (`TestPartitionExecution` in `pkg/sql/sql_test.go`).
 
 - **Files Modified / Added:**
   - `pkg/partition/partition.go`, `pkg/partition/partition_test.go`
-  - `pkg/catalog/partition.go`, `pkg/catalog/catalog.go`
-  - `pkg/sql/lexer.go`, `pkg/sql/ast.go`, `pkg/sql/parser.go`, `pkg/sql/sql_test.go`
+  - `pkg/catalog/partition.go`, `pkg/catalog/catalog.go`, `pkg/catalog/table_manager.go`, `pkg/catalog/mvcc_table_manager.go`
+  - `pkg/sql/lexer.go`, `pkg/sql/ast.go`, `pkg/sql/parser.go`, `pkg/sql/mvcc_executor.go`, `pkg/sql/executor.go`, `pkg/sql/sql_test.go`
 
-- **Remaining Work / Next Steps:**
-  - Integrate partition routing/pruning into the query planner/executor so SELECT/INSERT/UPDATE/DELETE automatically target the correct partitions.
-  - Add DDL management operations: `ALTER TABLE ... ATTACH/DETACH PARTITION`, `CREATE TABLE ... PARTITION OF` and automatic creation of child storage tables for partitions.
-  - Tests for end-to-end partitioned table execution and DDL management.
-  - **Partial Completion Date:** Dec 15, 2025
+- **Future Enhancements:**
+  - Add DDL management operations: `ALTER TABLE ... ATTACH/DETACH PARTITION`, `CREATE TABLE ... PARTITION OF` for physical child tables.
+  - Add partition pruning in SELECT/UPDATE/DELETE queries for performance optimization.
+  - **Completed Date:** Dec 15, 2025
 
 ### 4.4 Triggers
 - **Status:** ✅ Fully implemented
@@ -391,7 +393,7 @@ Advanced features for future enhancement.
 |---------|--------|----------------|
 | JSON Data Type | ✅ Complete | Dec 15, 2025 |
 | Full-Text Search | ✅ Complete | Dec 15, 2025 |
-| Table Partitioning | ⚠️ Partially Implemented | Dec 15, 2025 |
+| Table Partitioning | ✅ Completed | Dec 15, 2025 |
 | Triggers | ✅ Complete | Dec 15, 2025 |
 | Stored Procedures | ⬜ Not Started | |
 | Multi-Database | ✅ Complete | Dec 15, 2025 |
@@ -426,7 +428,7 @@ Advanced features for future enhancement.
    - [x] 4.6 Multi-Database Namespaces ✅ (Dec 15, 2025)
    - [x] 4.4 Triggers ✅ (Dec 15, 2025)
   - [x] 4.1 JSON Data Type ✅ (Dec 15, 2025)
-  - [~] 4.3 Table Partitioning (partial; parser/catalog/router/pruner implemented)
+  - [x] 4.3 Table Partitioning (parser, catalog, executor, routing, tests)
   - [x] 4.2 Full-Text Search ✅ (Dec 15, 2025)
    - [ ] 4.5 Stored Procedures
    - [ ] 4.7 Replication

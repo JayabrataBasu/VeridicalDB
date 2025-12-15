@@ -53,16 +53,16 @@ func (tm *TableManager) Catalog() *Catalog {
 
 // CreateTable creates a new table with the given schema.
 func (tm *TableManager) CreateTable(name string, cols []Column, foreignKeys []ForeignKey) error {
-	return tm.CreateTableWithStorage(name, cols, foreignKeys, "row")
+	return tm.CreateTableWithStorage(name, cols, foreignKeys, "row", nil)
 }
 
 // CreateTableWithStorage creates a new table with the given schema and storage type.
-func (tm *TableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string) error {
+func (tm *TableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string, partSpec *PartitionSpec) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
 	// Register in catalog
-	_, err := tm.catalog.CreateTable(name, cols, foreignKeys, storageType)
+	_, err := tm.catalog.CreateTableWithPartition(name, cols, foreignKeys, storageType, partSpec)
 	if err != nil {
 		return err
 	}

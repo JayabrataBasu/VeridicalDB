@@ -3036,6 +3036,12 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 		p.nextToken()
 		return &LiteralExpr{Value: catalog.Null(catalog.TypeUnknown)}, nil
 
+	case TOKEN_MAXVALUE:
+		p.nextToken()
+		// MAXVALUE is a special marker - we represent it as a special column reference
+		// that can be detected during partition evaluation
+		return &ColumnRef{Name: "MAXVALUE"}, nil
+
 	case TOKEN_IDENT,
 		// Contextual keywords that can be used as identifiers
 		TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING, TOKEN_EXCLUDED:

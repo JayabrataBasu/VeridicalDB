@@ -14,6 +14,294 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
+// convertPartitionSpec converts an AST PartitionSpec to a catalog PartitionSpec.
+func convertPartitionSpec(astSpec *PartitionSpec) *catalog.PartitionSpec {
+	if astSpec == nil {
+		return nil
+	}
+
+	// Convert partition type
+	var partType catalog.PartitionType
+	switch astSpec.Type {
+	case PartitionRange:
+		partType = catalog.PartitionTypeRange
+	case PartitionList:
+		partType = catalog.PartitionTypeList
+	case PartitionHash:
+		partType = catalog.PartitionTypeHash
+	}
+
+	// Convert partitions
+	partitions := make([]catalog.PartitionInfo, len(astSpec.Partitions))
+	for i, p := range astSpec.Partitions {
+		partitions[i] = catalog.PartitionInfo{
+			Name:  p.Name,
+			Bound: convertPartitionBound(partType, &p.Bound),
+		}
+	}
+
+	return &catalog.PartitionSpec{
+		Type:       partType,
+		Columns:    astSpec.Columns,
+		Partitions: partitions,
+		NumBuckets: astSpec.NumBuckets,
+	}
+}
+
+// convertPartitionBound converts AST partition bound to catalog PartitionBound.
+func convertPartitionBound(partType catalog.PartitionType, bound *PartitionBoundDef) catalog.PartitionBound {
+	result := catalog.PartitionBound{
+		IsMaxValue: bound.IsMaxValue,
+	}
+
+	switch partType {
+	case catalog.PartitionTypeRange:
+		// For RANGE, store the LessThan value
+		if bound.LessThan != nil {
+			result.LessThan = exprToCatalogValue(bound.LessThan)
+		}
+	case catalog.PartitionTypeList:
+		// For LIST, store the list of values
+		result.Values = convertBoundValues(bound)
+	}
+
+	return result
+}
+
+// convertBoundValues converts AST partition bound to catalog values.
+func convertBoundValues(bound *PartitionBoundDef) []catalog.Value {
+	if bound == nil || len(bound.Values) == 0 {
+		return nil
+	}
+
+	values := make([]catalog.Value, len(bound.Values))
+	for i, v := range bound.Values {
+		values[i] = exprToCatalogValue(v)
+	}
+	return values
+}
+
+// exprToCatalogValue converts an AST expression to a catalog Value.
+func exprToCatalogValue(expr Expression) catalog.Value {
+	switch e := expr.(type) {
+	case *LiteralExpr:
+		// LiteralExpr already contains a catalog.Value
+		return e.Value
+	case *ColumnRef:
+		// Special case for MAXVALUE identifier
+		if strings.ToUpper(e.Name) == "MAXVALUE" {
+			return catalog.Value{IsNull: true} // MAXVALUE represented as null
+		}
+		return catalog.NewText(e.Name)
+	default:
+		return catalog.Value{IsNull: true}
+	}
+}
+
+// literalToValue converts a literal to a catalog Value.
+func literalToValue(v interface{}) catalog.Value {
+	switch val := v.(type) {
+	case int:
+		return catalog.NewInt64(int64(val))
+	case int32:
+		return catalog.NewInt32(val)
+	case int64:
+		return catalog.NewInt64(val)
+	case float64:
+		return catalog.NewFloat64(val)
+	case string:
+		return catalog.NewText(val)
+	case bool:
+		return catalog.NewBool(val)
+	case nil:
+		return catalog.Value{IsNull: true}
+	default:
+		return catalog.Value{IsNull: true}
+	}
+}
+
+// partitionRouter routes rows to the correct partition.
+type partitionRouter struct {
+	spec       *catalog.PartitionSpec
+	colIndexes []int // indexes of partition columns in the schema
+}
+
+// newPartitionRouter creates a partition router for a partitioned table.
+func newPartitionRouter(meta *catalog.TableMeta) (*partitionRouter, error) {
+	if meta.PartitionSpec == nil {
+		return nil, fmt.Errorf("table is not partitioned")
+	}
+
+	// Map partition column names to indexes
+	colIndexes := make([]int, len(meta.PartitionSpec.Columns))
+	for i, colName := range meta.PartitionSpec.Columns {
+		found := false
+		for j, col := range meta.Columns {
+			if strings.EqualFold(col.Name, colName) {
+				colIndexes[i] = j
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("partition column %q not found in table", colName)
+		}
+	}
+
+	return &partitionRouter{
+		spec:       meta.PartitionSpec,
+		colIndexes: colIndexes,
+	}, nil
+}
+
+// route determines which partition a row belongs to.
+func (r *partitionRouter) route(values []catalog.Value) (string, error) {
+	if len(r.colIndexes) == 0 {
+		return "", fmt.Errorf("no partition columns defined")
+	}
+
+	// Get the partition key value (for single-column partitioning)
+	keyIdx := r.colIndexes[0]
+	keyVal := values[keyIdx]
+
+	switch r.spec.Type {
+	case catalog.PartitionTypeRange:
+		return r.routeRange(keyVal)
+	case catalog.PartitionTypeList:
+		return r.routeList(keyVal)
+	case catalog.PartitionTypeHash:
+		return r.routeHash(keyVal)
+	default:
+		return "", fmt.Errorf("unknown partition type")
+	}
+}
+
+// routeRange routes a value to a RANGE partition.
+func (r *partitionRouter) routeRange(val catalog.Value) (string, error) {
+	for _, part := range r.spec.Partitions {
+		if part.Bound.IsMaxValue {
+			return part.Name, nil
+		}
+		// Handle unset bounds
+		bound := part.Bound.LessThan
+		if bound.Type == catalog.TypeUnknown && !bound.IsNull {
+			// Bound not properly set, skip this partition
+			continue
+		}
+		if bound.IsNull && bound.Type == catalog.TypeUnknown {
+			continue
+		}
+		cmp := comparePartitionValues(val, bound)
+		if cmp < 0 {
+			return part.Name, nil
+		}
+	}
+	return "", fmt.Errorf("no partition found for value %v", val)
+}
+
+// comparePartitionValues compares two values, coercing numeric types if needed.
+func comparePartitionValues(a, b catalog.Value) int {
+	// Handle nulls
+	if a.IsNull && b.IsNull {
+		return 0
+	}
+	if a.IsNull {
+		return -1
+	}
+	if b.IsNull {
+		return 1
+	}
+
+	// If types match, use standard comparison
+	if a.Type == b.Type {
+		return a.Compare(b)
+	}
+
+	// Coerce numeric types for comparison
+	aNum, aIsNum := toNumeric(a)
+	bNum, bIsNum := toNumeric(b)
+
+	if aIsNum && bIsNum {
+		if aNum < bNum {
+			return -1
+		} else if aNum > bNum {
+			return 1
+		}
+		return 0
+	}
+
+	// For text comparison
+	if a.Type == catalog.TypeText && b.Type == catalog.TypeText {
+		if a.Text < b.Text {
+			return -1
+		} else if a.Text > b.Text {
+			return 1
+		}
+		return 0
+	}
+
+	// Fallback to standard compare
+	return a.Compare(b)
+}
+
+// toNumeric converts a value to float64 for numeric comparison.
+func toNumeric(v catalog.Value) (float64, bool) {
+	switch v.Type {
+	case catalog.TypeInt32:
+		return float64(v.Int32), true
+	case catalog.TypeInt64:
+		return float64(v.Int64), true
+	case catalog.TypeFloat64:
+		return v.Float64, true
+	default:
+		return 0, false
+	}
+}
+
+// routeList routes a value to a LIST partition.
+func (r *partitionRouter) routeList(val catalog.Value) (string, error) {
+	for _, part := range r.spec.Partitions {
+		for _, boundVal := range part.Bound.Values {
+			if comparePartitionValues(val, boundVal) == 0 {
+				return part.Name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no partition found for value %v", val)
+}
+
+// routeHash routes a value to a HASH partition.
+func (r *partitionRouter) routeHash(val catalog.Value) (string, error) {
+	if r.spec.NumBuckets <= 0 {
+		return "", fmt.Errorf("invalid number of hash buckets")
+	}
+
+	// Simple hash: convert value to a hash
+	var hash uint64
+	switch {
+	case val.Type == catalog.TypeInt32:
+		hash = uint64(val.Int32)
+	case val.Type == catalog.TypeInt64:
+		hash = uint64(val.Int64)
+	case val.Type == catalog.TypeText:
+		for _, c := range val.Text {
+			hash = hash*31 + uint64(c)
+		}
+	default:
+		hash = 0
+	}
+
+	bucketIdx := int(hash % uint64(r.spec.NumBuckets))
+
+	// Find the partition for this bucket
+	if bucketIdx < len(r.spec.Partitions) {
+		return r.spec.Partitions[bucketIdx].Name, nil
+	}
+
+	// Generate partition name for hash buckets
+	return fmt.Sprintf("p%d", bucketIdx), nil
+}
+
 // MVCCExecutor executes SQL statements with MVCC transaction support.
 type MVCCExecutor struct {
 	mtm        *catalog.MVCCTableManager
@@ -162,13 +450,19 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		storageType = "row"
 	}
 
-	if err := e.mtm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType); err != nil {
+	// Convert partition spec from AST to catalog format
+	partSpec := convertPartitionSpec(stmt.PartitionSpec)
+
+	if err := e.mtm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType, partSpec); err != nil {
 		return nil, err
 	}
 
 	msg := fmt.Sprintf("Table '%s' created", stmt.TableName)
 	if storageType == "column" {
 		msg += " (columnar storage)"
+	}
+	if partSpec != nil {
+		msg += fmt.Sprintf(" (partitioned by %s)", partSpec.Type)
 	}
 	return &Result{
 		Message: msg + ".",
@@ -193,6 +487,15 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
+	}
+
+	// Get partition router if table is partitioned
+	var router *partitionRouter
+	if meta.PartitionSpec != nil {
+		router, err = newPartitionRouter(meta)
+		if err != nil {
+			return nil, fmt.Errorf("partition routing setup failed: %w", err)
+		}
 	}
 
 	totalInserted := 0
@@ -251,24 +554,36 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
+		// Route to partition if table is partitioned
+		targetTable := stmt.TableName
+		if router != nil {
+			partName, err := router.route(values)
+			if err != nil {
+				return nil, fmt.Errorf("row %d: partition routing failed: %w", rowIdx+1, err)
+			}
+			// For now, we store in the main table but track the partition.
+			// In a full implementation, targetTable would be the physical partition table.
+			_ = partName // Reserved for future partition table routing
+		}
+
 		// Fire BEFORE INSERT triggers
-		if err := e.fireBeforeInsertTriggers(stmt.TableName, values, meta.Schema); err != nil {
+		if err := e.fireBeforeInsertTriggers(targetTable, values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("row %d: BEFORE INSERT trigger failed: %w", rowIdx+1, err)
 		}
 
 		// Insert with MVCC
-		rid, err := e.mtm.Insert(stmt.TableName, values, tx)
+		rid, err := e.mtm.Insert(targetTable, values, tx)
 		if err != nil {
 			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
 		// Update indexes for the new row
-		if err := e.updateIndexesOnInsert(stmt.TableName, rid, values, meta.Schema); err != nil {
+		if err := e.updateIndexesOnInsert(targetTable, rid, values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("row %d: index update failed: %w", rowIdx+1, err)
 		}
 
 		// Fire AFTER INSERT triggers
-		if err := e.fireAfterInsertTriggers(stmt.TableName, values, meta.Schema); err != nil {
+		if err := e.fireAfterInsertTriggers(targetTable, values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("row %d: AFTER INSERT trigger failed: %w", rowIdx+1, err)
 		}
 

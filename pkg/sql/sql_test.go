@@ -5958,3 +5958,153 @@ func TestPartitionParserErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestPartitionExecution tests end-to-end partition functionality.
+func TestPartitionExecution(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	t.Run("RANGE_partition_create_and_insert", func(t *testing.T) {
+		// Create a RANGE partitioned table
+		result, err := session.ExecuteSQL(`
+			CREATE TABLE sales (
+				id INT PRIMARY KEY,
+				sale_year INT,
+				amount INT
+			) PARTITION BY RANGE (sale_year) (
+				PARTITION p2020 VALUES LESS THAN (2021),
+				PARTITION p2021 VALUES LESS THAN (2022),
+				PARTITION p2022 VALUES LESS THAN (2023),
+				PARTITION p_future VALUES LESS THAN MAXVALUE
+			)
+		`)
+		if err != nil {
+			t.Fatalf("Failed to create partitioned table: %v", err)
+		}
+		if !strings.Contains(result.Message, "partitioned by RANGE") {
+			t.Errorf("Expected message to mention RANGE partition, got: %s", result.Message)
+		}
+
+		// Insert rows into different partitions
+		testInserts := []string{
+			"INSERT INTO sales VALUES (1, 2020, 100)",
+			"INSERT INTO sales VALUES (2, 2021, 200)",
+			"INSERT INTO sales VALUES (3, 2022, 300)",
+			"INSERT INTO sales VALUES (4, 2025, 400)", // future partition
+		}
+
+		for _, sql := range testInserts {
+			_, err := session.ExecuteSQL(sql)
+			if err != nil {
+				t.Fatalf("Failed to insert: %v", err)
+			}
+		}
+
+		// Verify data is accessible
+		result, err = session.ExecuteSQL("SELECT id, sale_year, amount FROM sales ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to select: %v", err)
+		}
+		if len(result.Rows) != 4 {
+			t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("LIST partition create and insert", func(t *testing.T) {
+		// Create a LIST partitioned table
+		result, err := session.ExecuteSQL(`
+			CREATE TABLE regions (
+				id INT PRIMARY KEY,
+				region TEXT,
+				population INT
+			) PARTITION BY LIST (region) (
+				PARTITION north VALUES IN ('NY', 'MA', 'CT'),
+				PARTITION south VALUES IN ('FL', 'GA', 'TX'),
+				PARTITION west VALUES IN ('CA', 'WA', 'OR')
+			)
+		`)
+		if err != nil {
+			t.Fatalf("Failed to create LIST partitioned table: %v", err)
+		}
+		if !strings.Contains(result.Message, "partitioned by LIST") {
+			t.Errorf("Expected message to mention LIST partition, got: %s", result.Message)
+		}
+
+		// Insert rows into different partitions
+		testInserts := []string{
+			"INSERT INTO regions VALUES (1, 'NY', 8000000)",
+			"INSERT INTO regions VALUES (2, 'FL', 6000000)",
+			"INSERT INTO regions VALUES (3, 'CA', 10000000)",
+		}
+
+		for _, sql := range testInserts {
+			_, err := session.ExecuteSQL(sql)
+			if err != nil {
+				t.Fatalf("Failed to insert: %v", err)
+			}
+		}
+
+		// Verify data
+		result, err = session.ExecuteSQL("SELECT * FROM regions ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to select: %v", err)
+		}
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("HASH partition create and insert", func(t *testing.T) {
+		// Create a HASH partitioned table
+		result, err := session.ExecuteSQL(`
+			CREATE TABLE users (
+				id INT PRIMARY KEY,
+				name TEXT
+			) PARTITION BY HASH (id) PARTITIONS 4
+		`)
+		if err != nil {
+			t.Fatalf("Failed to create HASH partitioned table: %v", err)
+		}
+		if !strings.Contains(result.Message, "partitioned by HASH") {
+			t.Errorf("Expected message to mention HASH partition, got: %s", result.Message)
+		}
+
+		// Insert multiple rows
+		for i := 1; i <= 10; i++ {
+			_, err := session.ExecuteSQL(fmt.Sprintf("INSERT INTO users VALUES (%d, 'user%d')", i, i))
+			if err != nil {
+				t.Fatalf("Failed to insert user %d: %v", i, err)
+			}
+		}
+
+		// Verify all data is accessible
+		result, err = session.ExecuteSQL("SELECT * FROM users ORDER BY id")
+		if err != nil {
+			t.Fatalf("Failed to select: %v", err)
+		}
+		if len(result.Rows) != 10 {
+			t.Errorf("Expected 10 rows, got %d", len(result.Rows))
+		}
+	})
+
+	t.Run("Non-partitioned table works normally", func(t *testing.T) {
+		// Create a regular table (no partitioning)
+		_, err := session.ExecuteSQL("CREATE TABLE regular (id INT PRIMARY KEY, val TEXT)")
+		if err != nil {
+			t.Fatalf("Failed to create regular table: %v", err)
+		}
+
+		_, err = session.ExecuteSQL("INSERT INTO regular VALUES (1, 'test')")
+		if err != nil {
+			t.Fatalf("Failed to insert into regular table: %v", err)
+		}
+
+		result, err := session.ExecuteSQL("SELECT * FROM regular")
+		if err != nil {
+			t.Fatalf("Failed to select from regular table: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result.Rows))
+		}
+	})
+}

@@ -172,13 +172,19 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		storageType = "row"
 	}
 
-	if err := e.tm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType); err != nil {
+	// Convert partition spec from AST to catalog format
+	partSpec := convertPartitionSpec(stmt.PartitionSpec)
+
+	if err := e.tm.CreateTableWithStorage(stmt.TableName, cols, foreignKeys, storageType, partSpec); err != nil {
 		return nil, err
 	}
 
 	msg := fmt.Sprintf("Table '%s' created", stmt.TableName)
 	if storageType == "column" {
 		msg += " (columnar storage)"
+	}
+	if partSpec != nil {
+		msg += fmt.Sprintf(" (partitioned by %s)", partSpec.Type)
 	}
 	return &Result{Message: msg + "."}, nil
 }

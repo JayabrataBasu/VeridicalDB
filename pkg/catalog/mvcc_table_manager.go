@@ -255,8 +255,8 @@ func (m *MVCCTableManager) CreateTable(name string, cols []Column, foreignKeys [
 }
 
 // CreateTableWithStorage delegates to the underlying TableManager.
-func (m *MVCCTableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string) error {
-	return m.tm.CreateTableWithStorage(name, cols, foreignKeys, storageType)
+func (m *MVCCTableManager) CreateTableWithStorage(name string, cols []Column, foreignKeys []ForeignKey, storageType string, partSpec *PartitionSpec) error {
+	return m.tm.CreateTableWithStorage(name, cols, foreignKeys, storageType, partSpec)
 }
 
 // DropTable delegates to the underlying TableManager.

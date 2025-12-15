@@ -92,6 +92,11 @@ func (c *Catalog) save() error {
 
 // CreateTable registers a new table with the given schema.
 func (c *Catalog) CreateTable(name string, cols []Column, foreignKeys []ForeignKey, storageType string) (*TableMeta, error) {
+	return c.CreateTableWithPartition(name, cols, foreignKeys, storageType, nil)
+}
+
+// CreateTableWithPartition registers a new table with the given schema and optional partition spec.
+func (c *Catalog) CreateTableWithPartition(name string, cols []Column, foreignKeys []ForeignKey, storageType string, partSpec *PartitionSpec) (*TableMeta, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -104,12 +109,13 @@ func (c *Catalog) CreateTable(name string, cols []Column, foreignKeys []ForeignK
 	}
 
 	meta := &TableMeta{
-		ID:          c.nextID,
-		Name:        name,
-		StorageType: storageType,
-		Columns:     cols,
-		ForeignKeys: foreignKeys,
-		Schema:      NewSchema(cols),
+		ID:            c.nextID,
+		Name:          name,
+		StorageType:   storageType,
+		Columns:       cols,
+		ForeignKeys:   foreignKeys,
+		Schema:        NewSchema(cols),
+		PartitionSpec: partSpec,
 	}
 	meta.Schema.ForeignKeys = foreignKeys
 	c.nextID++
