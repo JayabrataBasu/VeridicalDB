@@ -4,6 +4,10 @@
 **Updated:** December 15, 2025
 **Purpose:** Track and complete all remaining SQL features in priority order
 
+**Recent updates (Dec 15, 2025):**
+- Full-Text Search implemented (package + SQL support + tests).
+- Table Partitioning: parser, catalog, and routing/pruning utilities implemented (executor integration and DDL management remain).
+
 ---
 
 ## Table of Contents
@@ -258,22 +262,39 @@ Advanced features for future enhancement.
 - **Completed Date:** Dec 15, 2025
 
 ### 4.2 Full-Text Search
-- **What's Needed:**
-  - Inverted index structure
-  - Text tokenization and stemming
-  - `MATCH ... AGAINST` or `@@` operator
-  - Ranking functions
-- **Difficulty:** Very Hard
-- **Estimated Time:** 20-30 hours
+### 4.2 Full-Text Search ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Analyzer (tokenization + Porter stemming), TSVector/TSQuery types, and BM25-style ranking implemented.
+  - Inverted index with persistence and a `Manager` to load/save indexes.
+  - SQL-level support: lexer tokens, parser expressions (`to_tsvector`, `to_tsquery`, `plainto_tsquery`, `@@`, `ts_rank`, `ts_headline`) and executor evaluation (`evalTSVector`, `evalTSQuery`, `evalTSMatch`, `evalTSRank`, `evalTSHeadline`).
+  - Tests: `pkg/fts/fts_test.go` (package tests) and SQL tests (`TestFTSLexer`, `TestFTSParser`, `TestFTSExecution` in `pkg/sql/sql_test.go`).
+- **Files Modified / Added:**
+  - `pkg/fts/*` (Analyzer, InvertedIndex, Manager, TSVector/TSQuery, ranking)
+  - `pkg/sql/lexer.go`, `pkg/sql/parser.go`, `pkg/sql/mvcc_executor.go`, `pkg/sql/sql_test.go`
+- **Notes / Next Steps:**
+  - Improvements: richer ranking configurations, more analyzers, and optimizations for index maintenance on updates.
+  - **Completed Date:** Dec 15, 2025
 
 ### 4.3 Table Partitioning
-- **What's Needed:**
-  - Parser: `PARTITION BY RANGE/HASH/LIST`
-  - Catalog: Partition metadata
-  - Executor: Route queries to correct partitions
-  - DDL: `CREATE TABLE ... PARTITION OF`
-- **Difficulty:** Hard
-- **Estimated Time:** 16-24 hours
+**Status:** Partially implemented (Parser, catalog metadata, router/pruner and tests completed)
+
+- **Completed:**
+  - Parser supports `PARTITION BY RANGE/LIST/HASH` with partition definitions (`VALUES LESS THAN`, `VALUES IN`, `PARTITIONS n`).
+  - Catalog metadata for partitions (`pkg/catalog/partition.go`) and `TableMeta.PartitionSpec` persisted in catalog JSON.
+  - `pkg/partition` package provides `PartitionSpec`, `Router`, `Pruner`, and `Validator` with full unit tests (`pkg/partition/partition_test.go`).
+  - SQL parser tests added (`TestPartitionLexer`, `TestPartitionParser`, `TestPartitionParserErrors` in `pkg/sql/sql_test.go`).
+
+- **Files Modified / Added:**
+  - `pkg/partition/partition.go`, `pkg/partition/partition_test.go`
+  - `pkg/catalog/partition.go`, `pkg/catalog/catalog.go`
+  - `pkg/sql/lexer.go`, `pkg/sql/ast.go`, `pkg/sql/parser.go`, `pkg/sql/sql_test.go`
+
+- **Remaining Work / Next Steps:**
+  - Integrate partition routing/pruning into the query planner/executor so SELECT/INSERT/UPDATE/DELETE automatically target the correct partitions.
+  - Add DDL management operations: `ALTER TABLE ... ATTACH/DETACH PARTITION`, `CREATE TABLE ... PARTITION OF` and automatic creation of child storage tables for partitions.
+  - Tests for end-to-end partitioned table execution and DDL management.
+  - **Partial Completion Date:** Dec 15, 2025
 
 ### 4.4 Triggers
 - **Status:** ✅ Fully implemented
@@ -369,8 +390,8 @@ Advanced features for future enhancement.
 | Feature | Status | Completed Date |
 |---------|--------|----------------|
 | JSON Data Type | ✅ Complete | Dec 15, 2025 |
-| Full-Text Search | ⬜ Not Started | |
-| Table Partitioning | ⬜ Not Started | |
+| Full-Text Search | ✅ Complete | Dec 15, 2025 |
+| Table Partitioning | ⚠️ Partially Implemented | Dec 15, 2025 |
 | Triggers | ✅ Complete | Dec 15, 2025 |
 | Stored Procedures | ⬜ Not Started | |
 | Multi-Database | ✅ Complete | Dec 15, 2025 |
@@ -404,9 +425,9 @@ Advanced features for future enhancement.
 4. **Phase 4: Low Priority Features**
    - [x] 4.6 Multi-Database Namespaces ✅ (Dec 15, 2025)
    - [x] 4.4 Triggers ✅ (Dec 15, 2025)
-   - [ ] 4.1 JSON Data Type
-   - [ ] 4.3 Table Partitioning
-   - [ ] 4.2 Full-Text Search
+  - [x] 4.1 JSON Data Type ✅ (Dec 15, 2025)
+  - [~] 4.3 Table Partitioning (partial; parser/catalog/router/pruner implemented)
+  - [x] 4.2 Full-Text Search ✅ (Dec 15, 2025)
    - [ ] 4.5 Stored Procedures
    - [ ] 4.7 Replication
 
