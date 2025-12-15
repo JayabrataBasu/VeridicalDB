@@ -352,6 +352,46 @@ type CastExpr struct {
 
 func (e *CastExpr) exprNode() {}
 
+// JSONAccessExpr represents JSON field access operators (-> and ->>).
+// Examples: data->'name', data->>'name'
+type JSONAccessExpr struct {
+	Object Expression // The JSON object/column
+	Key    Expression // The key (string literal or expression)
+	AsText bool       // true for ->> (returns text), false for -> (returns JSON)
+}
+
+func (e *JSONAccessExpr) exprNode() {}
+
+// JSONPathExpr represents JSON path access operators (#> and #>>).
+// Examples: data#>'{a,b}', data#>>'{a,b}'
+type JSONPathExpr struct {
+	Object Expression   // The JSON object/column
+	Path   []Expression // Array of path elements
+	AsText bool         // true for #>> (returns text), false for #> (returns JSON)
+}
+
+func (e *JSONPathExpr) exprNode() {}
+
+// JSONContainsExpr represents JSON containment operators (@> and <@).
+// Examples: data @> '{"a":1}', '{"a":1}' <@ data
+type JSONContainsExpr struct {
+	Left     Expression
+	Right    Expression
+	Contains bool // true for @> (left contains right), false for <@ (left contained by right)
+}
+
+func (e *JSONContainsExpr) exprNode() {}
+
+// JSONExistsExpr represents JSON key existence operators (?, ?|, ?&).
+// Examples: data ? 'key', data ?| array['a','b'], data ?& array['a','b']
+type JSONExistsExpr struct {
+	Object Expression
+	Keys   []Expression
+	Mode   string // "any" (?), "or" (?|), "and" (?&)
+}
+
+func (e *JSONExistsExpr) exprNode() {}
+
 // UnionStmt represents UNION/INTERSECT/EXCEPT operations.
 type UnionStmt struct {
 	With    *WithClause // CTE definitions (WITH clause)

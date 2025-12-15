@@ -24,6 +24,8 @@ const (
 	TOKEN_SEMICOLON // ;
 	TOKEN_LPAREN    // (
 	TOKEN_RPAREN    // )
+	TOKEN_LBRACKET  // [
+	TOKEN_RBRACKET  // ]
 	TOKEN_STAR      // *
 	TOKEN_PLUS      // +
 	TOKEN_MINUS     // -
@@ -288,6 +290,19 @@ const (
 	TOKEN_STATEMENT
 	TOKEN_NEW
 	TOKEN_OLD
+
+	// JSON operators
+	TOKEN_JSON_TYPE    // JSON keyword for type
+	TOKEN_ARROW        // -> (JSON object field access)
+	TOKEN_ARROW_TEXT   // ->> (JSON object field as text)
+	TOKEN_HASH_ARROW   // #> (JSON path access)
+	TOKEN_HASH_ARROW_T // #>> (JSON path as text)
+	TOKEN_AT_GT        // @> (JSON contains)
+	TOKEN_LT_AT        // <@ (JSON contained by)
+	TOKEN_QUESTION     // ? (JSON key exists)
+	TOKEN_QUESTION_OR  // ?| (JSON any key exists)
+	TOKEN_QUESTION_AND // ?& (JSON all keys exist)
+	// TOKEN_CONCAT is already defined earlier for || concatenation
 )
 
 var keywords = map[string]TokenType{
@@ -479,6 +494,8 @@ var keywords = map[string]TokenType{
 	"STATEMENT":         TOKEN_STATEMENT,
 	"NEW":               TOKEN_NEW,
 	"OLD":               TOKEN_OLD,
+	"JSON":              TOKEN_JSON_TYPE,
+	"JSONB":             TOKEN_JSON_TYPE,
 }
 
 // Token represents a lexical token.
@@ -549,6 +566,12 @@ func (l *Lexer) NextToken() Token {
 	case ')':
 		tok = Token{Type: TOKEN_RPAREN, Literal: ")", Pos: l.pos}
 		l.readChar()
+	case '[':
+		tok = Token{Type: TOKEN_LBRACKET, Literal: "[", Pos: l.pos}
+		l.readChar()
+	case ']':
+		tok = Token{Type: TOKEN_RBRACKET, Literal: "]", Pos: l.pos}
+		l.readChar()
 	case '*':
 		tok = Token{Type: TOKEN_STAR, Literal: "*", Pos: l.pos}
 		l.readChar()
@@ -556,8 +579,76 @@ func (l *Lexer) NextToken() Token {
 		tok = Token{Type: TOKEN_PLUS, Literal: "+", Pos: l.pos}
 		l.readChar()
 	case '-':
-		tok = Token{Type: TOKEN_MINUS, Literal: "-", Pos: l.pos}
-		l.readChar()
+		// Check for JSON operators -> and ->>
+		if l.peekChar() == '>' {
+			startPos := l.pos
+			l.readChar() // consume -
+			if l.peekChar() == '>' {
+				l.readChar() // consume first >
+				tok = Token{Type: TOKEN_ARROW_TEXT, Literal: "->>", Pos: startPos}
+				l.readChar() // consume second >
+			} else {
+				tok = Token{Type: TOKEN_ARROW, Literal: "->", Pos: startPos}
+				l.readChar() // consume >
+			}
+		} else {
+			tok = Token{Type: TOKEN_MINUS, Literal: "-", Pos: l.pos}
+			l.readChar()
+		}
+	case '#':
+		// Check for JSON operators #> and #>>
+		if l.peekChar() == '>' {
+			startPos := l.pos
+			l.readChar() // consume #
+			if l.peekChar() == '>' {
+				l.readChar() // consume first >
+				tok = Token{Type: TOKEN_HASH_ARROW_T, Literal: "#>>", Pos: startPos}
+				l.readChar() // consume second >
+			} else {
+				tok = Token{Type: TOKEN_HASH_ARROW, Literal: "#>", Pos: startPos}
+				l.readChar() // consume >
+			}
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: "#", Pos: l.pos}
+			l.readChar()
+		}
+	case '@':
+		// Check for JSON operator @>
+		if l.peekChar() == '>' {
+			startPos := l.pos
+			l.readChar() // consume @
+			tok = Token{Type: TOKEN_AT_GT, Literal: "@>", Pos: startPos}
+			l.readChar() // consume >
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: "@", Pos: l.pos}
+			l.readChar()
+		}
+	case '?':
+		// Check for JSON operators ?, ?|, ?&
+		startPos := l.pos
+		if l.peekChar() == '|' {
+			l.readChar() // consume ?
+			tok = Token{Type: TOKEN_QUESTION_OR, Literal: "?|", Pos: startPos}
+			l.readChar() // consume |
+		} else if l.peekChar() == '&' {
+			l.readChar() // consume ?
+			tok = Token{Type: TOKEN_QUESTION_AND, Literal: "?&", Pos: startPos}
+			l.readChar() // consume &
+		} else {
+			tok = Token{Type: TOKEN_QUESTION, Literal: "?", Pos: l.pos}
+			l.readChar()
+		}
+	case '|':
+		// Check for || concatenation operator
+		if l.peekChar() == '|' {
+			startPos := l.pos
+			l.readChar() // consume first |
+			tok = Token{Type: TOKEN_CONCAT, Literal: "||", Pos: startPos}
+			l.readChar() // consume second |
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: "|", Pos: l.pos}
+			l.readChar()
+		}
 	case '/':
 		tok = Token{Type: TOKEN_SLASH, Literal: "/", Pos: l.pos}
 		l.readChar()
@@ -573,6 +664,12 @@ func (l *Lexer) NextToken() Token {
 			l.readChar()
 			tok = Token{Type: TOKEN_NE, Literal: "<>", Pos: l.pos - 1}
 			l.readChar()
+		} else if l.peekChar() == '@' {
+			// JSON contained by operator
+			startPos := l.pos
+			l.readChar() // consume <
+			tok = Token{Type: TOKEN_LT_AT, Literal: "<@", Pos: startPos}
+			l.readChar() // consume @
 		} else {
 			tok = Token{Type: TOKEN_LT, Literal: "<", Pos: l.pos}
 			l.readChar()

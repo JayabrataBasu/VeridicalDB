@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -652,6 +653,18 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 			return catalog.NewBool(!result), nil
 		}
 		return catalog.NewBool(result), nil
+
+	case *JSONAccessExpr:
+		return e.evalJSONAccess(ex, schema, row)
+
+	case *JSONPathExpr:
+		return e.evalJSONPath(ex, schema, row)
+
+	case *JSONContainsExpr:
+		return e.evalJSONContains(ex, schema, row)
+
+	case *JSONExistsExpr:
+		return e.evalJSONExists(ex, schema, row)
 
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
@@ -2039,9 +2052,391 @@ func (e *MVCCExecutor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row 
 		case catalog.TypeTimestamp:
 			return val, nil
 		}
+
+	case catalog.TypeJSON:
+		switch val.Type {
+		case catalog.TypeText:
+			// Validate JSON by attempting to parse it
+			if !isValidJSON(val.Text) {
+				return catalog.Value{}, fmt.Errorf("invalid JSON: %s", val.Text)
+			}
+			return catalog.NewJSON(val.Text), nil
+		case catalog.TypeJSON:
+			return val, nil
+		}
 	}
 
 	return catalog.Value{}, fmt.Errorf("cannot cast %v to %v", val.Type, cast.TargetType)
+}
+
+// isValidJSON checks if a string is valid JSON
+func isValidJSON(s string) bool {
+	var js interface{}
+	return json.Unmarshal([]byte(s), &js) == nil
+}
+
+// evalJSONAccess evaluates -> and ->> operators
+func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	keyVal, err := e.evalExpr(expr.Key, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if objVal.IsNull {
+		return catalog.Null(catalog.TypeJSON), nil
+	}
+
+	// Get JSON string
+	var jsonStr string
+	if objVal.Type == catalog.TypeJSON {
+		jsonStr = objVal.JSON
+	} else if objVal.Type == catalog.TypeText {
+		jsonStr = objVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("-> operator requires JSON or TEXT, got %v", objVal.Type)
+	}
+
+	// Parse JSON
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return catalog.Value{}, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	// Access by key or index
+	var result interface{}
+	switch keyVal.Type {
+	case catalog.TypeText:
+		// Object field access
+		obj, ok := data.(map[string]interface{})
+		if !ok {
+			return catalog.Null(catalog.TypeJSON), nil
+		}
+		result = obj[keyVal.Text]
+	case catalog.TypeInt32, catalog.TypeInt64:
+		// Array index access
+		arr, ok := data.([]interface{})
+		if !ok {
+			return catalog.Null(catalog.TypeJSON), nil
+		}
+		var idx int
+		if keyVal.Type == catalog.TypeInt32 {
+			idx = int(keyVal.Int32)
+		} else {
+			idx = int(keyVal.Int64)
+		}
+		if idx < 0 || idx >= len(arr) {
+			return catalog.Null(catalog.TypeJSON), nil
+		}
+		result = arr[idx]
+	default:
+		return catalog.Value{}, fmt.Errorf("JSON key must be TEXT or INT, got %v", keyVal.Type)
+	}
+
+	if result == nil {
+		return catalog.Null(catalog.TypeJSON), nil
+	}
+
+	if expr.AsText {
+		// ->> returns text
+		switch v := result.(type) {
+		case string:
+			return catalog.NewText(v), nil
+		case float64:
+			return catalog.NewText(strconv.FormatFloat(v, 'f', -1, 64)), nil
+		case bool:
+			return catalog.NewText(strconv.FormatBool(v)), nil
+		case nil:
+			return catalog.Null(catalog.TypeText), nil
+		default:
+			// For objects/arrays, serialize to JSON string
+			bytes, _ := json.Marshal(v)
+			return catalog.NewText(string(bytes)), nil
+		}
+	} else {
+		// -> returns JSON
+		bytes, err := json.Marshal(result)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		return catalog.NewJSON(string(bytes)), nil
+	}
+}
+
+// evalJSONPath evaluates #> and #>> operators
+func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if objVal.IsNull {
+		return catalog.Null(catalog.TypeJSON), nil
+	}
+
+	// Get JSON string
+	var jsonStr string
+	if objVal.Type == catalog.TypeJSON {
+		jsonStr = objVal.JSON
+	} else if objVal.Type == catalog.TypeText {
+		jsonStr = objVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("#> operator requires JSON or TEXT, got %v", objVal.Type)
+	}
+
+	// Parse JSON
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return catalog.Value{}, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	// Navigate the path
+	current := data
+	for _, pathExpr := range expr.Path {
+		pathVal, err := e.evalExpr(pathExpr, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+
+		if current == nil {
+			return catalog.Null(catalog.TypeJSON), nil
+		}
+
+		switch pathVal.Type {
+		case catalog.TypeText:
+			obj, ok := current.(map[string]interface{})
+			if !ok {
+				return catalog.Null(catalog.TypeJSON), nil
+			}
+			current = obj[pathVal.Text]
+		case catalog.TypeInt32, catalog.TypeInt64:
+			arr, ok := current.([]interface{})
+			if !ok {
+				return catalog.Null(catalog.TypeJSON), nil
+			}
+			var idx int
+			if pathVal.Type == catalog.TypeInt32 {
+				idx = int(pathVal.Int32)
+			} else {
+				idx = int(pathVal.Int64)
+			}
+			if idx < 0 || idx >= len(arr) {
+				return catalog.Null(catalog.TypeJSON), nil
+			}
+			current = arr[idx]
+		default:
+			return catalog.Value{}, fmt.Errorf("JSON path element must be TEXT or INT")
+		}
+	}
+
+	if current == nil {
+		return catalog.Null(catalog.TypeJSON), nil
+	}
+
+	if expr.AsText {
+		// #>> returns text
+		switch v := current.(type) {
+		case string:
+			return catalog.NewText(v), nil
+		case float64:
+			return catalog.NewText(strconv.FormatFloat(v, 'f', -1, 64)), nil
+		case bool:
+			return catalog.NewText(strconv.FormatBool(v)), nil
+		default:
+			bytes, _ := json.Marshal(v)
+			return catalog.NewText(string(bytes)), nil
+		}
+	} else {
+		// #> returns JSON
+		bytes, err := json.Marshal(current)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		return catalog.NewJSON(string(bytes)), nil
+	}
+}
+
+// evalJSONContains evaluates @> and <@ operators
+func (e *MVCCExecutor) evalJSONContains(expr *JSONContainsExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	leftVal, err := e.evalExpr(expr.Left, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	rightVal, err := e.evalExpr(expr.Right, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if leftVal.IsNull || rightVal.IsNull {
+		return catalog.Null(catalog.TypeBool), nil
+	}
+
+	// Get JSON strings
+	var leftJSON, rightJSON string
+	if leftVal.Type == catalog.TypeJSON {
+		leftJSON = leftVal.JSON
+	} else if leftVal.Type == catalog.TypeText {
+		leftJSON = leftVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("@> operator requires JSON or TEXT")
+	}
+
+	if rightVal.Type == catalog.TypeJSON {
+		rightJSON = rightVal.JSON
+	} else if rightVal.Type == catalog.TypeText {
+		rightJSON = rightVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("@> operator requires JSON or TEXT")
+	}
+
+	// Parse both JSON values
+	var left, right interface{}
+	if err := json.Unmarshal([]byte(leftJSON), &left); err != nil {
+		return catalog.Value{}, fmt.Errorf("invalid JSON on left: %v", err)
+	}
+	if err := json.Unmarshal([]byte(rightJSON), &right); err != nil {
+		return catalog.Value{}, fmt.Errorf("invalid JSON on right: %v", err)
+	}
+
+	// Check containment
+	var contains bool
+	if expr.Contains {
+		// @> : left contains right
+		contains = jsonContains(left, right)
+	} else {
+		// <@ : left is contained by right
+		contains = jsonContains(right, left)
+	}
+
+	return catalog.NewBool(contains), nil
+}
+
+// jsonContains checks if container contains contained
+func jsonContains(container, contained interface{}) bool {
+	switch c := contained.(type) {
+	case map[string]interface{}:
+		containerObj, ok := container.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		for k, v := range c {
+			containerVal, exists := containerObj[k]
+			if !exists {
+				return false
+			}
+			if !jsonContains(containerVal, v) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		containerArr, ok := container.([]interface{})
+		if !ok {
+			return false
+		}
+		// All elements in contained must be in container
+		for _, cv := range c {
+			found := false
+			for _, containerVal := range containerArr {
+				if jsonEqual(containerVal, cv) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	default:
+		return jsonEqual(container, contained)
+	}
+}
+
+// jsonEqual checks if two JSON values are equal
+func jsonEqual(a, b interface{}) bool {
+	// Simple equality check using JSON serialization
+	aBytes, _ := json.Marshal(a)
+	bBytes, _ := json.Marshal(b)
+	return string(aBytes) == string(bBytes)
+}
+
+// evalJSONExists evaluates ?, ?|, ?& operators
+func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row)
+	if err != nil {
+		return catalog.Value{}, err
+	}
+
+	if objVal.IsNull {
+		return catalog.Null(catalog.TypeBool), nil
+	}
+
+	// Get JSON string
+	var jsonStr string
+	if objVal.Type == catalog.TypeJSON {
+		jsonStr = objVal.JSON
+	} else if objVal.Type == catalog.TypeText {
+		jsonStr = objVal.Text
+	} else {
+		return catalog.Value{}, fmt.Errorf("? operator requires JSON or TEXT")
+	}
+
+	// Parse JSON
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return catalog.Value{}, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	// Get object keys
+	obj, ok := data.(map[string]interface{})
+	if !ok {
+		return catalog.NewBool(false), nil
+	}
+
+	// Evaluate key expressions
+	var keys []string
+	for _, keyExpr := range expr.Keys {
+		keyVal, err := e.evalExpr(keyExpr, schema, row)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		if keyVal.Type == catalog.TypeText {
+			keys = append(keys, keyVal.Text)
+		} else {
+			return catalog.Value{}, fmt.Errorf("JSON key must be TEXT")
+		}
+	}
+
+	switch expr.Mode {
+	case "any": // ? : single key exists
+		if len(keys) == 0 {
+			return catalog.NewBool(false), nil
+		}
+		_, exists := obj[keys[0]]
+		return catalog.NewBool(exists), nil
+	case "or": // ?| : any key exists
+		for _, k := range keys {
+			if _, exists := obj[k]; exists {
+				return catalog.NewBool(true), nil
+			}
+		}
+		return catalog.NewBool(false), nil
+	case "and": // ?& : all keys exist
+		for _, k := range keys {
+			if _, exists := obj[k]; !exists {
+				return catalog.NewBool(false), nil
+			}
+		}
+		return catalog.NewBool(true), nil
+	default:
+		return catalog.Value{}, fmt.Errorf("unknown JSON exists mode: %s", expr.Mode)
+	}
 }
 
 // executeCreateView creates a new view (MVCC version).

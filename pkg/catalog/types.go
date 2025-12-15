@@ -18,6 +18,7 @@ const (
 	TypeText
 	TypeBool
 	TypeTimestamp
+	TypeJSON
 )
 
 // String returns the SQL name of the type.
@@ -33,6 +34,8 @@ func (t DataType) String() string {
 		return "BOOL"
 	case TypeTimestamp:
 		return "TIMESTAMP"
+	case TypeJSON:
+		return "JSON"
 	default:
 		return "UNKNOWN"
 	}
@@ -51,6 +54,8 @@ func ParseDataType(s string) DataType {
 		return TypeBool
 	case "TIMESTAMP", "DATETIME":
 		return TypeTimestamp
+	case "JSON", "JSONB":
+		return TypeJSON
 	default:
 		return TypeUnknown
 	}
@@ -89,6 +94,7 @@ type Value struct {
 	Text      string
 	Bool      bool
 	Timestamp time.Time
+	JSON      string // JSON stored as string, validated on insert
 }
 
 // NewInt32 creates an INT32 value.
@@ -116,6 +122,11 @@ func NewTimestamp(v time.Time) Value {
 	return Value{Type: TypeTimestamp, Timestamp: v}
 }
 
+// NewJSON creates a JSON value.
+func NewJSON(v string) Value {
+	return Value{Type: TypeJSON, JSON: v}
+}
+
 // Null creates a NULL value of the given type.
 func Null(t DataType) Value {
 	return Value{Type: t, IsNull: true}
@@ -140,6 +151,8 @@ func (v Value) String() string {
 		return "false"
 	case TypeTimestamp:
 		return v.Timestamp.Format(time.RFC3339)
+	case TypeJSON:
+		return v.JSON
 	default:
 		return "?"
 	}
@@ -199,6 +212,14 @@ func (v Value) Compare(other Value) int {
 		if v.Timestamp.Before(other.Timestamp) {
 			return -1
 		} else if v.Timestamp.After(other.Timestamp) {
+			return 1
+		}
+		return 0
+	case TypeJSON:
+		// JSON comparison: lexicographic comparison of string representation
+		if v.JSON < other.JSON {
+			return -1
+		} else if v.JSON > other.JSON {
 			return 1
 		}
 		return 0

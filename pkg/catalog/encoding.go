@@ -37,6 +37,9 @@ func EncodeRow(schema *Schema, values []Value) ([]byte, error) {
 		}
 		if col.Type.IsFixedWidth() {
 			size += col.Type.FixedWidth()
+		} else if col.Type == TypeJSON {
+			// 4 bytes for length + JSON data
+			size += 4 + len(values[i].JSON)
 		} else {
 			// 4 bytes for length + data
 			size += 4 + len(values[i].Text)
@@ -76,6 +79,11 @@ func EncodeRow(schema *Schema, values []Value) ([]byte, error) {
 			binary.LittleEndian.PutUint32(lenB, uint32(len(v.Text)))
 			buf = append(buf, lenB...)
 			buf = append(buf, []byte(v.Text)...)
+		case TypeJSON:
+			lenB := make([]byte, 4)
+			binary.LittleEndian.PutUint32(lenB, uint32(len(v.JSON)))
+			buf = append(buf, lenB...)
+			buf = append(buf, []byte(v.JSON)...)
 		}
 	}
 
@@ -141,6 +149,17 @@ func DecodeRow(schema *Schema, data []byte) ([]Value, error) {
 				return nil, errors.New("unexpected end of data for TEXT value")
 			}
 			values[i] = NewText(string(data[pos : pos+length]))
+			pos += length
+		case TypeJSON:
+			if pos+4 > len(data) {
+				return nil, errors.New("unexpected end of data for JSON length")
+			}
+			length := int(binary.LittleEndian.Uint32(data[pos : pos+4]))
+			pos += 4
+			if pos+length > len(data) {
+				return nil, errors.New("unexpected end of data for JSON value")
+			}
+			values[i] = NewJSON(string(data[pos : pos+length]))
 			pos += length
 		default:
 			return nil, errors.New("unknown type")

@@ -2776,7 +2776,7 @@ func (p *Parser) parseAddExpr() (Expression, error) {
 
 // parseMulExpr parses multiplication and division expressions.
 func (p *Parser) parseMulExpr() (Expression, error) {
-	left, err := p.parsePrimaryExpression()
+	left, err := p.parseJSONExpr()
 	if err != nil {
 		return nil, err
 	}
@@ -2784,7 +2784,7 @@ func (p *Parser) parseMulExpr() (Expression, error) {
 	for p.curTokenIs(TOKEN_STAR) || p.curTokenIs(TOKEN_SLASH) {
 		op := p.cur.Type
 		p.nextToken()
-		right, err := p.parsePrimaryExpression()
+		right, err := p.parseJSONExpr()
 		if err != nil {
 			return nil, err
 		}
@@ -2792,6 +2792,154 @@ func (p *Parser) parseMulExpr() (Expression, error) {
 	}
 
 	return left, nil
+}
+
+// parseJSONExpr parses JSON operators (postfix operators like ->, ->>, etc.)
+func (p *Parser) parseJSONExpr() (Expression, error) {
+	left, err := p.parsePrimaryExpression()
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle JSON postfix operators
+	for {
+		switch p.cur.Type {
+		case TOKEN_ARROW: // ->
+			p.nextToken() // consume ->
+			key, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("expected key after ->: %v", err)
+			}
+			left = &JSONAccessExpr{Object: left, Key: key, AsText: false}
+
+		case TOKEN_ARROW_TEXT: // ->>
+			p.nextToken() // consume ->>
+			key, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("expected key after ->>: %v", err)
+			}
+			left = &JSONAccessExpr{Object: left, Key: key, AsText: true}
+
+		case TOKEN_HASH_ARROW: // #>
+			p.nextToken() // consume #>
+			path, err := p.parseJSONPath()
+			if err != nil {
+				return nil, fmt.Errorf("expected path after #>: %v", err)
+			}
+			left = &JSONPathExpr{Object: left, Path: path, AsText: false}
+
+		case TOKEN_HASH_ARROW_T: // #>>
+			p.nextToken() // consume #>>
+			path, err := p.parseJSONPath()
+			if err != nil {
+				return nil, fmt.Errorf("expected path after #>>: %v", err)
+			}
+			left = &JSONPathExpr{Object: left, Path: path, AsText: true}
+
+		case TOKEN_AT_GT: // @>
+			p.nextToken() // consume @>
+			right, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("expected JSON after @>: %v", err)
+			}
+			left = &JSONContainsExpr{Left: left, Right: right, Contains: true}
+
+		case TOKEN_LT_AT: // <@
+			p.nextToken() // consume <@
+			right, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("expected JSON after <@: %v", err)
+			}
+			left = &JSONContainsExpr{Left: left, Right: right, Contains: false}
+
+		case TOKEN_QUESTION: // ?
+			p.nextToken() // consume ?
+			key, err := p.parsePrimaryExpression()
+			if err != nil {
+				return nil, fmt.Errorf("expected key after ?: %v", err)
+			}
+			left = &JSONExistsExpr{Object: left, Keys: []Expression{key}, Mode: "any"}
+
+		case TOKEN_QUESTION_OR: // ?|
+			p.nextToken() // consume ?|
+			keys, err := p.parseJSONKeyArray()
+			if err != nil {
+				return nil, fmt.Errorf("expected key array after ?|: %v", err)
+			}
+			left = &JSONExistsExpr{Object: left, Keys: keys, Mode: "or"}
+
+		case TOKEN_QUESTION_AND: // ?&
+			p.nextToken() // consume ?&
+			keys, err := p.parseJSONKeyArray()
+			if err != nil {
+				return nil, fmt.Errorf("expected key array after ?&: %v", err)
+			}
+			left = &JSONExistsExpr{Object: left, Keys: keys, Mode: "and"}
+
+		default:
+			return left, nil
+		}
+	}
+}
+
+// parseJSONPath parses a JSON path like '{a,b,c}'
+func (p *Parser) parseJSONPath() ([]Expression, error) {
+	// Expect a string literal like '{a,b,c}'
+	if p.curTokenIs(TOKEN_STRING) {
+		pathStr := p.cur.Literal
+		p.nextToken()
+		// Parse the path string: {a,b,c} -> ["a", "b", "c"]
+		pathStr = strings.TrimPrefix(pathStr, "{")
+		pathStr = strings.TrimSuffix(pathStr, "}")
+		parts := strings.Split(pathStr, ",")
+		var path []Expression
+		for _, part := range parts {
+			path = append(path, &LiteralExpr{Value: catalog.NewText(strings.TrimSpace(part))})
+		}
+		return path, nil
+	}
+	return nil, fmt.Errorf("expected path string like '{a,b,c}'")
+}
+
+// parseJSONKeyArray parses an ARRAY['a', 'b'] expression for ?| and ?& operators
+func (p *Parser) parseJSONKeyArray() ([]Expression, error) {
+	// Check for ARRAY keyword or literal array
+	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ARRAY" {
+		p.nextToken() // consume ARRAY
+	}
+
+	if !p.curTokenIs(TOKEN_LBRACKET) {
+		// Maybe it's a single string
+		if p.curTokenIs(TOKEN_STRING) {
+			key := &LiteralExpr{Value: catalog.NewText(p.cur.Literal)}
+			p.nextToken()
+			return []Expression{key}, nil
+		}
+		return nil, fmt.Errorf("expected '[' for array")
+	}
+	p.nextToken() // consume [
+
+	var keys []Expression
+	for !p.curTokenIs(TOKEN_RBRACKET) && !p.curTokenIs(TOKEN_EOF) {
+		key, err := p.parsePrimaryExpression()
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken() // consume comma
+		} else {
+			break
+		}
+	}
+
+	if !p.curTokenIs(TOKEN_RBRACKET) {
+		return nil, fmt.Errorf("expected ']' after array elements")
+	}
+	p.nextToken() // consume ]
+
+	return keys, nil
 }
 
 func (p *Parser) parsePrimaryExpression() (Expression, error) {
