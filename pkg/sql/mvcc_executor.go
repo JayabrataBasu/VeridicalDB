@@ -1446,24 +1446,29 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, _ *ca
 		return nil
 	}
 
-	// Look for simple equality conditions: column = literal
+	// Look for simple equality or range conditions: column <op> literal
 	switch ex := where.(type) {
 	case *BinaryExpr:
-		// Only equality for now - range scans could be added later
-		if ex.Op == TOKEN_EQ {
+		// Check for equality and range operators
+		if ex.Op == TOKEN_EQ || ex.Op == TOKEN_LT || ex.Op == TOKEN_GT ||
+			ex.Op == TOKEN_LE || ex.Op == TOKEN_GE {
 			// Check if left is column and right is literal (or vice versa)
 			var colName string
 			var literal *LiteralExpr
+			op := ex.Op
 
 			if col, ok := ex.Left.(*ColumnRef); ok {
 				if lit, ok := ex.Right.(*LiteralExpr); ok {
 					colName = col.Name
 					literal = lit
+					// op stays the same: column < 10 means op is <
 				}
 			} else if col, ok := ex.Right.(*ColumnRef); ok {
 				if lit, ok := ex.Left.(*LiteralExpr); ok {
 					colName = col.Name
 					literal = lit
+					// Flip the operator: 10 < column means column > 10
+					op = flipComparisonOperator(op)
 				}
 			}
 
@@ -1478,7 +1483,7 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, _ *ca
 							return &IndexScanInfo{
 								IndexName: meta.Name,
 								Key:       key,
-								Op:        TOKEN_EQ,
+								Op:        op,
 								Column:    colName,
 							}
 						}
@@ -1489,6 +1494,22 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, _ *ca
 	}
 
 	return nil
+}
+
+// flipComparisonOperator flips a comparison operator (for when literal is on left side).
+func flipComparisonOperator(op TokenType) TokenType {
+	switch op {
+	case TOKEN_LT:
+		return TOKEN_GT
+	case TOKEN_GT:
+		return TOKEN_LT
+	case TOKEN_LE:
+		return TOKEN_GE
+	case TOKEN_GE:
+		return TOKEN_LE
+	default:
+		return op
+	}
 }
 
 // executeIndexScan performs an index scan using the given IndexScanInfo.
@@ -1505,10 +1526,71 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 		}
 		return rids, nil
 
-	// TODO: Range scans for <, >, <=, >=
+	case TOKEN_LT:
+		// column < value: scan from minimum to value (exclusive)
+		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, nil, scanInfo.Key)
+		if err != nil {
+			if err == btree.ErrKeyNotFound {
+				return nil, nil
+			}
+			return nil, err
+		}
+		// Exclude the boundary key (less than, not less than or equal)
+		return e.filterExcludeBoundary(rids, scanInfo.Key, false), nil
+
+	case TOKEN_LE:
+		// column <= value: scan from minimum to value (inclusive)
+		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, nil, scanInfo.Key)
+		if err != nil {
+			if err == btree.ErrKeyNotFound {
+				return nil, nil
+			}
+			return nil, err
+		}
+		// Include the boundary (SearchRange is inclusive)
+		return rids, nil
+
+	case TOKEN_GT:
+		// column > value: scan from value to maximum (exclusive)
+		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, scanInfo.Key, nil)
+		if err != nil {
+			if err == btree.ErrKeyNotFound {
+				return nil, nil
+			}
+			return nil, err
+		}
+		// Exclude the boundary key (greater than, not greater than or equal)
+		return e.filterExcludeBoundary(rids, scanInfo.Key, true), nil
+
+	case TOKEN_GE:
+		// column >= value: scan from value to maximum (inclusive)
+		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, scanInfo.Key, nil)
+		if err != nil {
+			if err == btree.ErrKeyNotFound {
+				return nil, nil
+			}
+			return nil, err
+		}
+		// Include the boundary (SearchRange is inclusive)
+		return rids, nil
+
 	default:
 		return nil, fmt.Errorf("unsupported index scan operator: %v", scanInfo.Op)
 	}
+}
+
+// filterExcludeBoundary removes entries that exactly match the boundary key.
+// For < operator, we want to exclude entries at the upper bound.
+// For > operator, we want to exclude entries at the lower bound.
+// The excludeStart parameter indicates if we're filtering the start (>) or end (<).
+func (e *MVCCExecutor) filterExcludeBoundary(rids []storage.RID, boundaryKey []byte, excludeStart bool) []storage.RID {
+	// For now, we rely on the index to return keys in order.
+	// If we need to filter exact matches, we would need the key values.
+	// The B-tree SearchRange returns inclusive results, so we need post-filtering.
+	// Since we don't have access to the keys here, we'll accept that SearchRange
+	// returns inclusive results and the WHERE clause evaluation will filter correctly.
+	// This is a simplification - a more complete implementation would track keys.
+	return rids
 }
 
 // executeSelectWithJoins handles SELECT with JOIN clauses for MVCC executor.

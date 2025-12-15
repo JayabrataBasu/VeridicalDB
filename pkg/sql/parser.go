@@ -110,6 +110,8 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseRevoke()
 	case TOKEN_USE:
 		return p.parseUseDatabase()
+	case TOKEN_CALL:
+		return p.parseCall()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
 	}
@@ -2051,6 +2053,22 @@ func (p *Parser) parseCreate() (Statement, error) {
 		return p.parseCreateTrigger()
 	}
 
+	// CREATE PROCEDURE
+	if p.curTokenIs(TOKEN_PROCEDURE) {
+		if isUnique {
+			return nil, fmt.Errorf("UNIQUE not valid for CREATE PROCEDURE")
+		}
+		return p.parseCreateProcedure(orReplace)
+	}
+
+	// CREATE FUNCTION
+	if p.curTokenIs(TOKEN_FUNCTION) {
+		if isUnique {
+			return nil, fmt.Errorf("UNIQUE not valid for CREATE FUNCTION")
+		}
+		return p.parseCreateFunction(orReplace)
+	}
+
 	if isUnique {
 		return nil, fmt.Errorf("UNIQUE keyword only valid for CREATE INDEX")
 	}
@@ -2535,6 +2553,14 @@ func (p *Parser) parseDrop() (Statement, error) {
 
 	if p.curTokenIs(TOKEN_TRIGGER) {
 		return p.parseDropTrigger()
+	}
+
+	if p.curTokenIs(TOKEN_PROCEDURE) {
+		return p.parseDropProcedure()
+	}
+
+	if p.curTokenIs(TOKEN_FUNCTION) {
+		return p.parseDropFunction()
 	}
 
 	if err := p.expect(TOKEN_TABLE); err != nil {
@@ -3585,7 +3611,7 @@ func (p *Parser) parseTruncate() (*TruncateTableStmt, error) {
 }
 
 // parseShow parses: SHOW TABLES or SHOW CREATE TABLE table_name
-func (p *Parser) parseShow() (*ShowStmt, error) {
+func (p *Parser) parseShow() (Statement, error) {
 	p.nextToken() // consume SHOW
 
 	if p.curTokenIs(TOKEN_TABLES) {
@@ -3620,6 +3646,20 @@ func (p *Parser) parseShow() (*ShowStmt, error) {
 			}
 		}
 		return &ShowStmt{ShowType: "TRIGGERS", TableName: tableName}, nil
+	}
+
+	// SHOW PROCEDURES
+	if p.curTokenIs(TOKEN_PROCEDURES) || p.curTokenIs(TOKEN_PROCEDURE) ||
+		(p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PROCEDURES") {
+		p.nextToken()
+		return &ShowProceduresStmt{}, nil
+	}
+
+	// SHOW FUNCTIONS
+	if p.curTokenIs(TOKEN_FUNCTION) ||
+		(p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "FUNCTIONS") {
+		p.nextToken()
+		return &ShowFunctionsStmt{}, nil
 	}
 
 	if p.curTokenIs(TOKEN_CREATE) {
@@ -4403,7 +4443,8 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 	p.nextToken() // consume EXECUTE
 
 	// Accept either FUNCTION or PROCEDURE (they're synonyms in PostgreSQL)
-	if p.curTokenIs(TOKEN_IDENT) && (strings.ToUpper(p.cur.Literal) == "FUNCTION" || strings.ToUpper(p.cur.Literal) == "PROCEDURE") {
+	// These are now keywords, not identifiers
+	if p.curTokenIs(TOKEN_FUNCTION) || p.curTokenIs(TOKEN_PROCEDURE) {
 		p.nextToken()
 	} else {
 		return nil, fmt.Errorf("expected FUNCTION or PROCEDURE after EXECUTE")
@@ -5032,4 +5073,1117 @@ func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error)
 	}
 
 	return def, nil
+}
+
+// ================== Stored Procedures / PL/pgSQL Parsing ==================
+
+// parsePLDataType parses a data type for PL/pgSQL (INT, BIGINT, TEXT, BOOL, TIMESTAMP, etc.)
+func (p *Parser) parsePLDataType() (catalog.DataType, error) {
+	switch p.cur.Type {
+	case TOKEN_INT_TYPE:
+		p.nextToken()
+		return catalog.TypeInt32, nil
+	case TOKEN_BIGINT:
+		p.nextToken()
+		return catalog.TypeInt64, nil
+	case TOKEN_TEXT:
+		p.nextToken()
+		return catalog.TypeText, nil
+	case TOKEN_BOOL:
+		p.nextToken()
+		return catalog.TypeBool, nil
+	case TOKEN_TIMESTAMP:
+		p.nextToken()
+		return catalog.TypeTimestamp, nil
+	case TOKEN_JSON_TYPE:
+		p.nextToken()
+		return catalog.TypeJSON, nil
+	default:
+		// Also check for identifier-style types
+		if p.curTokenIs(TOKEN_IDENT) {
+			typeName := strings.ToUpper(p.cur.Literal)
+			p.nextToken()
+			switch typeName {
+			case "INTEGER", "INT4":
+				return catalog.TypeInt32, nil
+			case "BIGINT", "INT8":
+				return catalog.TypeInt64, nil
+			case "TEXT", "VARCHAR", "STRING":
+				return catalog.TypeText, nil
+			case "BOOLEAN", "BOOL":
+				return catalog.TypeBool, nil
+			case "TIMESTAMP", "DATETIME":
+				return catalog.TypeTimestamp, nil
+			case "JSON", "JSONB":
+				return catalog.TypeJSON, nil
+			default:
+				return catalog.TypeUnknown, fmt.Errorf("unknown type: %s", typeName)
+			}
+		}
+		return catalog.TypeUnknown, fmt.Errorf("expected type, got %v (%q)", p.cur.Type, p.cur.Literal)
+	}
+}
+
+// parseCreateProcedure parses CREATE [OR REPLACE] PROCEDURE name(params) AS $$ body $$ LANGUAGE plpgsql
+func (p *Parser) parseCreateProcedure(orReplace bool) (*CreateProcedureStmt, error) {
+	p.nextToken() // consume PROCEDURE
+
+	stmt := &CreateProcedureStmt{}
+
+	// Check for IF NOT EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if !p.curTokenIs(TOKEN_NOT) {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after NOT")
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Procedure name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected procedure name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// Parameters
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after procedure name")
+	}
+
+	params, err := p.parseProcParams()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Params = params
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after parameters")
+	}
+
+	// AS keyword
+	if !p.curTokenIs(TOKEN_AS) {
+		return nil, fmt.Errorf("expected AS after parameters, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume AS
+
+	// Dollar-quoted body $$...$$
+	if !p.curTokenIs(TOKEN_DOLLAR_QUOTE) {
+		return nil, fmt.Errorf("expected $$ body $$, got %v", p.cur.Type)
+	}
+	stmt.BodyText = p.cur.Literal
+	p.nextToken() // consume dollar-quoted body
+
+	// LANGUAGE plpgsql
+	if !p.curTokenIs(TOKEN_LANGUAGE) {
+		return nil, fmt.Errorf("expected LANGUAGE after body, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume LANGUAGE
+
+	if p.curTokenIs(TOKEN_PLPGSQL) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
+		stmt.Language = "plpgsql"
+	} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
+		stmt.Language = "sql"
+	} else {
+		return nil, fmt.Errorf("expected PLPGSQL or SQL after LANGUAGE, got %v", p.cur.Literal)
+	}
+	p.nextToken()
+
+	// Parse the body into PLBlock
+	if stmt.Language == "plpgsql" {
+		body, err := p.parsePLBody(stmt.BodyText)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing procedure body: %v", err)
+		}
+		stmt.Body = body
+	}
+
+	return stmt, nil
+}
+
+// parseCreateFunction parses CREATE [OR REPLACE] FUNCTION name(params) RETURNS type AS $$ body $$ LANGUAGE plpgsql
+func (p *Parser) parseCreateFunction(orReplace bool) (*CreateFunctionStmt, error) {
+	p.nextToken() // consume FUNCTION
+
+	stmt := &CreateFunctionStmt{}
+
+	// Check for IF NOT EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if !p.curTokenIs(TOKEN_NOT) {
+			return nil, fmt.Errorf("expected NOT after IF")
+		}
+		p.nextToken() // consume NOT
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after NOT")
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Function name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected function name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// Parameters
+	if err := p.expect(TOKEN_LPAREN); err != nil {
+		return nil, fmt.Errorf("expected '(' after function name")
+	}
+
+	params, err := p.parseProcParams()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Params = params
+
+	if err := p.expect(TOKEN_RPAREN); err != nil {
+		return nil, fmt.Errorf("expected ')' after parameters")
+	}
+
+	// RETURNS type
+	if !p.curTokenIs(TOKEN_RETURNS) {
+		return nil, fmt.Errorf("expected RETURNS after parameters, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume RETURNS
+
+	// Return type
+	if p.curTokenIs(TOKEN_VOID) {
+		stmt.ReturnType = catalog.TypeInt32 // VOID represented as int with special handling
+		p.nextToken()
+	} else {
+		retType, err := p.parsePLDataType()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing return type: %v", err)
+		}
+		stmt.ReturnType = retType
+	}
+
+	// AS keyword
+	if !p.curTokenIs(TOKEN_AS) {
+		return nil, fmt.Errorf("expected AS after return type, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume AS
+
+	// Dollar-quoted body $$...$$
+	if !p.curTokenIs(TOKEN_DOLLAR_QUOTE) {
+		return nil, fmt.Errorf("expected $$ body $$, got %v", p.cur.Type)
+	}
+	stmt.BodyText = p.cur.Literal
+	p.nextToken() // consume dollar-quoted body
+
+	// LANGUAGE plpgsql
+	if !p.curTokenIs(TOKEN_LANGUAGE) {
+		return nil, fmt.Errorf("expected LANGUAGE after body, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume LANGUAGE
+
+	if p.curTokenIs(TOKEN_PLPGSQL) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
+		stmt.Language = "plpgsql"
+	} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
+		stmt.Language = "sql"
+	} else {
+		return nil, fmt.Errorf("expected PLPGSQL or SQL after LANGUAGE, got %v", p.cur.Literal)
+	}
+	p.nextToken()
+
+	// Parse the body into PLBlock
+	if stmt.Language == "plpgsql" {
+		body, err := p.parsePLBody(stmt.BodyText)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing function body: %v", err)
+		}
+		stmt.Body = body
+	}
+
+	return stmt, nil
+}
+
+// parseProcParams parses procedure/function parameters: (name TYPE [DEFAULT expr], ...)
+func (p *Parser) parseProcParams() ([]ProcParam, error) {
+	var params []ProcParam
+
+	if p.curTokenIs(TOKEN_RPAREN) {
+		return params, nil // empty parameter list
+	}
+
+	for {
+		param := ProcParam{Mode: ParamModeIn} // default mode is IN
+
+		// Check for mode: IN, OUT, INOUT
+		if p.curTokenIs(TOKEN_IN) {
+			p.nextToken()
+			if p.curTokenIs(TOKEN_OUT) {
+				param.Mode = ParamModeInOut
+				p.nextToken()
+			}
+		} else if p.curTokenIs(TOKEN_OUT) {
+			param.Mode = ParamModeOut
+			p.nextToken()
+		} else if p.curTokenIs(TOKEN_INOUT) {
+			param.Mode = ParamModeInOut
+			p.nextToken()
+		}
+
+		// Parameter name
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected parameter name, got %v", p.cur.Type)
+		}
+		name, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		param.Name = name
+
+		// Parameter type
+		dataType, err := p.parsePLDataType()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing parameter type: %v", err)
+		}
+		param.Type = dataType
+
+		// Optional DEFAULT
+		if p.curTokenIs(TOKEN_DEFAULT) || p.curTokenIs(TOKEN_COLON_EQ) {
+			p.nextToken() // consume DEFAULT or :=
+			defVal, err := p.parseExpression()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing default value: %v", err)
+			}
+			param.Default = defVal
+		}
+
+		params = append(params, param)
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	return params, nil
+}
+
+// parsePLBody parses the PL/pgSQL body text into a PLBlock AST.
+func (p *Parser) parsePLBody(bodyText string) (*PLBlock, error) {
+	// Create a new parser for the body text
+	plParser := NewParser(bodyText)
+	return plParser.parsePLBlock()
+}
+
+// parsePLBlock parses a PL/pgSQL BEGIN...END block with optional DECLARE section.
+func (p *Parser) parsePLBlock() (*PLBlock, error) {
+	block := &PLBlock{}
+
+	// Optional DECLARE section
+	if p.curTokenIs(TOKEN_DECLARE) {
+		p.nextToken() // consume DECLARE
+		decls, err := p.parsePLDeclarations()
+		if err != nil {
+			return nil, err
+		}
+		block.Declarations = decls
+	}
+
+	// BEGIN
+	if !p.curTokenIs(TOKEN_BEGIN) {
+		return nil, fmt.Errorf("expected BEGIN, got %v (%q)", p.cur.Type, p.cur.Literal)
+	}
+	p.nextToken() // consume BEGIN
+
+	// Statements until END or EXCEPTION
+	stmts, err := p.parsePLStatements()
+	if err != nil {
+		return nil, err
+	}
+	block.Statements = stmts
+
+	// Optional EXCEPTION section
+	if p.curTokenIs(TOKEN_EXCEPTION) {
+		p.nextToken() // consume EXCEPTION
+		handlers, err := p.parsePLExceptionHandlers()
+		if err != nil {
+			return nil, err
+		}
+		block.ExceptionHandlers = handlers
+	}
+
+	// END
+	if !p.curTokenIs(TOKEN_END) {
+		return nil, fmt.Errorf("expected END, got %v (%q)", p.cur.Type, p.cur.Literal)
+	}
+	p.nextToken() // consume END
+
+	// Optional semicolon after END
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return block, nil
+}
+
+// parsePLDeclarations parses variable declarations in DECLARE section.
+func (p *Parser) parsePLDeclarations() ([]PLVarDecl, error) {
+	var decls []PLVarDecl
+
+	for !p.curTokenIs(TOKEN_BEGIN) && !p.curTokenIs(TOKEN_EOF) {
+		decl := PLVarDecl{}
+
+		// Variable name
+		if !p.isIdentifierOrContextualKeyword() {
+			return nil, fmt.Errorf("expected variable name in DECLARE, got %v", p.cur.Type)
+		}
+		name, err := p.parseIdentifier()
+		if err != nil {
+			return nil, err
+		}
+		decl.Name = name
+
+		// Data type
+		dataType, err := p.parsePLDataType()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing variable type: %v", err)
+		}
+		decl.Type = dataType
+
+		// Optional NOT NULL
+		if p.curTokenIs(TOKEN_NOT) {
+			p.nextToken()
+			if err := p.expect(TOKEN_NULL); err != nil {
+				return nil, fmt.Errorf("expected NULL after NOT")
+			}
+			decl.NotNull = true
+		}
+
+		// Optional DEFAULT or :=
+		if p.curTokenIs(TOKEN_DEFAULT) || p.curTokenIs(TOKEN_COLON_EQ) {
+			p.nextToken()
+			defVal, err := p.parseExpression()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing default value: %v", err)
+			}
+			decl.Default = defVal
+		}
+
+		// Semicolon
+		if p.curTokenIs(TOKEN_SEMICOLON) {
+			p.nextToken()
+		}
+
+		decls = append(decls, decl)
+	}
+
+	return decls, nil
+}
+
+// parsePLStatements parses PL/pgSQL statements until END, EXCEPTION, ELSIF, ELSE, or LOOP terminator.
+func (p *Parser) parsePLStatements() ([]PLStatement, error) {
+	var stmts []PLStatement
+
+	for !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EXCEPTION) &&
+		!p.curTokenIs(TOKEN_ELSIF) && !p.curTokenIs(TOKEN_ELSE) &&
+		!p.curTokenIs(TOKEN_EOF) {
+
+		stmt, err := p.parsePLStatement()
+		if err != nil {
+			return nil, err
+		}
+		if stmt != nil {
+			stmts = append(stmts, stmt)
+		}
+	}
+
+	return stmts, nil
+}
+
+// parsePLStatement parses a single PL/pgSQL statement.
+func (p *Parser) parsePLStatement() (PLStatement, error) {
+	switch {
+	case p.curTokenIs(TOKEN_IF):
+		return p.parsePLIf()
+
+	case p.curTokenIs(TOKEN_WHILE):
+		return p.parsePLWhile()
+
+	case p.curTokenIs(TOKEN_LOOP):
+		return p.parsePLLoop()
+
+	case p.curTokenIs(TOKEN_FOR):
+		return p.parsePLFor()
+
+	case p.curTokenIs(TOKEN_EXIT):
+		return p.parsePLExit()
+
+	case p.curTokenIs(TOKEN_CONTINUE):
+		return p.parsePLContinue()
+
+	case p.curTokenIs(TOKEN_RETURN):
+		return p.parsePLReturn()
+
+	case p.curTokenIs(TOKEN_RAISE):
+		return p.parsePLRaise()
+
+	case p.curTokenIs(TOKEN_PERFORM):
+		return p.parsePLPerform()
+
+	case p.curTokenIs(TOKEN_SELECT), p.curTokenIs(TOKEN_INSERT),
+		p.curTokenIs(TOKEN_UPDATE), p.curTokenIs(TOKEN_DELETE):
+		return p.parsePLSQL()
+
+	case p.curTokenIs(TOKEN_NULL):
+		// NULL statement (do nothing)
+		p.nextToken()
+		if p.curTokenIs(TOKEN_SEMICOLON) {
+			p.nextToken()
+		}
+		return nil, nil
+
+	case p.isIdentifierOrContextualKeyword():
+		// Could be assignment: var := expr;
+		return p.parsePLAssignOrSQL()
+
+	default:
+		return nil, fmt.Errorf("unexpected token in PL/pgSQL body: %v (%q)", p.cur.Type, p.cur.Literal)
+	}
+}
+
+// parsePLIf parses IF...ELSIF...ELSE...END IF statement.
+func (p *Parser) parsePLIf() (*PLIf, error) {
+	p.nextToken() // consume IF
+
+	stmt := &PLIf{}
+
+	// Condition
+	cond, err := p.parseExpression()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing IF condition: %v", err)
+	}
+	stmt.Condition = cond
+
+	// THEN
+	if !p.curTokenIs(TOKEN_THEN) {
+		return nil, fmt.Errorf("expected THEN after IF condition, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume THEN
+
+	// THEN statements
+	thenStmts, err := p.parsePLStatements()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Then = thenStmts
+
+	// ELSIF branches
+	for p.curTokenIs(TOKEN_ELSIF) {
+		p.nextToken() // consume ELSIF
+		elsif := PLElsIf{}
+
+		cond, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing ELSIF condition: %v", err)
+		}
+		elsif.Condition = cond
+
+		if !p.curTokenIs(TOKEN_THEN) {
+			return nil, fmt.Errorf("expected THEN after ELSIF condition")
+		}
+		p.nextToken() // consume THEN
+
+		stmts, err := p.parsePLStatements()
+		if err != nil {
+			return nil, err
+		}
+		elsif.Then = stmts
+
+		stmt.ElsIfs = append(stmt.ElsIfs, elsif)
+	}
+
+	// ELSE branch
+	if p.curTokenIs(TOKEN_ELSE) {
+		p.nextToken() // consume ELSE
+		elseStmts, err := p.parsePLStatements()
+		if err != nil {
+			return nil, err
+		}
+		stmt.Else = elseStmts
+	}
+
+	// END IF
+	if !p.curTokenIs(TOKEN_END) {
+		return nil, fmt.Errorf("expected END IF, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume END
+
+	if !p.curTokenIs(TOKEN_IF) {
+		return nil, fmt.Errorf("expected IF after END, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume IF
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLWhile parses WHILE condition LOOP ... END LOOP statement.
+func (p *Parser) parsePLWhile() (*PLWhile, error) {
+	p.nextToken() // consume WHILE
+
+	stmt := &PLWhile{}
+
+	// Condition
+	cond, err := p.parseExpression()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing WHILE condition: %v", err)
+	}
+	stmt.Condition = cond
+
+	// LOOP
+	if !p.curTokenIs(TOKEN_LOOP) {
+		return nil, fmt.Errorf("expected LOOP after WHILE condition, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume LOOP
+
+	// Body statements until END LOOP
+	body, err := p.parsePLLoopBody()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Body = body
+
+	return stmt, nil
+}
+
+// parsePLLoop parses simple LOOP ... END LOOP statement.
+func (p *Parser) parsePLLoop() (*PLLoop, error) {
+	p.nextToken() // consume LOOP
+
+	stmt := &PLLoop{}
+
+	body, err := p.parsePLLoopBody()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Body = body
+
+	return stmt, nil
+}
+
+// parsePLLoopBody parses loop body until END LOOP.
+func (p *Parser) parsePLLoopBody() ([]PLStatement, error) {
+	var stmts []PLStatement
+
+	for !p.curTokenIs(TOKEN_EOF) {
+		// Check for END LOOP
+		if p.curTokenIs(TOKEN_END) {
+			p.nextToken() // consume END
+			if !p.curTokenIs(TOKEN_LOOP) {
+				return nil, fmt.Errorf("expected LOOP after END in loop body")
+			}
+			p.nextToken() // consume LOOP
+			if p.curTokenIs(TOKEN_SEMICOLON) {
+				p.nextToken()
+			}
+			return stmts, nil
+		}
+
+		stmt, err := p.parsePLStatement()
+		if err != nil {
+			return nil, err
+		}
+		if stmt != nil {
+			stmts = append(stmts, stmt)
+		}
+	}
+
+	return nil, fmt.Errorf("unexpected EOF in loop body")
+}
+
+// parsePLFor parses FOR loop (numeric or query).
+func (p *Parser) parsePLFor() (*PLFor, error) {
+	p.nextToken() // consume FOR
+
+	stmt := &PLFor{}
+
+	// Loop variable
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected loop variable, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Variable = name
+
+	// IN keyword
+	if !p.curTokenIs(TOKEN_IN) {
+		return nil, fmt.Errorf("expected IN after loop variable, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume IN
+
+	// Check for REVERSE
+	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "REVERSE" {
+		stmt.Reverse = true
+		p.nextToken()
+	}
+
+	// Check if it's a query loop: FOR rec IN (SELECT ...) or FOR rec IN query
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume (
+		if p.curTokenIs(TOKEN_SELECT) {
+			query, err := p.parseSelect()
+			if err != nil {
+				return nil, fmt.Errorf("error parsing FOR query: %v", err)
+			}
+			stmt.Query = query
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after FOR query")
+			}
+		} else {
+			// Numeric range in parentheses
+			lower, err := p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+			stmt.LowerBound = lower
+
+			// .. or TO for range
+			if p.cur.Literal == ".." {
+				p.nextToken()
+			}
+
+			upper, err := p.parseExpression()
+			if err != nil {
+				return nil, err
+			}
+			stmt.UpperBound = upper
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after numeric range")
+			}
+		}
+	} else {
+		// Numeric range: lower..upper or lower TO upper
+		lower, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		stmt.LowerBound = lower
+
+		// .. separator
+		if p.cur.Literal == ".." {
+			p.nextToken()
+		}
+
+		upper, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		stmt.UpperBound = upper
+	}
+
+	// LOOP
+	if !p.curTokenIs(TOKEN_LOOP) {
+		return nil, fmt.Errorf("expected LOOP, got %v", p.cur.Type)
+	}
+	p.nextToken() // consume LOOP
+
+	// Body
+	body, err := p.parsePLLoopBody()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Body = body
+
+	return stmt, nil
+}
+
+// parsePLExit parses EXIT [label] [WHEN condition] statement.
+func (p *Parser) parsePLExit() (*PLExit, error) {
+	p.nextToken() // consume EXIT
+
+	stmt := &PLExit{}
+
+	// Optional label
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHEN) {
+		label, _ := p.parseIdentifier()
+		stmt.Label = label
+	}
+
+	// Optional WHEN condition
+	if p.curTokenIs(TOKEN_WHEN) {
+		p.nextToken() // consume WHEN
+		cond, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing EXIT WHEN condition: %v", err)
+		}
+		stmt.Condition = cond
+	}
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLContinue parses CONTINUE [label] [WHEN condition] statement.
+func (p *Parser) parsePLContinue() (*PLContinue, error) {
+	p.nextToken() // consume CONTINUE
+
+	stmt := &PLContinue{}
+
+	// Optional label
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHEN) {
+		label, _ := p.parseIdentifier()
+		stmt.Label = label
+	}
+
+	// Optional WHEN condition
+	if p.curTokenIs(TOKEN_WHEN) {
+		p.nextToken() // consume WHEN
+		cond, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing CONTINUE WHEN condition: %v", err)
+		}
+		stmt.Condition = cond
+	}
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLReturn parses RETURN [expression] statement.
+func (p *Parser) parsePLReturn() (*PLReturn, error) {
+	p.nextToken() // consume RETURN
+
+	stmt := &PLReturn{}
+
+	// Optional return value (not followed immediately by semicolon or END)
+	if !p.curTokenIs(TOKEN_SEMICOLON) && !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EOF) {
+		val, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing RETURN expression: %v", err)
+		}
+		stmt.Value = val
+	}
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLRaise parses RAISE [level] 'message' [, args] statement.
+func (p *Parser) parsePLRaise() (*PLRaise, error) {
+	p.nextToken() // consume RAISE
+
+	stmt := &PLRaise{Level: "EXCEPTION"} // default level
+
+	// Optional level: NOTICE, WARNING, EXCEPTION, etc.
+	if p.curTokenIs(TOKEN_NOTICE) || p.curTokenIs(TOKEN_EXCEPTION) ||
+		(p.curTokenIs(TOKEN_IDENT) && (strings.ToUpper(p.cur.Literal) == "WARNING" ||
+			strings.ToUpper(p.cur.Literal) == "INFO" ||
+			strings.ToUpper(p.cur.Literal) == "DEBUG")) {
+		stmt.Level = strings.ToUpper(p.cur.Literal)
+		p.nextToken()
+	}
+
+	// Message string
+	if p.curTokenIs(TOKEN_STRING) {
+		stmt.Message = p.cur.Literal
+		p.nextToken()
+	}
+
+	// Optional format arguments
+	for p.curTokenIs(TOKEN_COMMA) {
+		p.nextToken() // consume comma
+		arg, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing RAISE argument: %v", err)
+		}
+		stmt.Args = append(stmt.Args, arg)
+	}
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLPerform parses PERFORM query statement.
+func (p *Parser) parsePLPerform() (*PLPerform, error) {
+	p.nextToken() // consume PERFORM
+
+	stmt := &PLPerform{}
+
+	// The rest is a SELECT query (without SELECT keyword)
+	// PERFORM expr is equivalent to SELECT expr with results discarded
+	// For simplicity, we'll parse as if it were a SELECT
+	// We need to construct a pseudo-SELECT
+
+	// Save position and manually construct SELECT
+	query := &SelectStmt{
+		Columns: []SelectColumn{},
+	}
+
+	// Parse expression list as columns
+	for {
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing PERFORM expression: %v", err)
+		}
+		query.Columns = append(query.Columns, SelectColumn{Expression: expr})
+
+		if p.curTokenIs(TOKEN_COMMA) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	// Optional FROM
+	if p.curTokenIs(TOKEN_FROM) {
+		p.nextToken()
+		if p.isIdentifierOrContextualKeyword() {
+			name, _ := p.parseIdentifier()
+			query.TableName = name
+		}
+	}
+
+	// Optional WHERE
+	if p.curTokenIs(TOKEN_WHERE) {
+		p.nextToken()
+		where, err := p.parseExpression()
+		if err != nil {
+			return nil, err
+		}
+		query.Where = where
+	}
+
+	stmt.Query = query
+
+	// Semicolon
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
+
+	return stmt, nil
+}
+
+// parsePLSQL parses embedded SQL (SELECT INTO, INSERT, UPDATE, DELETE).
+func (p *Parser) parsePLSQL() (*PLSQL, error) {
+	stmt := &PLSQL{}
+
+	// Parse the SQL statement
+	sqlStmt, err := p.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing embedded SQL: %v", err)
+	}
+	stmt.Statement = sqlStmt
+
+	// Check for INTO clause (for SELECT)
+	// Note: INTO should be parsed within SELECT for PL/pgSQL
+	// This is simplified - real implementation would need more work
+
+	return stmt, nil
+}
+
+// parsePLAssignOrSQL parses variable assignment or SQL statement starting with identifier.
+func (p *Parser) parsePLAssignOrSQL() (PLStatement, error) {
+	// Save the identifier
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check for := assignment
+	if p.curTokenIs(TOKEN_COLON_EQ) {
+		p.nextToken() // consume :=
+		expr, err := p.parseExpression()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing assignment value: %v", err)
+		}
+
+		if p.curTokenIs(TOKEN_SEMICOLON) {
+			p.nextToken()
+		}
+
+		return &PLAssign{Variable: name, Value: expr}, nil
+	}
+
+	// Could be a procedure/function call or other statement
+	// For now, treat as an error
+	return nil, fmt.Errorf("unexpected identifier %q in PL/pgSQL body (expected := for assignment)", name)
+}
+
+// parsePLExceptionHandlers parses EXCEPTION WHEN handlers.
+func (p *Parser) parsePLExceptionHandlers() ([]PLExceptionHandler, error) {
+	var handlers []PLExceptionHandler
+
+	for p.curTokenIs(TOKEN_WHEN) {
+		p.nextToken() // consume WHEN
+
+		handler := PLExceptionHandler{}
+
+		// Exception names (e.g., OTHERS, NO_DATA_FOUND)
+		for {
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected exception name")
+			}
+			name, _ := p.parseIdentifier()
+			handler.Exceptions = append(handler.Exceptions, name)
+
+			if p.curTokenIs(TOKEN_OR) {
+				p.nextToken() // consume OR
+			} else {
+				break
+			}
+		}
+
+		// THEN
+		if !p.curTokenIs(TOKEN_THEN) {
+			return nil, fmt.Errorf("expected THEN after exception names")
+		}
+		p.nextToken() // consume THEN
+
+		// Handler statements until next WHEN or END
+		var stmts []PLStatement
+		for !p.curTokenIs(TOKEN_WHEN) && !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EOF) {
+			stmt, err := p.parsePLStatement()
+			if err != nil {
+				return nil, err
+			}
+			if stmt != nil {
+				stmts = append(stmts, stmt)
+			}
+		}
+		handler.Statements = stmts
+
+		handlers = append(handlers, handler)
+	}
+
+	return handlers, nil
+}
+
+// parseDropProcedure parses DROP PROCEDURE [IF EXISTS] name
+func (p *Parser) parseDropProcedure() (*DropProcedureStmt, error) {
+	p.nextToken() // consume PROCEDURE
+
+	stmt := &DropProcedureStmt{}
+
+	// Optional IF EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF")
+		}
+		stmt.IfExists = true
+	}
+
+	// Procedure name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected procedure name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	return stmt, nil
+}
+
+// parseDropFunction parses DROP FUNCTION [IF EXISTS] name
+func (p *Parser) parseDropFunction() (*DropFunctionStmt, error) {
+	p.nextToken() // consume FUNCTION
+
+	stmt := &DropFunctionStmt{}
+
+	// Optional IF EXISTS
+	if p.curTokenIs(TOKEN_IF) {
+		p.nextToken() // consume IF
+		if err := p.expect(TOKEN_EXISTS); err != nil {
+			return nil, fmt.Errorf("expected EXISTS after IF")
+		}
+		stmt.IfExists = true
+	}
+
+	// Function name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected function name, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	return stmt, nil
+}
+
+// parseCall parses CALL procedure_name(args...)
+func (p *Parser) parseCall() (*CallStmt, error) {
+	p.nextToken() // consume CALL
+
+	stmt := &CallStmt{}
+
+	// Procedure name
+	if !p.isIdentifierOrContextualKeyword() {
+		return nil, fmt.Errorf("expected procedure name after CALL, got %v", p.cur.Type)
+	}
+	name, err := p.parseIdentifier()
+	if err != nil {
+		return nil, err
+	}
+	stmt.Name = name
+
+	// Arguments (optional parentheses)
+	if p.curTokenIs(TOKEN_LPAREN) {
+		p.nextToken() // consume (
+
+		if !p.curTokenIs(TOKEN_RPAREN) {
+			for {
+				arg, err := p.parseExpression()
+				if err != nil {
+					return nil, fmt.Errorf("error parsing CALL argument: %v", err)
+				}
+				stmt.Args = append(stmt.Args, arg)
+
+				if p.curTokenIs(TOKEN_COMMA) {
+					p.nextToken()
+				} else {
+					break
+				}
+			}
+		}
+
+		if err := p.expect(TOKEN_RPAREN); err != nil {
+			return nil, fmt.Errorf("expected ')' after CALL arguments")
+		}
+	}
+
+	return stmt, nil
 }

@@ -324,6 +324,31 @@ const (
 	TOKEN_LESS       // LESS for LESS THAN
 	TOKEN_THAN       // THAN for LESS THAN
 	TOKEN_PARTITIONS // PARTITIONS keyword
+
+	// Stored Procedures / PL/pgSQL
+	TOKEN_PROCEDURE    // PROCEDURE keyword
+	TOKEN_CALL         // CALL keyword
+	TOKEN_LANGUAGE     // LANGUAGE keyword
+	TOKEN_PLPGSQL      // PLPGSQL keyword
+	TOKEN_DECLARE      // DECLARE keyword
+	TOKEN_LOOP         // LOOP keyword
+	TOKEN_WHILE        // WHILE keyword
+	TOKEN_EXIT         // EXIT keyword
+	TOKEN_CONTINUE     // CONTINUE keyword
+	TOKEN_RETURN       // RETURN keyword
+	TOKEN_ELSIF        // ELSIF keyword
+	TOKEN_RAISE        // RAISE keyword
+	TOKEN_NOTICE       // NOTICE keyword
+	TOKEN_EXCEPTION    // EXCEPTION keyword
+	TOKEN_PERFORM      // PERFORM keyword
+	TOKEN_DOLLAR_QUOTE // $$ dollar quoting
+	TOKEN_COLON_EQ     // := assignment
+	TOKEN_PROCEDURES   // PROCEDURES keyword for SHOW
+	TOKEN_INOUT        // INOUT parameter mode
+	TOKEN_OUT          // OUT parameter mode
+	TOKEN_FUNCTION     // FUNCTION keyword
+	TOKEN_RETURNS      // RETURNS keyword
+	TOKEN_VOID         // VOID return type
 )
 
 var keywords = map[string]TokenType{
@@ -536,6 +561,28 @@ var keywords = map[string]TokenType{
 	"LESS":       TOKEN_LESS,
 	"THAN":       TOKEN_THAN,
 	"PARTITIONS": TOKEN_PARTITIONS,
+	// Stored Procedures / PL/pgSQL
+	"PROCEDURE":  TOKEN_PROCEDURE,
+	"CALL":       TOKEN_CALL,
+	"LANGUAGE":   TOKEN_LANGUAGE,
+	"PLPGSQL":    TOKEN_PLPGSQL,
+	"DECLARE":    TOKEN_DECLARE,
+	"LOOP":       TOKEN_LOOP,
+	"WHILE":      TOKEN_WHILE,
+	"EXIT":       TOKEN_EXIT,
+	"CONTINUE":   TOKEN_CONTINUE,
+	"RETURN":     TOKEN_RETURN,
+	"ELSIF":      TOKEN_ELSIF,
+	"RAISE":      TOKEN_RAISE,
+	"NOTICE":     TOKEN_NOTICE,
+	"EXCEPTION":  TOKEN_EXCEPTION,
+	"PERFORM":    TOKEN_PERFORM,
+	"PROCEDURES": TOKEN_PROCEDURES,
+	"INOUT":      TOKEN_INOUT,
+	"OUT":        TOKEN_OUT,
+	"FUNCTION":   TOKEN_FUNCTION,
+	"RETURNS":    TOKEN_RETURNS,
+	"VOID":       TOKEN_VOID,
 }
 
 // Token represents a lexical token.
@@ -739,8 +786,26 @@ func (l *Lexer) NextToken() Token {
 		}
 	case '$':
 		tok.Pos = l.pos
-		tok.Literal = l.readPlaceholder()
-		tok.Type = TOKEN_PLACEHOLDER
+		if l.peekChar() == '$' {
+			// Dollar quoting $$...$$
+			tok.Literal = l.readDollarQuote()
+			tok.Type = TOKEN_DOLLAR_QUOTE
+		} else {
+			// Placeholder $1, $2, etc.
+			tok.Literal = l.readPlaceholder()
+			tok.Type = TOKEN_PLACEHOLDER
+		}
+		return tok
+	case ':':
+		tok.Pos = l.pos
+		if l.peekChar() == '=' {
+			l.readChar() // consume :
+			tok = Token{Type: TOKEN_COLON_EQ, Literal: ":=", Pos: tok.Pos}
+			l.readChar() // consume =
+		} else {
+			tok = Token{Type: TOKEN_ILLEGAL, Literal: ":", Pos: l.pos}
+			l.readChar()
+		}
 		return tok
 	case '\'':
 		tok.Pos = l.pos
@@ -792,6 +857,29 @@ func (l *Lexer) readPlaceholder() string {
 		l.readChar()
 	}
 	return l.input[pos:l.pos]
+}
+
+// readDollarQuote reads a dollar-quoted string $$content$$ and returns just the content.
+func (l *Lexer) readDollarQuote() string {
+	l.readChar() // consume first $
+	l.readChar() // consume second $
+	pos := l.pos
+	// Read until we find closing $$
+	for {
+		if l.ch == 0 {
+			break // EOF
+		}
+		if l.ch == '$' && l.peekChar() == '$' {
+			break // found closing $$
+		}
+		l.readChar()
+	}
+	content := l.input[pos:l.pos]
+	if l.ch == '$' {
+		l.readChar() // consume first closing $
+		l.readChar() // consume second closing $
+	}
+	return content
 }
 
 func (l *Lexer) readString() string {

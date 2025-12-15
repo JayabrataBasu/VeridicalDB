@@ -471,3 +471,133 @@ func TestIndexOnExistingData(t *testing.T) {
 		t.Log("Index on existing data test passed - found 3 rows via index")
 	}
 }
+
+// TestIndexRangeScan tests index usage for range conditions (<, >, <=, >=).
+func TestIndexRangeScan(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	// Create a table with numeric data
+	_, err := session.ExecuteSQL("CREATE TABLE scores (id INT PRIMARY KEY, name TEXT, score INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Create an index on score column
+	_, err = session.ExecuteSQL("CREATE INDEX idx_scores_score ON scores (score);")
+	if err != nil {
+		t.Fatalf("CREATE INDEX failed: %v", err)
+	}
+
+	// Insert test data with various scores
+	testData := []struct {
+		id    int
+		name  string
+		score int
+	}{
+		{1, "Alice", 85},
+		{2, "Bob", 72},
+		{3, "Carol", 95},
+		{4, "Dave", 60},
+		{5, "Eve", 88},
+		{6, "Frank", 72},
+		{7, "Grace", 100},
+		{8, "Henry", 45},
+	}
+
+	for _, td := range testData {
+		_, err := session.ExecuteSQL("INSERT INTO scores VALUES (" +
+			intToStr(td.id) + ", '" + td.name + "', " + intToStr(td.score) + ");")
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name       string
+		query      string
+		expectedN  int
+		expectDesc string
+	}{
+		{
+			name:       "greater than",
+			query:      "SELECT * FROM scores WHERE score > 80",
+			expectedN:  4, // Alice(85), Carol(95), Eve(88), Grace(100)
+			expectDesc: "scores > 80",
+		},
+		{
+			name:       "greater than or equal",
+			query:      "SELECT * FROM scores WHERE score >= 85",
+			expectedN:  4, // Alice(85), Carol(95), Eve(88), Grace(100)
+			expectDesc: "scores >= 85",
+		},
+		{
+			name:       "less than",
+			query:      "SELECT * FROM scores WHERE score < 70",
+			expectedN:  2, // Dave(60), Henry(45)
+			expectDesc: "scores < 70",
+		},
+		{
+			name:       "less than or equal",
+			query:      "SELECT * FROM scores WHERE score <= 72",
+			expectedN:  4, // Bob(72), Dave(60), Frank(72), Henry(45)
+			expectDesc: "scores <= 72",
+		},
+		{
+			name:       "greater than reversed",
+			query:      "SELECT * FROM scores WHERE 80 < score",
+			expectedN:  4, // Same as score > 80
+			expectDesc: "80 < score (reversed)",
+		},
+		{
+			name:       "less than reversed",
+			query:      "SELECT * FROM scores WHERE 90 > score",
+			expectedN:  6, // All except Carol(95) and Grace(100)
+			expectDesc: "90 > score (reversed)",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			session.ExecuteSQL("BEGIN;")
+			result, err := session.ExecuteSQL(tc.query)
+			if err != nil {
+				t.Fatalf("Query failed: %v", err)
+			}
+			session.ExecuteSQL("COMMIT;")
+
+			if len(result.Rows) != tc.expectedN {
+				t.Errorf("Expected %d rows for %s, got %d", tc.expectedN, tc.expectDesc, len(result.Rows))
+				for i, row := range result.Rows {
+					t.Logf("  Row %d: %v", i, row)
+				}
+			} else {
+				t.Logf("Range scan test passed: %s returned %d rows", tc.expectDesc, len(result.Rows))
+			}
+		})
+	}
+}
+
+// intToStr is a simple int to string converter for test data.
+func intToStr(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := false
+	if i < 0 {
+		neg = true
+		i = -i
+	}
+	var buf [20]byte
+	pos := len(buf)
+	for i > 0 {
+		pos--
+		buf[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		pos--
+		buf[pos] = '-'
+	}
+	return string(buf[pos:])
+}

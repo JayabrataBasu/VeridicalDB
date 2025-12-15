@@ -2,6 +2,7 @@ package sql
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
@@ -16,11 +17,12 @@ type Session struct {
 	mtm        *catalog.MVCCTableManager
 	executor   *MVCCExecutor
 	txnMgr     *txn.Manager
-	lockMgr    *lock.Manager            // Optional, can be nil for single-threaded mode
-	idxMgr     *btree.IndexManager      // Optional, can be nil if indexes not used
-	userCat    *auth.UserCatalog        // Optional, can be nil if auth disabled
-	dbMgr      *catalog.DatabaseManager // Optional, for multi-database support
-	triggerCat *catalog.TriggerCatalog  // Optional, for trigger support
+	lockMgr    *lock.Manager             // Optional, can be nil for single-threaded mode
+	idxMgr     *btree.IndexManager       // Optional, can be nil if indexes not used
+	userCat    *auth.UserCatalog         // Optional, can be nil if auth disabled
+	dbMgr      *catalog.DatabaseManager  // Optional, for multi-database support
+	triggerCat *catalog.TriggerCatalog   // Optional, for trigger support
+	procCat    *catalog.ProcedureCatalog // Optional, for stored procedures/functions
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -95,6 +97,11 @@ func (s *Session) SetTriggerCatalog(triggerCat *catalog.TriggerCatalog) {
 	s.triggerCat = triggerCat
 	// Also set on executor for DML trigger firing
 	s.executor.SetTriggerCatalog(triggerCat)
+}
+
+// SetProcedureCatalog sets the procedure catalog for stored procedure support.
+func (s *Session) SetProcedureCatalog(procCat *catalog.ProcedureCatalog) {
+	s.procCat = procCat
 }
 
 // Catalog returns the underlying catalog for table metadata.
@@ -206,6 +213,21 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleCreateTrigger(typedStmt)
 	case *DropTriggerStmt:
 		return s.handleDropTrigger(typedStmt)
+	// Stored procedure/function statements
+	case *CreateProcedureStmt:
+		return s.handleCreateProcedure(typedStmt)
+	case *DropProcedureStmt:
+		return s.handleDropProcedure(typedStmt)
+	case *CreateFunctionStmt:
+		return s.handleCreateFunction(typedStmt)
+	case *DropFunctionStmt:
+		return s.handleDropFunction(typedStmt)
+	case *CallStmt:
+		return s.handleCall(typedStmt)
+	case *ShowProceduresStmt:
+		return s.handleShowProcedures(typedStmt)
+	case *ShowFunctionsStmt:
+		return s.handleShowFunctions(typedStmt)
 	}
 
 	// For DML statements, we need a transaction
@@ -808,4 +830,226 @@ func (s *Session) handleDropTrigger(stmt *DropTriggerStmt) (*Result, error) {
 	}
 
 	return &Result{Message: fmt.Sprintf("DROP TRIGGER %s", stmt.Name)}, nil
+}
+
+// handleCreateProcedure handles CREATE PROCEDURE statement.
+func (s *Session) handleCreateProcedure(stmt *CreateProcedureStmt) (*Result, error) {
+	if s.procCat == nil {
+		return nil, fmt.Errorf("stored procedure support not enabled")
+	}
+
+	// Check if procedure already exists
+	if s.procCat.ProcedureExists(stmt.Name) {
+		if stmt.IfNotExists {
+			return &Result{Message: fmt.Sprintf("procedure %q already exists (ignored)", stmt.Name)}, nil
+		}
+		return nil, fmt.Errorf("procedure %q already exists", stmt.Name)
+	}
+
+	// Convert AST params to catalog params
+	params := make([]catalog.ProcParamMeta, len(stmt.Params))
+	for i, p := range stmt.Params {
+		params[i] = catalog.ProcParamMeta{
+			Name: p.Name,
+			Type: p.Type,
+			Mode: catalog.ParamMode(p.Mode),
+		}
+	}
+
+	meta := &catalog.ProcedureMeta{
+		Name:     stmt.Name,
+		Type:     catalog.ProcTypeProcedure,
+		Params:   params,
+		Language: stmt.Language,
+		Body:     stmt.BodyText,
+	}
+
+	if err := s.procCat.CreateProcedure(meta); err != nil {
+		return nil, fmt.Errorf("create procedure: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CREATE PROCEDURE %s", stmt.Name)}, nil
+}
+
+// handleDropProcedure handles DROP PROCEDURE statement.
+func (s *Session) handleDropProcedure(stmt *DropProcedureStmt) (*Result, error) {
+	if s.procCat == nil {
+		return nil, fmt.Errorf("stored procedure support not enabled")
+	}
+
+	if err := s.procCat.DropProcedure(stmt.Name, stmt.IfExists); err != nil {
+		return nil, fmt.Errorf("drop procedure: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("DROP PROCEDURE %s", stmt.Name)}, nil
+}
+
+// handleCreateFunction handles CREATE FUNCTION statement.
+func (s *Session) handleCreateFunction(stmt *CreateFunctionStmt) (*Result, error) {
+	if s.procCat == nil {
+		return nil, fmt.Errorf("stored function support not enabled")
+	}
+
+	// Check if function already exists
+	if s.procCat.FunctionExists(stmt.Name) {
+		if stmt.IfNotExists {
+			return &Result{Message: fmt.Sprintf("function %q already exists (ignored)", stmt.Name)}, nil
+		}
+		return nil, fmt.Errorf("function %q already exists", stmt.Name)
+	}
+
+	// Convert AST params to catalog params
+	params := make([]catalog.ProcParamMeta, len(stmt.Params))
+	for i, p := range stmt.Params {
+		params[i] = catalog.ProcParamMeta{
+			Name: p.Name,
+			Type: p.Type,
+			Mode: catalog.ParamMode(p.Mode),
+		}
+	}
+
+	meta := &catalog.ProcedureMeta{
+		Name:       stmt.Name,
+		Type:       catalog.ProcTypeFunction,
+		Params:     params,
+		ReturnType: stmt.ReturnType,
+		Language:   stmt.Language,
+		Body:       stmt.BodyText,
+	}
+
+	if err := s.procCat.CreateFunction(meta); err != nil {
+		return nil, fmt.Errorf("create function: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CREATE FUNCTION %s", stmt.Name)}, nil
+}
+
+// handleDropFunction handles DROP FUNCTION statement.
+func (s *Session) handleDropFunction(stmt *DropFunctionStmt) (*Result, error) {
+	if s.procCat == nil {
+		return nil, fmt.Errorf("stored function support not enabled")
+	}
+
+	if err := s.procCat.DropFunction(stmt.Name, stmt.IfExists); err != nil {
+		return nil, fmt.Errorf("drop function: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("DROP FUNCTION %s", stmt.Name)}, nil
+}
+
+// handleCall handles CALL procedure_name(args...) statement.
+func (s *Session) handleCall(stmt *CallStmt) (*Result, error) {
+	if s.procCat == nil {
+		return nil, fmt.Errorf("stored procedure support not enabled")
+	}
+
+	// Look up procedure
+	procMeta, ok := s.procCat.GetProcedure(stmt.Name)
+	if !ok {
+		return nil, fmt.Errorf("procedure %q not found", stmt.Name)
+	}
+
+	// Validate argument count
+	if len(stmt.Args) != len(procMeta.Params) {
+		return nil, fmt.Errorf("procedure %q expects %d arguments, got %d",
+			stmt.Name, len(procMeta.Params), len(stmt.Args))
+	}
+
+	// Create interpreter
+	pl := NewPLInterpreter(s)
+
+	// Evaluate and bind arguments
+	for i, arg := range stmt.Args {
+		param := procMeta.Params[i]
+
+		// Evaluate the argument expression
+		val, err := pl.evalExpression(arg)
+		if err != nil {
+			return nil, fmt.Errorf("error evaluating argument %d: %v", i+1, err)
+		}
+
+		// Bind based on mode
+		switch param.Mode {
+		case catalog.ParamModeIn:
+			pl.SetParameter(param.Name, val)
+		case catalog.ParamModeOut, catalog.ParamModeInOut:
+			// For OUT/INOUT, we need a variable to store the output
+			outVal := val
+			pl.SetOutParameter(param.Name, &outVal)
+			if param.Mode == catalog.ParamModeInOut {
+				pl.SetParameter(param.Name, val)
+			}
+		}
+	}
+
+	// Parse and execute the procedure body
+	body, err := NewParser(procMeta.Body).parsePLBlock()
+	if err != nil {
+		return nil, fmt.Errorf("error parsing procedure body: %v", err)
+	}
+
+	if err := pl.ExecuteBlock(body); err != nil {
+		return nil, fmt.Errorf("procedure execution error: %v", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("CALL %s", stmt.Name)}, nil
+}
+
+// handleShowProcedures handles SHOW PROCEDURES statement.
+func (s *Session) handleShowProcedures(stmt *ShowProceduresStmt) (*Result, error) {
+	if s.procCat == nil {
+		return &Result{
+			Columns: []string{"procedure_name", "language", "params"},
+			Rows:    [][]catalog.Value{},
+		}, nil
+	}
+
+	procs := s.procCat.ListProcedures()
+	rows := make([][]catalog.Value, len(procs))
+	for i, p := range procs {
+		paramStrs := make([]string, len(p.Params))
+		for j, param := range p.Params {
+			paramStrs[j] = fmt.Sprintf("%s %s %s", param.Mode.String(), param.Name, param.Type.String())
+		}
+		rows[i] = []catalog.Value{
+			catalog.NewText(p.Name),
+			catalog.NewText(p.Language),
+			catalog.NewText(strings.Join(paramStrs, ", ")),
+		}
+	}
+
+	return &Result{
+		Columns: []string{"procedure_name", "language", "params"},
+		Rows:    rows,
+	}, nil
+}
+
+// handleShowFunctions handles SHOW FUNCTIONS statement.
+func (s *Session) handleShowFunctions(stmt *ShowFunctionsStmt) (*Result, error) {
+	if s.procCat == nil {
+		return &Result{
+			Columns: []string{"function_name", "return_type", "language", "params"},
+			Rows:    [][]catalog.Value{},
+		}, nil
+	}
+
+	funcs := s.procCat.ListFunctions()
+	rows := make([][]catalog.Value, len(funcs))
+	for i, f := range funcs {
+		paramStrs := make([]string, len(f.Params))
+		for j, param := range f.Params {
+			paramStrs[j] = fmt.Sprintf("%s %s %s", param.Mode.String(), param.Name, param.Type.String())
+		}
+		rows[i] = []catalog.Value{
+			catalog.NewText(f.Name),
+			catalog.NewText(f.ReturnType.String()),
+			catalog.NewText(f.Language),
+			catalog.NewText(strings.Join(paramStrs, ", ")),
+		}
+	}
+
+	return &Result{
+		Columns: []string{"function_name", "return_type", "language", "params"},
+		Rows:    rows,
+	}, nil
 }

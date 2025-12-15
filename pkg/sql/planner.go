@@ -43,8 +43,14 @@ type ExecutionPlan struct {
 
 	// For IndexScan plans
 	IndexName string
-	ScanKey   []byte
+	ScanKey   []byte    // For equality scans
 	ScanOp    TokenType // =, <, >, <=, >=
+
+	// For range scans
+	StartKey       []byte // Lower bound (nil = unbounded)
+	EndKey         []byte // Upper bound (nil = unbounded)
+	StartInclusive bool   // Include start key in results
+	EndInclusive   bool   // Include end key in results
 
 	// Remaining conditions to evaluate after scan
 	RemainingWhere Expression
@@ -98,10 +104,77 @@ func (p *Planner) findIndexForCondition(tableName string, where Expression, sche
 		return p.matchEqualityToIndex(tableName, binExpr, schema)
 	}
 
+	// Check for range conditions: <, >, <=, >=
+	if binExpr.Op == TOKEN_LT || binExpr.Op == TOKEN_GT ||
+		binExpr.Op == TOKEN_LE || binExpr.Op == TOKEN_GE {
+		return p.matchRangeToIndex(tableName, binExpr, schema)
+	}
+
 	// TODO: Handle AND expressions - could match multiple predicates
-	// TODO: Handle range conditions (<, >, <=, >=)
 
 	return nil
+}
+
+// matchRangeToIndex tries to match column <op> literal to an index for range scans.
+func (p *Planner) matchRangeToIndex(tableName string, expr *BinaryExpr, _ *catalog.Schema) *IndexInfo {
+	var colName string
+	var literal *LiteralExpr
+	op := expr.Op
+
+	// Check both orderings: column <op> literal and literal <op> column
+	if col, ok := expr.Left.(*ColumnRef); ok {
+		if lit, ok := expr.Right.(*LiteralExpr); ok {
+			colName = col.Name
+			literal = lit
+			// op stays the same: column < 10 means op is <
+		}
+	} else if col, ok := expr.Right.(*ColumnRef); ok {
+		if lit, ok := expr.Left.(*LiteralExpr); ok {
+			colName = col.Name
+			literal = lit
+			// Flip the operator: 10 < column means column > 10
+			op = flipComparisonOp(op)
+		}
+	}
+
+	if colName == "" || literal == nil {
+		return nil
+	}
+
+	// Search for an index on this column
+	indexes := p.idxMgr.ListIndexes(tableName)
+	for _, meta := range indexes {
+		// For now, only single-column indexes
+		if len(meta.Columns) == 1 && strings.EqualFold(meta.Columns[0], colName) {
+			key, err := encodeValueForIndex(literal.Value)
+			if err == nil {
+				return &IndexInfo{
+					IndexName: meta.Name,
+					Key:       key,
+					Op:        op,
+					Column:    colName,
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// flipComparisonOp flips a comparison operator (for when literal is on left side).
+func flipComparisonOp(op TokenType) TokenType {
+	switch op {
+	case TOKEN_LT:
+		return TOKEN_GT
+	case TOKEN_GT:
+		return TOKEN_LT
+	case TOKEN_LE:
+		return TOKEN_GE
+	case TOKEN_GE:
+		return TOKEN_LE
+	default:
+		return op
+	}
 }
 
 // matchEqualityToIndex tries to match column = literal to an index.

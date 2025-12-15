@@ -790,3 +790,207 @@ type MatchAgainstExpr struct {
 }
 
 func (e *MatchAgainstExpr) exprNode() {}
+
+// ================== Stored Procedures / PL/pgSQL AST Types ==================
+
+// ParamMode represents the mode of a procedure/function parameter.
+type ParamMode int
+
+const (
+	ParamModeIn    ParamMode = iota // IN (default, input only)
+	ParamModeOut                    // OUT (output only)
+	ParamModeInOut                  // INOUT (input and output)
+)
+
+// ProcParam represents a procedure/function parameter.
+type ProcParam struct {
+	Name    string
+	Type    catalog.DataType
+	Mode    ParamMode
+	Default Expression // optional default value
+}
+
+// PLStatement is the interface for all PL/pgSQL statements within a procedure body.
+type PLStatement interface {
+	plStmtNode()
+}
+
+// PLBlock represents a BEGIN...END block in PL/pgSQL.
+type PLBlock struct {
+	Declarations      []PLVarDecl          // DECLARE section variables
+	Statements        []PLStatement        // Statements in the block
+	ExceptionHandlers []PLExceptionHandler // EXCEPTION handlers
+}
+
+func (s *PLBlock) plStmtNode() {}
+
+// PLVarDecl represents a variable declaration in DECLARE section.
+type PLVarDecl struct {
+	Name    string
+	Type    catalog.DataType
+	NotNull bool
+	Default Expression // optional default/initial value
+}
+
+// PLExceptionHandler represents an exception handler in PL/pgSQL.
+type PLExceptionHandler struct {
+	Exceptions []string      // exception names (e.g., "OTHERS", "NO_DATA_FOUND")
+	Statements []PLStatement // statements to execute
+}
+
+// PLAssign represents variable assignment: var := expr;
+type PLAssign struct {
+	Variable string
+	Value    Expression
+}
+
+func (s *PLAssign) plStmtNode() {}
+
+// PLIf represents an IF/ELSIF/ELSE statement.
+type PLIf struct {
+	Condition Expression
+	Then      []PLStatement
+	ElsIfs    []PLElsIf // ELSIF branches
+	Else      []PLStatement
+}
+
+func (s *PLIf) plStmtNode() {}
+
+// PLElsIf represents an ELSIF branch.
+type PLElsIf struct {
+	Condition Expression
+	Then      []PLStatement
+}
+
+// PLWhile represents a WHILE loop.
+type PLWhile struct {
+	Condition Expression
+	Body      []PLStatement
+}
+
+func (s *PLWhile) plStmtNode() {}
+
+// PLLoop represents a simple LOOP (infinite until EXIT).
+type PLLoop struct {
+	Body []PLStatement
+}
+
+func (s *PLLoop) plStmtNode() {}
+
+// PLFor represents a FOR loop (numeric or query).
+type PLFor struct {
+	Variable   string
+	LowerBound Expression  // for numeric FOR
+	UpperBound Expression  // for numeric FOR
+	Reverse    bool        // FOR i IN REVERSE ...
+	Query      *SelectStmt // for FOR rec IN (SELECT ...) LOOP
+	Body       []PLStatement
+}
+
+func (s *PLFor) plStmtNode() {}
+
+// PLExit represents EXIT [WHEN condition] statement.
+type PLExit struct {
+	Label     string     // optional label to exit
+	Condition Expression // optional WHEN condition
+}
+
+func (s *PLExit) plStmtNode() {}
+
+// PLContinue represents CONTINUE [WHEN condition] statement.
+type PLContinue struct {
+	Label     string     // optional label to continue
+	Condition Expression // optional WHEN condition
+}
+
+func (s *PLContinue) plStmtNode() {}
+
+// PLReturn represents RETURN [expression] statement.
+type PLReturn struct {
+	Value Expression // nil for procedures (no return value)
+}
+
+func (s *PLReturn) plStmtNode() {}
+
+// PLRaise represents RAISE [level] 'message' [, args...] statement.
+type PLRaise struct {
+	Level   string       // NOTICE, WARNING, EXCEPTION, etc.
+	Message string       // format string
+	Args    []Expression // optional format arguments
+}
+
+func (s *PLRaise) plStmtNode() {}
+
+// PLPerform represents PERFORM query (execute SELECT without returning).
+type PLPerform struct {
+	Query *SelectStmt
+}
+
+func (s *PLPerform) plStmtNode() {}
+
+// PLSQL represents an embedded SQL statement (SELECT INTO, INSERT, UPDATE, DELETE).
+type PLSQL struct {
+	Statement Statement // The SQL statement
+	Into      []string  // INTO variables for SELECT
+}
+
+func (s *PLSQL) plStmtNode() {}
+
+// CreateProcedureStmt represents CREATE PROCEDURE statement.
+type CreateProcedureStmt struct {
+	Name        string
+	Params      []ProcParam
+	Body        *PLBlock
+	BodyText    string // Original body text for storage
+	Language    string // e.g., "plpgsql"
+	IfNotExists bool
+}
+
+func (s *CreateProcedureStmt) statementNode() {}
+
+// CreateFunctionStmt represents CREATE FUNCTION statement.
+type CreateFunctionStmt struct {
+	Name        string
+	Params      []ProcParam
+	ReturnType  catalog.DataType
+	Body        *PLBlock
+	BodyText    string // Original body text for storage
+	Language    string // e.g., "plpgsql"
+	IfNotExists bool
+}
+
+func (s *CreateFunctionStmt) statementNode() {}
+
+// DropProcedureStmt represents DROP PROCEDURE statement.
+type DropProcedureStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (s *DropProcedureStmt) statementNode() {}
+
+// DropFunctionStmt represents DROP FUNCTION statement.
+type DropFunctionStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (s *DropFunctionStmt) statementNode() {}
+
+// CallStmt represents CALL procedure_name(args...) statement.
+type CallStmt struct {
+	Name string
+	Args []Expression
+}
+
+func (s *CallStmt) statementNode() {}
+
+// ShowProceduresStmt represents SHOW PROCEDURES statement.
+type ShowProceduresStmt struct{}
+
+func (s *ShowProceduresStmt) statementNode() {}
+
+// ShowFunctionsStmt represents SHOW FUNCTIONS statement.
+type ShowFunctionsStmt struct{}
+
+func (s *ShowFunctionsStmt) statementNode() {}
