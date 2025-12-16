@@ -405,7 +405,7 @@ func (c *Coordinator) Execute(ctx context.Context, query string, sessionID strin
 }
 
 // scatterGather sends query to all shards and gathers results.
-func (c *Coordinator) scatterGather(ctx context.Context, query string) ([]string, error) {
+func (c *Coordinator) scatterGather(_ context.Context, query string) ([]string, error) {
 	var wg sync.WaitGroup
 	results := make([]string, len(c.clients))
 	errors := make([]error, len(c.clients))

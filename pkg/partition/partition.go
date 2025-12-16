@@ -262,7 +262,7 @@ func (p *Pruner) PruneForRange(lowValue, highValue catalog.Value, lowInclusive, 
 }
 
 // partitionOverlapsRange checks if a RANGE partition might contain values in the given range.
-func (p *Pruner) partitionOverlapsRange(part PartitionDef, lowValue, highValue catalog.Value) bool {
+func (p *Pruner) partitionOverlapsRange(part PartitionDef, lowValue, _ catalog.Value) bool {
 	// For RANGE partitions, partition contains values: [prev_bound, this_bound)
 	// A partition overlaps if its range intersects with [lowValue, highValue]
 

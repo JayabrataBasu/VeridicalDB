@@ -630,7 +630,7 @@ func (pl *PLInterpreter) evalFunctionExpr(expr *FunctionExpr) (catalog.Value, er
 }
 
 // callUserFunction calls a user-defined function.
-func (pl *PLInterpreter) callUserFunction(name string, args []catalog.Value) (catalog.Value, error) {
+func (pl *PLInterpreter) callUserFunction(name string, _ []catalog.Value) (catalog.Value, error) {
 	// This would look up the function in the procedure catalog and execute it
 	// For now, return an error
 	return catalog.Value{}, fmt.Errorf("unknown function: %s", name)
@@ -676,7 +676,8 @@ func (pl *PLInterpreter) valueToBool(v catalog.Value) (bool, bool) {
 	return false, false
 }
 
-// Helper method to check if two values are equal
+// valuesEqual checks if two values are equal.
+// nolint:unused // kept for potential use in condition evaluation
 func (pl *PLInterpreter) valuesEqual(left, right catalog.Value) bool {
 	return left.Compare(right) == 0
 }

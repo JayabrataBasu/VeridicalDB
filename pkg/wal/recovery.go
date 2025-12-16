@@ -157,7 +157,7 @@ func (r *Recovery) analysis() (startLSN LSN, activeTxns map[txn.TxID]LSN, winner
 // redo is the second phase of recovery.
 // It replays all data modifications from startLSN forward.
 // This is idempotent - applying the same change twice has no additional effect.
-func (r *Recovery) redo(startLSN LSN, activeTxns map[txn.TxID]LSN) error {
+func (r *Recovery) redo(startLSN LSN, _ map[txn.TxID]LSN) error {
 	if r.redoHandler == nil {
 		// No redo handler, skip phase
 		return nil

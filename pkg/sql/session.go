@@ -996,7 +996,7 @@ func (s *Session) handleCall(stmt *CallStmt) (*Result, error) {
 }
 
 // handleShowProcedures handles SHOW PROCEDURES statement.
-func (s *Session) handleShowProcedures(stmt *ShowProceduresStmt) (*Result, error) {
+func (s *Session) handleShowProcedures(_ *ShowProceduresStmt) (*Result, error) {
 	if s.procCat == nil {
 		return &Result{
 			Columns: []string{"procedure_name", "language", "params"},
@@ -1025,7 +1025,7 @@ func (s *Session) handleShowProcedures(stmt *ShowProceduresStmt) (*Result, error
 }
 
 // handleShowFunctions handles SHOW FUNCTIONS statement.
-func (s *Session) handleShowFunctions(stmt *ShowFunctionsStmt) (*Result, error) {
+func (s *Session) handleShowFunctions(_ *ShowFunctionsStmt) (*Result, error) {
 	if s.procCat == nil {
 		return &Result{
 			Columns: []string{"function_name", "return_type", "language", "params"},

@@ -256,8 +256,20 @@ func TestReplicaInfo(t *testing.T) {
 	if info.ID != "replica1" {
 		t.Errorf("expected ID replica1, got %s", info.ID)
 	}
+	if info.Address != "127.0.0.1:15432" {
+		t.Errorf("expected Address 127.0.0.1:15432, got %s", info.Address)
+	}
 	if info.State != StateStreaming {
 		t.Errorf("expected state Streaming, got %v", info.State)
+	}
+	if info.AppliedLSN != 1000 {
+		t.Errorf("expected AppliedLSN 1000, got %d", info.AppliedLSN)
+	}
+	if info.LagBytes != 500 {
+		t.Errorf("expected LagBytes 500, got %d", info.LagBytes)
+	}
+	if info.LastContact.IsZero() {
+		t.Error("expected LastContact to be set")
 	}
 }
 

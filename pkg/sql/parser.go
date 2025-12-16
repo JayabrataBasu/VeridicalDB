@@ -713,6 +713,7 @@ func expandCube(cols []string) []GroupingSet {
 }
 
 // parseGroupByList parses: column [, column ...] (legacy, simple form)
+// nolint:unused // kept for backward compatibility
 func (p *Parser) parseGroupByList() ([]string, error) {
 	var groupBy []string
 
@@ -5125,7 +5126,7 @@ func (p *Parser) parsePLDataType() (catalog.DataType, error) {
 }
 
 // parseCreateProcedure parses CREATE [OR REPLACE] PROCEDURE name(params) AS $$ body $$ LANGUAGE plpgsql
-func (p *Parser) parseCreateProcedure(orReplace bool) (*CreateProcedureStmt, error) {
+func (p *Parser) parseCreateProcedure(_ bool) (*CreateProcedureStmt, error) {
 	p.nextToken() // consume PROCEDURE
 
 	stmt := &CreateProcedureStmt{}
@@ -5209,7 +5210,7 @@ func (p *Parser) parseCreateProcedure(orReplace bool) (*CreateProcedureStmt, err
 }
 
 // parseCreateFunction parses CREATE [OR REPLACE] FUNCTION name(params) RETURNS type AS $$ body $$ LANGUAGE plpgsql
-func (p *Parser) parseCreateFunction(orReplace bool) (*CreateFunctionStmt, error) {
+func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
 	p.nextToken() // consume FUNCTION
 
 	stmt := &CreateFunctionStmt{}

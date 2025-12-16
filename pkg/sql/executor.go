@@ -582,6 +582,7 @@ func (e *Executor) evalExprWithExcluded(expr Expression, schema *catalog.Schema,
 }
 
 // primaryKeyExists checks if a value already exists for a primary key column.
+// nolint:unused // kept for future use in primary key constraint enforcement
 func (e *Executor) primaryKeyExists(tableName string, schema *catalog.Schema, colIdx int, value catalog.Value) (bool, error) {
 	exists := false
 
@@ -1195,7 +1196,7 @@ func (e *Executor) executeSelectFromCTEWithAggregates(stmt *SelectStmt, cteResul
 }
 
 // computeAggregateForCTE computes an aggregate function over CTE rows.
-func (e *Executor) computeAggregateForCTE(agg *AggregateFunc, rows [][]catalog.Value, cols []string, colIndexMap map[string]int) (catalog.Value, error) {
+func (e *Executor) computeAggregateForCTE(agg *AggregateFunc, rows [][]catalog.Value, _ []string, colIndexMap map[string]int) (catalog.Value, error) {
 	switch strings.ToUpper(agg.Function) {
 	case "COUNT":
 		if agg.Arg == "*" {
@@ -6294,9 +6295,7 @@ func (e *Executor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef
 			return nil, fmt.Errorf("view '%s' column count mismatch: %d aliases for %d columns",
 				viewDef.Name, len(viewDef.Columns), len(viewResult.Columns))
 		}
-		for i, alias := range viewDef.Columns {
-			viewResult.Columns[i] = alias
-		}
+		copy(viewResult.Columns, viewDef.Columns)
 	}
 
 	// If the outer query is SELECT * FROM view, just return the view result
@@ -7389,8 +7388,7 @@ func getFrameBounds(currentIdx, partitionSize int, frameType, frameStart, frameE
 }
 
 // parseFrameBoundIndex converts a frame bound string to an index.
-// isStart indicates if this is the start bound (for default handling).
-func parseFrameBoundIndex(bound string, currentIdx, partitionSize int, isStart bool) int {
+func parseFrameBoundIndex(bound string, currentIdx, partitionSize int, _ bool) int {
 	switch bound {
 	case "UNBOUNDED PRECEDING":
 		return 0

@@ -240,8 +240,9 @@ func (b *Buffer) WriteInt16(v int16) {
 }
 
 // WriteByte appends a single byte.
-func (b *Buffer) WriteByte(v byte) {
+func (b *Buffer) WriteByte(v byte) error {
 	b.data = append(b.data, v)
+	return nil
 }
 
 // WriteString appends a null-terminated string.

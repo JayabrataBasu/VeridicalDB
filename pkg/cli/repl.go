@@ -137,7 +137,7 @@ func (r *REPL) Run() error {
 // getPrompt returns the appropriate prompt based on transaction state.
 func (r *REPL) getPrompt() string {
 	if r.session != nil && r.session.InTransaction() {
-		return fmt.Sprintf("veridical [tx]> ")
+		return "veridical [tx]> "
 	}
 	return Prompt
 }

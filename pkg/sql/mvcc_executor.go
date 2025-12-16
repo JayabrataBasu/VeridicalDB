@@ -99,6 +99,7 @@ func exprToCatalogValue(expr Expression) catalog.Value {
 }
 
 // literalToValue converts a literal to a catalog Value.
+// nolint:unused // kept for potential future use
 func literalToValue(v interface{}) catalog.Value {
 	switch val := v.(type) {
 	case int:
@@ -1583,7 +1584,7 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 // For < operator, we want to exclude entries at the upper bound.
 // For > operator, we want to exclude entries at the lower bound.
 // The excludeStart parameter indicates if we're filtering the start (>) or end (<).
-func (e *MVCCExecutor) filterExcludeBoundary(rids []storage.RID, boundaryKey []byte, excludeStart bool) []storage.RID {
+func (e *MVCCExecutor) filterExcludeBoundary(rids []storage.RID, _ []byte, _ bool) []storage.RID {
 	// For now, we rely on the index to return keys in order.
 	// If we need to filter exact matches, we would need the key values.
 	// The B-tree SearchRange returns inclusive results, so we need post-filtering.
@@ -1951,7 +1952,7 @@ func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Sc
 }
 
 // evalJoinExprMVCC evaluates an expression in a join context for MVCC executor.
-func (e *MVCCExecutor) evalJoinExprMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJoinExprMVCC(expr Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
 	case *ColumnRef:
 		// ColumnRef.Name may be "table.column" or just "column"
@@ -2577,8 +2578,6 @@ func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Sche
 			return catalog.NewText(strconv.FormatFloat(v, 'f', -1, 64)), nil
 		case bool:
 			return catalog.NewText(strconv.FormatBool(v)), nil
-		case nil:
-			return catalog.Null(catalog.TypeText), nil
 		default:
 			// For objects/arrays, serialize to JSON string
 			bytes, _ := json.Marshal(v)
@@ -2867,7 +2866,7 @@ func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Sche
 }
 
 // executeCreateView creates a new view (MVCC version).
-func (e *MVCCExecutor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
+func (e *MVCCExecutor) executeCreateView(_ *CreateViewStmt) (*Result, error) {
 	return nil, fmt.Errorf("CREATE VIEW is not yet fully implemented (view definition parsed successfully)")
 }
 
@@ -4076,7 +4075,7 @@ type TriggerContext struct {
 // fireTriggers fires all triggers matching the given timing and event.
 // This is a placeholder implementation that logs trigger execution.
 // A full implementation would execute the trigger function.
-func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTiming, event catalog.TriggerEvent, ctx *TriggerContext) error {
+func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTiming, event catalog.TriggerEvent, _ *TriggerContext) error {
 	if e.triggerCat == nil {
 		return nil // Triggers not enabled
 	}

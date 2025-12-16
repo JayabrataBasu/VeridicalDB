@@ -393,7 +393,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, query string) error {
+func (c *Conn) sendResult(result *sql.Result, _ string) error {
 	if result == nil {
 		return c.sendCommandComplete("", 0)
 	}
