@@ -208,12 +208,12 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, nil)
+		return s.executor.Execute(stmt, s.currentTx)
 	case *DropTableStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, nil)
+		return s.executor.Execute(stmt, s.currentTx)
 	case *CreateIndexStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
@@ -228,12 +228,12 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, nil)
+		return s.executor.Execute(stmt, s.currentTx)
 	case *DropViewStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, nil)
+		return s.executor.Execute(stmt, s.currentTx)
 	case *CreateTriggerStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err

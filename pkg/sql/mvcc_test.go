@@ -340,6 +340,68 @@ func TestMVCCDelete(t *testing.T) {
 	}
 }
 
+// TestMVCCSubqueries tests scalar, IN, and EXISTS subquery execution in MVCC executor.
+func TestMVCCSubqueries(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	// Create base tables
+	_, err := session.ExecuteSQL("CREATE TABLE a (id INT, v INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE a failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("CREATE TABLE b (id INT, v INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE b failed: %v", err)
+	}
+
+	// Insert rows
+	_, err = session.ExecuteSQL("INSERT INTO a VALUES (1, 10), (2, 20), (3, 30);")
+	if err != nil {
+		t.Fatalf("INSERT a failed: %v", err)
+	}
+	_, err = session.ExecuteSQL("INSERT INTO b VALUES (100, 999), (2, 200);")
+	if err != nil {
+		t.Fatalf("INSERT b failed: %v", err)
+	}
+
+	// Scalar subquery: select rows from a where v = (SELECT MAX(v) FROM a)
+	// Verify inner scalar subquery works on its own
+	inner, innerErr := session.ExecuteSQL("SELECT MAX(v) FROM a;")
+	if innerErr != nil {
+		t.Fatalf("inner scalar subquery failed: %v", innerErr)
+	}
+	if len(inner.Rows) != 1 {
+		t.Fatalf("unexpected inner subquery rows: %#v", inner.Rows)
+	}
+
+	res, err := session.ExecuteSQL("SELECT id FROM a WHERE v = (SELECT MAX(v) FROM a);")
+	if err != nil {
+		t.Fatalf("scalar subquery SELECT failed: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0].Int32 != 3 {
+		t.Fatalf("unexpected scalar subquery result: %#v", res.Rows)
+	}
+
+	// IN subquery: select ids from a where id IN (SELECT id FROM b)
+	res, err = session.ExecuteSQL("SELECT id FROM a WHERE id IN (SELECT id FROM b) ORDER BY id;")
+	if err != nil {
+		t.Fatalf("IN subquery SELECT failed: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0].Int32 != 2 {
+		t.Fatalf("unexpected IN subquery result: %#v", res.Rows)
+	}
+
+	// EXISTS uncorrelated: should return all rows in a if b has any rows
+	res, err = session.ExecuteSQL("SELECT id FROM a WHERE EXISTS (SELECT 1 FROM b) ORDER BY id;")
+	if err != nil {
+		t.Fatalf("EXISTS subquery SELECT failed: %v", err)
+	}
+	if len(res.Rows) != 3 {
+		t.Fatalf("unexpected EXISTS subquery result: %#v", res.Rows)
+	}
+}
+
 // TestMVCCNestedBeginError tests that nested BEGIN fails.
 func TestMVCCNestedBeginError(t *testing.T) {
 	session, cleanup := setupMVCCTest(t)
@@ -392,4 +454,65 @@ func itoa(i int) string {
 		i /= 10
 	}
 	return s
+}
+
+// TestMVCCCreateView tests CREATE VIEW and SELECT from view within MVCC executor.
+func TestMVCCCreateView(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE employees (id INT, name TEXT, department TEXT, salary INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO employees VALUES (1, 'Alice', 'Engineering', 100), (2, 'Bob', 'Sales', 80), (3, 'Carol', 'Sales', 90);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Create view inside a transaction
+	_, err = session.ExecuteSQL("BEGIN;")
+	if err != nil {
+		t.Fatalf("BEGIN failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("CREATE VIEW sales_people AS SELECT id, name, salary FROM employees WHERE department = 'Sales';")
+	if err != nil {
+		t.Fatalf("CREATE VIEW failed: %v", err)
+	}
+
+	// Select from view inside transaction
+	res, err := session.ExecuteSQL("SELECT id, name FROM sales_people ORDER BY id;")
+	if err != nil {
+		t.Fatalf("SELECT from view failed: %v", err)
+	}
+	if len(res.Rows) != 2 {
+		t.Fatalf("unexpected rows from view: %#v", res.Rows)
+	}
+
+	// Commit and select again
+	_, err = session.ExecuteSQL("COMMIT;")
+	if err != nil {
+		t.Fatalf("COMMIT failed: %v", err)
+	}
+
+	res, err = session.ExecuteSQL("SELECT id, name FROM sales_people ORDER BY id;")
+	if err != nil {
+		t.Fatalf("SELECT from view after commit failed: %v", err)
+	}
+	if len(res.Rows) != 2 {
+		t.Fatalf("unexpected rows from view after commit: %#v", res.Rows)
+	}
+
+	// Drop view
+	_, err = session.ExecuteSQL("DROP VIEW sales_people;")
+	if err != nil {
+		t.Fatalf("DROP VIEW failed: %v", err)
+	}
+	// Dropped view should error when selecting
+	_, err = session.ExecuteSQL("SELECT * FROM sales_people;")
+	if err == nil {
+		t.Fatalf("expected error selecting from dropped view, got nil")
+	}
 }

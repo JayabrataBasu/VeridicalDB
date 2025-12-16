@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
@@ -287,11 +288,14 @@ type MVCCExecutor struct {
 	triggerCat *catalog.TriggerCatalog
 	procCat    *catalog.ProcedureCatalog
 	session    *Session
+	// Views defined in this executor (CREATE VIEW)
+	views   map[string]*ViewDef
+	viewsMu sync.RWMutex
 }
 
 // NewMVCCExecutor creates a new MVCC-aware executor.
 func NewMVCCExecutor(mtm *catalog.MVCCTableManager) *MVCCExecutor {
-	return &MVCCExecutor{mtm: mtm}
+	return &MVCCExecutor{mtm: mtm, views: make(map[string]*ViewDef)}
 }
 
 // SetIndexManager sets the index manager for index maintenance during DML operations.
@@ -321,6 +325,9 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 	case *CreateTableStmt:
 		return e.executeCreate(s)
 	case *CreateViewStmt:
+		if tx != nil {
+			return e.executeCreateViewMVCC(s, tx)
+		}
 		return e.executeCreateView(s)
 	case *DropTableStmt:
 		return e.executeDrop(s)
@@ -369,7 +376,7 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 
 		// If there's a default value, evaluate it and store it
 		if def.HasDefault && def.Default != nil {
-			defaultVal, err := e.evalExpr(def.Default, nil, nil)
+			defaultVal, err := e.evalExpr(def.Default, nil, nil, nil)
 			if err != nil {
 				return nil, fmt.Errorf("invalid default value for column %s: %w", def.Name, err)
 			}
@@ -476,6 +483,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
+		// Table not found. In future, we may support INSERT INTO view, but currently that's unsupported.
 		return nil, err
 	}
 
@@ -511,7 +519,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 				if col == nil {
 					return nil, fmt.Errorf("unknown column: %s", colName)
 				}
-				val, err := e.evalExpr(rowValues[i], meta.Schema, nil)
+				val, err := e.evalExpr(rowValues[i], meta.Schema, nil, nil)
 				if err != nil {
 					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 				}
@@ -527,7 +535,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 				return nil, fmt.Errorf("row %d: expected %d values, got %d", rowIdx+1, len(meta.Columns), len(rowValues))
 			}
 			for i, expr := range rowValues {
-				val, err := e.evalExpr(expr, meta.Schema, nil)
+				val, err := e.evalExpr(expr, meta.Schema, nil, nil)
 				if err != nil {
 					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 				}
@@ -594,6 +602,17 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
 
+	// If the FROM refers to a view instead of a table, expand it early.
+	if _, err := e.mtm.Catalog().GetTable(stmt.TableName); err != nil {
+		e.viewsMu.RLock()
+		viewDef, exists := e.views[stmt.TableName]
+		e.viewsMu.RUnlock()
+		if exists {
+			return e.executeSelectFromView(stmt, viewDef, tx)
+		}
+		// proceed and let later logic return the original error
+	}
+
 	// Handle JOINs separately
 	if len(stmt.Joins) > 0 {
 		return e.executeSelectWithJoins(stmt, tx)
@@ -612,6 +631,18 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 
 	if hasWindowFunctions {
 		return e.executeSelectWithWindowFunctions(stmt, tx)
+	}
+
+	// Check for aggregates or GROUP BY
+	hasAggregates := false
+	for _, sc := range stmt.Columns {
+		if sc.Aggregate != nil {
+			hasAggregates = true
+			break
+		}
+	}
+	if hasAggregates || len(stmt.GroupBy) > 0 {
+		return e.executeSelectWithAggregatesMVCC(stmt, tx)
 	}
 
 	// Try to use an index scan first
@@ -676,7 +707,7 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
 		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if err != nil {
 				return false, err
 			}
@@ -693,7 +724,7 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 				outRow[i] = row.Values[idx]
 			} else {
 				// Expression (like CASE)
-				val, err := e.evalExpr(colExpressions[i], meta.Schema, row.Values)
+				val, err := e.evalExpr(colExpressions[i], meta.Schema, row.Values, tx)
 				if err != nil {
 					return false, fmt.Errorf("error evaluating expression: %w", err)
 				}
@@ -712,6 +743,174 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		Columns: outCols,
 		Rows:    rows,
 	}, nil
+}
+
+// executeSelectWithAggregatesMVCC handles simple aggregate queries (no GROUP BY or global aggregates)
+func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+	if tx == nil {
+		return nil, fmt.Errorf("SELECT with aggregates requires an active transaction")
+	}
+
+	cat := e.mtm.Catalog()
+	meta, err := cat.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// We'll support global aggregates (no GROUP BY) for now
+	// Prepare aggregator states per column
+	type aggState struct {
+		count    int64
+		sum      int64
+		sumFloat float64
+		hasValue bool
+		max      catalog.Value
+	}
+
+	states := make([]aggState, len(stmt.Columns))
+
+	// Scan rows and update aggregators
+	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		// WHERE filter
+		if stmt.Where != nil {
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				return true, nil
+			}
+		}
+
+		for i, sc := range stmt.Columns {
+			if sc.Aggregate == nil {
+				continue
+			}
+			agg := sc.Aggregate
+			switch agg.Function {
+			case "COUNT":
+				if agg.Arg == "*" || agg.Arg == "" {
+					states[i].count++
+					states[i].hasValue = true
+				} else {
+					col, idx := meta.Schema.ColumnByName(agg.Arg)
+					if col == nil {
+						return false, fmt.Errorf("unknown column: %s", agg.Arg)
+					}
+					val := row.Values[idx]
+					if !val.IsNull {
+						states[i].count++
+						states[i].hasValue = true
+					}
+				}
+			case "SUM":
+				col, idx := meta.Schema.ColumnByName(agg.Arg)
+				if col == nil {
+					return false, fmt.Errorf("unknown column: %s", agg.Arg)
+				}
+				val := row.Values[idx]
+				if val.IsNull {
+					continue
+				}
+				switch val.Type {
+				case catalog.TypeInt32:
+					states[i].sum += int64(val.Int32)
+					states[i].hasValue = true
+				case catalog.TypeInt64:
+					states[i].sum += val.Int64
+					states[i].hasValue = true
+				default:
+					// treat as float
+					states[i].sumFloat += val.Float64
+					states[i].hasValue = true
+				}
+			case "MAX":
+				col, idx := meta.Schema.ColumnByName(agg.Arg)
+				if col == nil {
+					return false, fmt.Errorf("unknown column: %s", agg.Arg)
+				}
+				val := row.Values[idx]
+				if val.IsNull {
+					continue
+				}
+				if !states[i].hasValue {
+					states[i].max = val
+					states[i].hasValue = true
+				} else {
+					if compareValuesForSort(val, states[i].max) > 0 {
+						states[i].max = val
+					}
+				}
+			case "AVG":
+				col, idx := meta.Schema.ColumnByName(agg.Arg)
+				if col == nil {
+					return false, fmt.Errorf("unknown column: %s", agg.Arg)
+				}
+				val := row.Values[idx]
+				if val.IsNull {
+					continue
+				}
+				switch val.Type {
+				case catalog.TypeInt32:
+					states[i].sumFloat += float64(val.Int32)
+				case catalog.TypeInt64:
+					states[i].sumFloat += float64(val.Int64)
+				default:
+					states[i].sumFloat += val.Float64
+				}
+				states[i].count++
+				states[i].hasValue = true
+			default:
+				return false, fmt.Errorf("unsupported aggregate: %s", agg.Function)
+			}
+		}
+
+		return true, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Build result row (single row for global aggregates)
+	outCols := make([]string, len(stmt.Columns))
+	row := make([]catalog.Value, len(stmt.Columns))
+	for i, sc := range stmt.Columns {
+		if sc.Aggregate == nil {
+			// Non-aggregate without GROUP BY: undefined, return NULL
+			outCols[i] = sc.Alias
+			row[i] = catalog.Null(catalog.TypeUnknown)
+			continue
+		}
+		agg := sc.Aggregate
+		outCols[i] = sc.Alias
+		st := states[i]
+		switch agg.Function {
+		case "COUNT":
+			row[i] = catalog.NewInt64(st.count)
+		case "SUM":
+			if st.hasValue {
+				row[i] = catalog.NewInt64(st.sum)
+			} else {
+				row[i] = catalog.Null(catalog.TypeInt64)
+			}
+		case "MAX":
+			if st.hasValue {
+				row[i] = st.max
+			} else {
+				row[i] = catalog.Null(catalog.TypeUnknown)
+			}
+		case "AVG":
+			if st.count == 0 {
+				row[i] = catalog.Null(catalog.TypeFloat64)
+			} else {
+				row[i] = catalog.NewFloat64(st.sumFloat / float64(st.count))
+			}
+		default:
+			row[i] = catalog.Null(catalog.TypeUnknown)
+		}
+	}
+
+	return &Result{Columns: outCols, Rows: [][]catalog.Value{row}}, nil
 }
 
 func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Result, error) {
@@ -735,7 +934,7 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
 		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if err != nil {
 				return false, err
 			}
@@ -757,7 +956,7 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 			if col == nil {
 				return false, fmt.Errorf("unknown column: %s", assign.Column)
 			}
-			val, err := e.evalExpr(assign.Value, meta.Schema, row.Values)
+			val, err := e.evalExpr(assign.Value, meta.Schema, row.Values, tx)
 			if err != nil {
 				return false, err
 			}
@@ -846,7 +1045,7 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
 		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if err != nil {
 				return false, err
 			}
@@ -898,7 +1097,8 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 }
 
 // evalExpr evaluates an expression to a value.
-func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+// tx may be nil for contexts without an active transaction; subqueries require a non-nil tx.
+func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	switch ex := expr.(type) {
 	case *LiteralExpr:
 		return ex.Value, nil
@@ -917,11 +1117,11 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		// Handle arithmetic operations
 		switch ex.Op {
 		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH:
-			left, err := e.evalExpr(ex.Left, schema, row)
+			left, err := e.evalExpr(ex.Left, schema, row, tx)
 			if err != nil {
 				return catalog.Value{}, err
 			}
-			right, err := e.evalExpr(ex.Right, schema, row)
+			right, err := e.evalExpr(ex.Right, schema, row, tx)
 			if err != nil {
 				return catalog.Value{}, err
 			}
@@ -933,7 +1133,7 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		// Evaluate function arguments
 		args := make([]catalog.Value, len(ex.Args))
 		for i, arg := range ex.Args {
-			val, err := e.evalExpr(arg, schema, row)
+			val, err := e.evalExpr(arg, schema, row, tx)
 			if err != nil {
 				return catalog.Value{}, err
 			}
@@ -942,14 +1142,14 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		return evalFunction(ex.Name, args)
 
 	case *CaseExpr:
-		return e.evalCaseExpr(ex, schema, row)
+		return e.evalCaseExpr(ex, schema, row, tx)
 
 	case *CastExpr:
-		return e.evalCastExpr(ex, schema, row)
+		return e.evalCastExpr(ex, schema, row, tx)
 
 	case *IsNullExpr:
 		// IS NULL in value context returns boolean
-		val, err := e.evalExpr(ex.Expr, schema, row)
+		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
 			return catalog.Value{}, err
 		}
@@ -960,35 +1160,55 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		return catalog.NewBool(result), nil
 
 	case *JSONAccessExpr:
-		return e.evalJSONAccess(ex, schema, row)
+		return e.evalJSONAccess(ex, schema, row, tx)
 
 	case *JSONPathExpr:
-		return e.evalJSONPath(ex, schema, row)
+		return e.evalJSONPath(ex, schema, row, tx)
 
 	case *JSONContainsExpr:
-		return e.evalJSONContains(ex, schema, row)
+		return e.evalJSONContains(ex, schema, row, tx)
 
 	case *JSONExistsExpr:
-		return e.evalJSONExists(ex, schema, row)
+		return e.evalJSONExists(ex, schema, row, tx)
 
 	// Full-Text Search expressions
 	case *TSVectorExpr:
-		return e.evalTSVector(ex, schema, row)
+		return e.evalTSVector(ex, schema, row, tx)
 
 	case *TSQueryExpr:
-		return e.evalTSQuery(ex, schema, row)
+		return e.evalTSQuery(ex, schema, row, tx)
 
 	case *TSMatchExpr:
-		return e.evalTSMatch(ex, schema, row)
+		return e.evalTSMatch(ex, schema, row, tx)
 
 	case *TSRankExpr:
-		return e.evalTSRank(ex, schema, row)
+		return e.evalTSRank(ex, schema, row, tx)
 
 	case *TSHeadlineExpr:
-		return e.evalTSHeadline(ex, schema, row)
+		return e.evalTSHeadline(ex, schema, row, tx)
 
 	case *MatchAgainstExpr:
-		return e.evalMatchAgainst(ex, schema, row)
+		return e.evalMatchAgainst(ex, schema, row, tx)
+
+	case *SubqueryExpr:
+		// Scalar subquery: execute and return the single-column single-row value
+		if tx == nil {
+			return catalog.Value{}, fmt.Errorf("subquery requires an active transaction")
+		}
+		res, err := e.executeSelect(ex.Query, tx)
+		if err != nil {
+			return catalog.Value{}, err
+		}
+		if len(res.Rows) == 0 {
+			return catalog.Value{IsNull: true}, nil
+		}
+		if len(res.Rows) > 1 {
+			return catalog.Value{}, fmt.Errorf("subquery returned more than one row")
+		}
+		if len(res.Rows[0]) == 0 {
+			return catalog.Value{}, fmt.Errorf("subquery returned no columns")
+		}
+		return res.Rows[0][0], nil
 
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type: %T", expr)
@@ -996,36 +1216,36 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 }
 
 // evalCondition evaluates a boolean expression.
-func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, row []catalog.Value) (bool, error) {
+func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (bool, error) {
 	switch ex := expr.(type) {
 	case *BinaryExpr:
 		switch ex.Op {
 		case TOKEN_AND:
-			left, err := e.evalCondition(ex.Left, schema, row)
+			left, err := e.evalCondition(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
 			if !left {
 				return false, nil
 			}
-			return e.evalCondition(ex.Right, schema, row)
+			return e.evalCondition(ex.Right, schema, row, tx)
 
 		case TOKEN_OR:
-			left, err := e.evalCondition(ex.Left, schema, row)
+			left, err := e.evalCondition(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
 			if left {
 				return true, nil
 			}
-			return e.evalCondition(ex.Right, schema, row)
+			return e.evalCondition(ex.Right, schema, row, tx)
 
 		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
-			leftVal, err := e.evalExpr(ex.Left, schema, row)
+			leftVal, err := e.evalExpr(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
-			rightVal, err := e.evalExpr(ex.Right, schema, row)
+			rightVal, err := e.evalExpr(ex.Right, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
@@ -1037,7 +1257,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *UnaryExpr:
 		if ex.Op == TOKEN_NOT {
-			result, err := e.evalCondition(ex.Expr, schema, row)
+			result, err := e.evalCondition(ex.Expr, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
@@ -1047,7 +1267,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *InExpr:
 		// Evaluate IN expression
-		leftVal, err := e.evalExpr(ex.Left, schema, row)
+		leftVal, err := e.evalExpr(ex.Left, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1059,14 +1279,36 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 		// Check if this is a subquery IN
 		if ex.Subquery != nil {
-			// Subqueries in MVCC executor are not yet supported in evalCondition context
-			// They would need transaction context to be passed through
-			return false, fmt.Errorf("IN subquery not yet supported in MVCC executor")
+			if tx == nil {
+				return false, fmt.Errorf("IN subquery requires an active transaction")
+			}
+			res, err := e.executeSelect(ex.Subquery, tx)
+			if err != nil {
+				return false, err
+			}
+			found := false
+			for _, r := range res.Rows {
+				if len(r) == 0 {
+					continue
+				}
+				eq, err := compareValuesMVCC(leftVal, r[0], TOKEN_EQ)
+				if err != nil {
+					return false, err
+				}
+				if eq {
+					found = true
+					break
+				}
+			}
+			if ex.Not {
+				return !found, nil
+			}
+			return found, nil
 		}
 
 		// Value list IN
 		for _, valExpr := range ex.Values {
-			rightVal, err := e.evalExpr(valExpr, schema, row)
+			rightVal, err := e.evalExpr(valExpr, schema, row, tx)
 			if err != nil {
 				return false, err
 			}
@@ -1090,7 +1332,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *BetweenExpr:
 		// Evaluate BETWEEN expression
-		val, err := e.evalExpr(ex.Expr, schema, row)
+		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1098,11 +1340,11 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return false, nil // NULL BETWEEN ... is always false
 		}
 
-		lowVal, err := e.evalExpr(ex.Low, schema, row)
+		lowVal, err := e.evalExpr(ex.Low, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
-		highVal, err := e.evalExpr(ex.High, schema, row)
+		highVal, err := e.evalExpr(ex.High, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1125,7 +1367,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *LikeExpr:
 		// Evaluate LIKE expression
-		val, err := e.evalExpr(ex.Expr, schema, row)
+		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1133,7 +1375,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return false, nil // NULL LIKE ... is always false
 		}
 
-		patternVal, err := e.evalExpr(ex.Pattern, schema, row)
+		patternVal, err := e.evalExpr(ex.Pattern, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1154,7 +1396,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *IsNullExpr:
 		// Evaluate IS NULL / IS NOT NULL
-		val, err := e.evalExpr(ex.Expr, schema, row)
+		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1165,12 +1407,32 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		return result, nil // IS NULL
 
 	case *SubqueryExpr:
-		// Subqueries in MVCC executor need transaction context
-		return false, fmt.Errorf("subqueries not yet supported in MVCC executor")
+		// Evaluate scalar subquery used as a boolean expression
+		v, err := e.evalExpr(ex, schema, row, tx)
+		if err != nil {
+			return false, err
+		}
+		if v.IsNull {
+			return false, nil
+		}
+		if v.Type != catalog.TypeBool {
+			return false, fmt.Errorf("subquery did not return boolean")
+		}
+		return v.Bool, nil
 
 	case *ExistsExpr:
-		// EXISTS subqueries in MVCC executor need transaction context
-		return false, fmt.Errorf("EXISTS subqueries not yet supported in MVCC executor")
+		if tx == nil {
+			return false, fmt.Errorf("EXISTS subquery requires an active transaction")
+		}
+		res, err := e.executeSelect(ex.Query, tx)
+		if err != nil {
+			return false, err
+		}
+		exists := len(res.Rows) > 0
+		if ex.Not {
+			return !exists, nil
+		}
+		return exists, nil
 
 	case *LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
@@ -1180,7 +1442,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 
 	case *TSMatchExpr:
 		// Evaluate Full-Text Search match expression
-		result, err := e.evalTSMatch(ex, schema, row)
+		result, err := e.evalTSMatch(ex, schema, row, tx)
 		if err != nil {
 			return false, err
 		}
@@ -2013,7 +2275,7 @@ func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transact
 		// Apply any remaining WHERE conditions
 		// (the index only covers part of the WHERE clause potentially)
 		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if err != nil {
 				return nil, false, err
 			}
@@ -2288,19 +2550,19 @@ func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*
 }
 
 // evalCaseExpr evaluates a CASE WHEN expression.
-func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Simple CASE: CASE operand WHEN val1 THEN res1 ...
 	// Searched CASE: CASE WHEN cond1 THEN res1 ...
 
 	if caseExpr.Operand != nil {
 		// Simple CASE - compare operand with each WHEN value
-		operandVal, err := e.evalExpr(caseExpr.Operand, schema, row)
+		operandVal, err := e.evalExpr(caseExpr.Operand, schema, row, tx)
 		if err != nil {
 			return catalog.Value{}, err
 		}
 
 		for _, when := range caseExpr.Whens {
-			whenVal, err := e.evalExpr(when.Condition, schema, row)
+			whenVal, err := e.evalExpr(when.Condition, schema, row, tx)
 			if err != nil {
 				return catalog.Value{}, err
 			}
@@ -2312,26 +2574,26 @@ func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, 
 			}
 
 			if equal {
-				return e.evalExpr(when.Result, schema, row)
+				return e.evalExpr(when.Result, schema, row, tx)
 			}
 		}
 	} else {
 		// Searched CASE - evaluate each WHEN condition as boolean
 		for _, when := range caseExpr.Whens {
-			condResult, err := e.evalCondition(when.Condition, schema, row)
+			condResult, err := e.evalCondition(when.Condition, schema, row, nil)
 			if err != nil {
 				return catalog.Value{}, err
 			}
 
 			if condResult {
-				return e.evalExpr(when.Result, schema, row)
+				return e.evalExpr(when.Result, schema, row, tx)
 			}
 		}
 	}
 
 	// No WHEN matched, return ELSE or NULL
 	if caseExpr.Else != nil {
-		return e.evalExpr(caseExpr.Else, schema, row)
+		return e.evalExpr(caseExpr.Else, schema, row, tx)
 	}
 
 	// No ELSE clause - return NULL
@@ -2353,7 +2615,7 @@ func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values [
 		}
 
 		// Evaluate the CHECK expression with the row values
-		result, err := e.evalCondition(expr, schema, values)
+		result, err := e.evalCondition(expr, schema, values, nil)
 		if err != nil {
 			return fmt.Errorf("error evaluating CHECK constraint for column %s: %w", col.Name, err)
 		}
@@ -2367,8 +2629,8 @@ func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values [
 }
 
 // evalCastExpr evaluates a CAST expression for MVCC executor.
-func (e *MVCCExecutor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
-	val, err := e.evalExpr(cast.Expr, schema, row)
+func (e *MVCCExecutor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+	val, err := e.evalExpr(cast.Expr, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -2493,13 +2755,13 @@ func isValidJSON(s string) bool {
 }
 
 // evalJSONAccess evaluates -> and ->> operators
-func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
-	objVal, err := e.evalExpr(expr.Object, schema, row)
+func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
 
-	keyVal, err := e.evalExpr(expr.Key, schema, row)
+	keyVal, err := e.evalExpr(expr.Key, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -2584,8 +2846,8 @@ func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Sche
 }
 
 // evalJSONPath evaluates #> and #>> operators
-func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
-	objVal, err := e.evalExpr(expr.Object, schema, row)
+func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -2614,7 +2876,7 @@ func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, 
 	// Navigate the path
 	current := data
 	for _, pathExpr := range expr.Path {
-		pathVal, err := e.evalExpr(pathExpr, schema, row)
+		pathVal, err := e.evalExpr(pathExpr, schema, row, tx)
 		if err != nil {
 			return catalog.Value{}, err
 		}
@@ -2678,13 +2940,13 @@ func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, 
 }
 
 // evalJSONContains evaluates @> and <@ operators
-func (e *MVCCExecutor) evalJSONContains(expr *JSONContainsExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
-	leftVal, err := e.evalExpr(expr.Left, schema, row)
+func (e *MVCCExecutor) evalJSONContains(expr *JSONContainsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+	leftVal, err := e.evalExpr(expr.Left, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
 
-	rightVal, err := e.evalExpr(expr.Right, schema, row)
+	rightVal, err := e.evalExpr(expr.Right, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -2786,8 +3048,8 @@ func jsonEqual(a, b interface{}) bool {
 }
 
 // evalJSONExists evaluates ?, ?|, ?& operators
-func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
-	objVal, err := e.evalExpr(expr.Object, schema, row)
+func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -2822,7 +3084,7 @@ func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Sche
 	// Evaluate key expressions
 	var keys []string
 	for _, keyExpr := range expr.Keys {
-		keyVal, err := e.evalExpr(keyExpr, schema, row)
+		keyVal, err := e.evalExpr(keyExpr, schema, row, tx)
 		if err != nil {
 			return catalog.Value{}, err
 		}
@@ -2861,7 +3123,7 @@ func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Sche
 
 // executeCreateView creates a new view (MVCC version).
 func (e *MVCCExecutor) executeCreateView(_ *CreateViewStmt) (*Result, error) {
-	return nil, fmt.Errorf("CREATE VIEW is not yet fully implemented (view definition parsed successfully)")
+	return nil, fmt.Errorf("CREATE VIEW should be created via Session/Executor; use CREATE VIEW via Session")
 }
 
 // executeDropView drops a view (MVCC version).
@@ -2869,7 +3131,186 @@ func (e *MVCCExecutor) executeDropView(stmt *DropViewStmt) (*Result, error) {
 	if stmt.IfExists {
 		return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
 	}
-	return nil, fmt.Errorf("DROP VIEW is not yet fully implemented")
+	e.viewsMu.Lock()
+	defer e.viewsMu.Unlock()
+	if _, exists := e.views[stmt.ViewName]; !exists {
+		return nil, fmt.Errorf("view '%s' does not exist", stmt.ViewName)
+	}
+	delete(e.views, stmt.ViewName)
+	return &Result{Message: fmt.Sprintf("View '%s' dropped.", stmt.ViewName)}, nil
+}
+
+// executeCreateViewMVCC stores view definitions for later expansion during SELECT.
+func (e *MVCCExecutor) executeCreateViewMVCC(stmt *CreateViewStmt, tx *txn.Transaction) (*Result, error) {
+	e.viewsMu.Lock()
+	defer e.viewsMu.Unlock()
+
+	if _, exists := e.views[stmt.ViewName]; exists {
+		if stmt.OrReplace {
+			delete(e.views, stmt.ViewName)
+		} else {
+			return nil, fmt.Errorf("view '%s' already exists", stmt.ViewName)
+		}
+	}
+
+	// Validate the view query by executing it under a temp/read tx
+	if tx == nil {
+		// start a short-lived transaction for validation
+		tmpTx := e.mtm.TxnManager().Begin()
+		defer func() { _ = tmpTx }()
+		if _, err := e.executeSelect(stmt.Query, tmpTx); err != nil {
+			return nil, fmt.Errorf("invalid view query: %w", err)
+		}
+	} else {
+		if _, err := e.executeSelect(stmt.Query, tx); err != nil {
+			return nil, fmt.Errorf("invalid view query: %w", err)
+		}
+	}
+
+	e.views[stmt.ViewName] = &ViewDef{
+		Name:    stmt.ViewName,
+		Query:   stmt.Query,
+		Columns: append([]string{}, stmt.Columns...),
+	}
+
+	return &Result{Message: fmt.Sprintf("View '%s' created.", stmt.ViewName)}, nil
+}
+
+// executeSelectFromView expands and executes a SELECT from a view definition under a transaction.
+func (e *MVCCExecutor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef, tx *txn.Transaction) (*Result, error) {
+	// Execute the view's underlying query
+	viewResult, err := e.executeSelect(viewDef.Query, tx)
+	if err != nil {
+		return nil, fmt.Errorf("error executing view '%s': %w", viewDef.Name, err)
+	}
+
+	// Apply column aliases if provided
+	if len(viewDef.Columns) > 0 {
+		if len(viewDef.Columns) != len(viewResult.Columns) {
+			return nil, fmt.Errorf("view '%s' column count mismatch: %d aliases for %d columns", viewDef.Name, len(viewDef.Columns), len(viewResult.Columns))
+		}
+		copy(viewResult.Columns, viewDef.Columns)
+	}
+
+	// If outer query is SELECT * FROM view, return view result directly
+	if len(outerStmt.Columns) == 1 && outerStmt.Columns[0].Star {
+		return viewResult, nil
+	}
+
+	// Build a schema for the view result to evaluate WHERE/projections
+	viewSchema := &catalog.Schema{Columns: make([]catalog.Column, len(viewResult.Columns))}
+	for i, colName := range viewResult.Columns {
+		colType := catalog.TypeUnknown
+		if len(viewResult.Rows) > 0 {
+			colType = viewResult.Rows[0][i].Type
+		}
+		viewSchema.Columns[i] = catalog.Column{Name: colName, Type: colType}
+	}
+
+	// Filter view rows using outer WHERE
+	var filtered [][]catalog.Value
+	for _, row := range viewResult.Rows {
+		if outerStmt.Where != nil {
+			match, err := e.evalCondition(outerStmt.Where, viewSchema, row, tx)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filtered = append(filtered, row)
+	}
+
+	// Build output column names
+	var outCols []string
+	for _, sc := range outerStmt.Columns {
+		if sc.Star {
+			outCols = append(outCols, viewResult.Columns...)
+			continue
+		}
+		if sc.Expression != nil {
+			alias := sc.Alias
+			if alias == "" {
+				alias = "expr"
+			}
+			outCols = append(outCols, alias)
+			continue
+		}
+		if sc.Alias != "" {
+			outCols = append(outCols, sc.Alias)
+		} else {
+			outCols = append(outCols, sc.Name)
+		}
+	}
+
+	// Build output rows
+	var outRows [][]catalog.Value
+	hasStar := false
+	for _, sc := range outerStmt.Columns {
+		if sc.Star {
+			hasStar = true
+			break
+		}
+	}
+
+	for _, row := range filtered {
+		if !hasStar {
+			outRow := make([]catalog.Value, len(outerStmt.Columns))
+			for i, sc := range outerStmt.Columns {
+				if sc.Expression != nil {
+					val, err := e.evalExpr(sc.Expression, viewSchema, row, tx)
+					if err != nil {
+						return nil, err
+					}
+					outRow[i] = val
+					continue
+				}
+				col, idx := viewSchema.ColumnByName(sc.Name)
+				if col == nil {
+					return nil, fmt.Errorf("unknown column '%s' in view '%s'", sc.Name, viewDef.Name)
+				}
+				outRow[i] = row[idx]
+			}
+			outRows = append(outRows, outRow)
+			continue
+		}
+
+		// STAR present - expand into the outCols layout
+		outRow := make([]catalog.Value, len(outCols))
+		pos := 0
+		for _, sc := range outerStmt.Columns {
+			if sc.Star {
+				for i := 0; i < len(viewResult.Columns); i++ {
+					if i < len(row) {
+						outRow[pos] = row[i]
+					} else {
+						outRow[pos] = catalog.Null(catalog.TypeUnknown)
+					}
+					pos++
+				}
+				continue
+			}
+			if sc.Expression != nil {
+				val, err := e.evalExpr(sc.Expression, viewSchema, row, tx)
+				if err != nil {
+					return nil, err
+				}
+				outRow[pos] = val
+				pos++
+				continue
+			}
+			col, idx := viewSchema.ColumnByName(sc.Name)
+			if col == nil {
+				return nil, fmt.Errorf("unknown column '%s' in view '%s'", sc.Name, viewDef.Name)
+			}
+			outRow[pos] = row[idx]
+			pos++
+		}
+		outRows = append(outRows, outRow)
+	}
+
+	return &Result{Columns: outCols, Rows: outRows}, nil
 }
 
 // executeUnion executes a UNION/INTERSECT/EXCEPT operation (MVCC version).
@@ -3094,7 +3535,7 @@ func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *tx
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
 		if stmt.Where != nil {
-			match, evalErr := e.evalCondition(stmt.Where, meta.Schema, row.Values)
+			match, evalErr := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if evalErr != nil {
 				return false, evalErr
 			}
@@ -3165,7 +3606,7 @@ func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *tx
 		} else if col.Expression != nil {
 			// Other expression
 			for rowIdx, row := range allRows {
-				val, err := e.evalExpr(col.Expression, meta.Schema, row)
+				val, err := e.evalExpr(col.Expression, meta.Schema, row, tx)
 				if err != nil {
 					return nil, err
 				}
@@ -4058,7 +4499,7 @@ func valueToInt64MVCC(v catalog.Value) int64 {
 // EvaluateExpression evaluates an expression with no row context.
 // This is useful for evaluating parameters in EXECUTE statements.
 func (e *MVCCExecutor) EvaluateExpression(expr Expression) (catalog.Value, error) {
-	return e.evalExpr(expr, nil, nil)
+	return e.evalExpr(expr, nil, nil, nil)
 }
 
 // TriggerContext holds context information for trigger execution.
@@ -4224,9 +4665,9 @@ func (e *MVCCExecutor) fireAfterDeleteTriggers(tableName string, oldRow []catalo
 // ==================== Full-Text Search Evaluation Functions ====================
 
 // evalTSVector evaluates to_tsvector() - converts text to a text search vector.
-func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate the text expression
-	textVal, err := e.evalExpr(expr.Text, schema, row)
+	textVal, err := e.evalExpr(expr.Text, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -4252,9 +4693,9 @@ func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, 
 }
 
 // evalTSQuery evaluates to_tsquery(), plainto_tsquery(), websearch_to_tsquery().
-func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate the query expression
-	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -4276,13 +4717,13 @@ func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, ro
 }
 
 // evalTSMatch evaluates the @@ text search match operator.
-func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate left (vector/text) and right (query/text)
-	leftVal, err := e.evalExpr(expr.Left, schema, row)
+	leftVal, err := e.evalExpr(expr.Left, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
-	rightVal, err := e.evalExpr(expr.Right, schema, row)
+	rightVal, err := e.evalExpr(expr.Right, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -4310,13 +4751,13 @@ func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, ro
 }
 
 // evalTSRank evaluates ts_rank() - calculates relevance ranking.
-func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate vector and query
-	vectorVal, err := e.evalExpr(expr.Vector, schema, row)
+	vectorVal, err := e.evalExpr(expr.Vector, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
-	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -4344,13 +4785,13 @@ func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row 
 }
 
 // evalTSHeadline evaluates ts_headline() - generates result headlines with highlighted terms.
-func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate text and query
-	textVal, err := e.evalExpr(expr.Text, schema, row)
+	textVal, err := e.evalExpr(expr.Text, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
-	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
@@ -4377,9 +4818,9 @@ func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Sche
 }
 
 // evalMatchAgainst evaluates MySQL-style MATCH...AGAINST expression.
-func (e *MVCCExecutor) evalMatchAgainst(expr *MatchAgainstExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *MVCCExecutor) evalMatchAgainst(expr *MatchAgainstExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Get query text
-	queryVal, err := e.evalExpr(expr.Query, schema, row)
+	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
 	}
