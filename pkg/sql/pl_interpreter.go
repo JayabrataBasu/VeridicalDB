@@ -676,12 +676,6 @@ func (pl *PLInterpreter) valueToBool(v catalog.Value) (bool, bool) {
 	return false, false
 }
 
-// valuesEqual checks if two values are equal.
-// nolint:unused // kept for potential use in condition evaluation
-func (pl *PLInterpreter) valuesEqual(left, right catalog.Value) bool {
-	return left.Compare(right) == 0
-}
-
 // Arithmetic helper methods
 func (pl *PLInterpreter) addValues(left, right catalog.Value) (catalog.Value, error) {
 	if li, ok := pl.valueToInt64(left); ok {

@@ -581,26 +581,6 @@ func (e *Executor) evalExprWithExcluded(expr Expression, schema *catalog.Schema,
 	}
 }
 
-// primaryKeyExists checks if a value already exists for a primary key column.
-// nolint:unused // kept for future use in primary key constraint enforcement
-func (e *Executor) primaryKeyExists(tableName string, schema *catalog.Schema, colIdx int, value catalog.Value) (bool, error) {
-	exists := false
-
-	err := e.scanTable(tableName, schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
-		existingValue := row[colIdx]
-		if valuesEqual(value, existingValue) {
-			exists = true
-			return false, nil // stop scanning
-		}
-		return true, nil // continue scanning
-	})
-
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
-}
-
 // valuesEqual compares two catalog values for equality.
 func valuesEqual(a, b catalog.Value) bool {
 	if a.IsNull || b.IsNull {
@@ -2959,8 +2939,7 @@ func (e *Executor) executeSelectWithGroupingSets(stmt *SelectStmt, meta *catalog
 			resultRow := make([]catalog.Value, len(stmt.Columns))
 
 			// Calculate aggregates over all rows
-			var grandTotalAggs []aggregatorState
-			grandTotalAggs = make([]aggregatorState, len(stmt.Columns))
+			grandTotalAggs := make([]aggregatorState, len(stmt.Columns))
 
 			for _, row := range allRows {
 				for i, colInfo := range columnInfos {
@@ -3890,6 +3869,7 @@ func (e *Executor) executeMerge(stmt *MergeStmt) (*Result, error) {
 		for _, col := range sourceSchema.Columns {
 			sourceCols = append(sourceCols, col.Name)
 		}
+		_ = sourceCols // sourceCols collected for potential future use
 		// Collect all source rows
 		err = e.scanTable(stmt.SourceTable, sourceSchema, func(rid storage.RID, row []catalog.Value) (bool, error) {
 			rowCopy := make([]catalog.Value, len(row))
@@ -6956,9 +6936,10 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				return nil, err
 			}
 			n := int64(1)
-			if nVal.Type == catalog.TypeInt32 {
+			switch nVal.Type {
+			case catalog.TypeInt32:
 				n = int64(nVal.Int32)
-			} else if nVal.Type == catalog.TypeInt64 {
+			case catalog.TypeInt64:
 				n = nVal.Int64
 			}
 			if n < 1 {
@@ -7110,9 +7091,10 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				if err != nil {
 					return nil, err
 				}
-				if offsetVal.Type == catalog.TypeInt32 {
+				switch offsetVal.Type {
+				case catalog.TypeInt32:
 					offset = int64(offsetVal.Int32)
-				} else if offsetVal.Type == catalog.TypeInt64 {
+				case catalog.TypeInt64:
 					offset = offsetVal.Int64
 				}
 			}
@@ -7155,9 +7137,10 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 				if err != nil {
 					return nil, err
 				}
-				if offsetVal.Type == catalog.TypeInt32 {
+				switch offsetVal.Type {
+				case catalog.TypeInt32:
 					offset = int64(offsetVal.Int32)
-				} else if offsetVal.Type == catalog.TypeInt64 {
+				case catalog.TypeInt64:
 					offset = offsetVal.Int64
 				}
 			}
@@ -7251,11 +7234,12 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			var nVal int64
 			switch n := wf.Args[1].(type) {
 			case *LiteralExpr:
-				if n.Value.Type == catalog.TypeInt64 {
+				switch n.Value.Type {
+				case catalog.TypeInt64:
 					nVal = n.Value.Int64
-				} else if n.Value.Type == catalog.TypeInt32 {
+				case catalog.TypeInt32:
 					nVal = int64(n.Value.Int32)
-				} else {
+				default:
 					return nil, fmt.Errorf("NTH_VALUE second argument must be an integer")
 				}
 			default:
@@ -7402,9 +7386,10 @@ func parseFrameBoundIndex(bound string, currentIdx, partitionSize int, _ bool) i
 		if len(parts) == 2 {
 			n, err := strconv.Atoi(parts[0])
 			if err == nil {
-				if parts[1] == "PRECEDING" {
+				switch parts[1] {
+				case "PRECEDING":
 					return currentIdx - n
-				} else if parts[1] == "FOLLOWING" {
+				case "FOLLOWING":
 					return currentIdx + n
 				}
 			}
@@ -7423,9 +7408,10 @@ func computeFrameSum(rows [][]catalog.Value, rowIndices []int, colIdx int, start
 		}
 		val := rows[rowIndices[i]][colIdx]
 		if !val.IsNull {
-			if val.Type == catalog.TypeInt32 {
+			switch val.Type {
+			case catalog.TypeInt32:
 				sum += int64(val.Int32)
-			} else if val.Type == catalog.TypeInt64 {
+			case catalog.TypeInt64:
 				sum += val.Int64
 			}
 		}

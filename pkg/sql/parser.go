@@ -712,27 +712,6 @@ func expandCube(cols []string) []GroupingSet {
 	return sets
 }
 
-// parseGroupByList parses: column [, column ...] (legacy, simple form)
-// nolint:unused // kept for backward compatibility
-func (p *Parser) parseGroupByList() ([]string, error) {
-	var groupBy []string
-
-	for {
-		if !p.curTokenIs(TOKEN_IDENT) {
-			return nil, fmt.Errorf("expected column name in GROUP BY, got %v", p.cur.Type)
-		}
-		groupBy = append(groupBy, p.cur.Literal)
-		p.nextToken()
-
-		if !p.curTokenIs(TOKEN_COMMA) {
-			break
-		}
-		p.nextToken() // consume comma
-	}
-
-	return groupBy, nil
-}
-
 // parseJoinClause parses: [INNER|LEFT|RIGHT|FULL|CROSS] [LATERAL] JOIN table|subquery [ON condition]
 func (p *Parser) parseJoinClause() (JoinClause, error) {
 	join := JoinClause{JoinType: "INNER"} // default

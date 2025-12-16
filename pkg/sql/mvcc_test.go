@@ -49,7 +49,7 @@ func TestMVCCAutocommit(t *testing.T) {
 	}
 
 	// Insert row (autocommit)
-	result, err = session.ExecuteSQL("INSERT INTO users VALUES (1, 'Alice');")
+	_, err = session.ExecuteSQL("INSERT INTO users VALUES (1, 'Alice');")
 	if err != nil {
 		t.Fatalf("INSERT failed: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestMVCCExplicitTransaction(t *testing.T) {
 	}
 
 	// Commit
-	result, err = session.ExecuteSQL("COMMIT;")
+	_, err = session.ExecuteSQL("COMMIT;")
 	if err != nil {
 		t.Fatalf("COMMIT failed: %v", err)
 	}

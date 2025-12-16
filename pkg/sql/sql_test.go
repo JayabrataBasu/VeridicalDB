@@ -611,6 +611,7 @@ func TestInsertOnConflict(t *testing.T) {
 		INSERT INTO upsert_test VALUES (1, 'Bob', 20)
 		ON CONFLICT (id) DO NOTHING;
 	`)
+	_ = result // result used later in test
 
 	// Should not affect any rows (skipped)
 	selectResult := executeSQL(t, executor, "SELECT * FROM upsert_test WHERE id = 1;")
@@ -670,7 +671,7 @@ func TestInsertOnConflict(t *testing.T) {
 	}
 
 	// Test 5: Multi-row INSERT with ON CONFLICT
-	result = executeSQL(t, executor, `
+	_ = executeSQL(t, executor, `
 		INSERT INTO upsert_test VALUES (2, 'Carol Updated', 35), (3, 'Dave', 40)
 		ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, amount = EXCLUDED.amount;
 	`)
@@ -3680,7 +3681,7 @@ func TestViewExecution(t *testing.T) {
 	}
 
 	// Test DROP VIEW IF EXISTS for non-existent view
-	result = executeSQL(t, executor, "DROP VIEW IF EXISTS nonexistent;")
+	_ = executeSQL(t, executor, "DROP VIEW IF EXISTS nonexistent;")
 	// Should not error
 
 	// Test view already exists error
@@ -4647,9 +4648,10 @@ func TestWindowFrameExecution(t *testing.T) {
 
 	for i, row := range result4.Rows {
 		var minVal int64
-		if row[1].Type == catalog.TypeInt64 {
+		switch row[1].Type {
+		case catalog.TypeInt64:
 			minVal = row[1].Int64
-		} else if row[1].Type == catalog.TypeInt32 {
+		case catalog.TypeInt32:
 			minVal = int64(row[1].Int32)
 		}
 		if minVal != 10 {
@@ -4674,9 +4676,10 @@ func TestWindowFrameExecution(t *testing.T) {
 
 	for i, row := range result5.Rows {
 		var maxVal int64
-		if row[1].Type == catalog.TypeInt64 {
+		switch row[1].Type {
+		case catalog.TypeInt64:
 			maxVal = row[1].Int64
-		} else if row[1].Type == catalog.TypeInt32 {
+		case catalog.TypeInt32:
 			maxVal = int64(row[1].Int32)
 		}
 		if maxVal != 50 {
@@ -4697,9 +4700,10 @@ func TestWindowFrameExecution(t *testing.T) {
 
 	for i, row := range result6.Rows {
 		var firstVal int64
-		if row[1].Type == catalog.TypeInt64 {
+		switch row[1].Type {
+		case catalog.TypeInt64:
 			firstVal = row[1].Int64
-		} else if row[1].Type == catalog.TypeInt32 {
+		case catalog.TypeInt32:
 			firstVal = int64(row[1].Int32)
 		}
 		if firstVal != 10 {
@@ -4720,9 +4724,10 @@ func TestWindowFrameExecution(t *testing.T) {
 
 	for i, row := range result7.Rows {
 		var lastVal int64
-		if row[1].Type == catalog.TypeInt64 {
+		switch row[1].Type {
+		case catalog.TypeInt64:
 			lastVal = row[1].Int64
-		} else if row[1].Type == catalog.TypeInt32 {
+		case catalog.TypeInt32:
 			lastVal = int64(row[1].Int32)
 		}
 		if lastVal != 50 {
@@ -4764,13 +4769,14 @@ func TestNthValue(t *testing.T) {
 		dept := row[1].Text
 		nthVal := row[3]
 
-		if dept == "Engineering" {
+		switch dept {
+		case "Engineering":
 			if nthVal.Type == catalog.TypeInt64 && nthVal.Int64 != 80000 {
 				t.Errorf("Engineering: Expected NTH_VALUE(2) = 80000, got %d", nthVal.Int64)
 			} else if nthVal.Type == catalog.TypeInt32 && nthVal.Int32 != 80000 {
 				t.Errorf("Engineering: Expected NTH_VALUE(2) = 80000, got %d", nthVal.Int32)
 			}
-		} else if dept == "Sales" {
+		case "Sales":
 			if nthVal.Type == catalog.TypeInt64 && nthVal.Int64 != 60000 {
 				t.Errorf("Sales: Expected NTH_VALUE(2) = 60000, got %d", nthVal.Int64)
 			} else if nthVal.Type == catalog.TypeInt32 && nthVal.Int32 != 60000 {

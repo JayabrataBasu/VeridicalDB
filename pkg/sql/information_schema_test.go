@@ -108,9 +108,10 @@ func TestInformationSchema(t *testing.T) {
 	foundPK := 0
 	foundFK := 0
 	for _, row := range result.Rows {
-		if row[0].Text == "PRIMARY KEY" {
+		switch row[0].Text {
+		case "PRIMARY KEY":
 			foundPK++
-		} else if row[0].Text == "FOREIGN KEY" {
+		case "FOREIGN KEY":
 			foundFK++
 		}
 	}

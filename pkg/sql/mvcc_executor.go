@@ -98,29 +98,6 @@ func exprToCatalogValue(expr Expression) catalog.Value {
 	}
 }
 
-// literalToValue converts a literal to a catalog Value.
-// nolint:unused // kept for potential future use
-func literalToValue(v interface{}) catalog.Value {
-	switch val := v.(type) {
-	case int:
-		return catalog.NewInt64(int64(val))
-	case int32:
-		return catalog.NewInt32(val)
-	case int64:
-		return catalog.NewInt64(val)
-	case float64:
-		return catalog.NewFloat64(val)
-	case string:
-		return catalog.NewText(val)
-	case bool:
-		return catalog.NewBool(val)
-	case nil:
-		return catalog.Value{IsNull: true}
-	default:
-		return catalog.Value{IsNull: true}
-	}
-}
-
 // partitionRouter routes rows to the correct partition.
 type partitionRouter struct {
 	spec       *catalog.PartitionSpec
@@ -2521,11 +2498,12 @@ func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Sche
 
 	// Get JSON string
 	var jsonStr string
-	if objVal.Type == catalog.TypeJSON {
+	switch objVal.Type {
+	case catalog.TypeJSON:
 		jsonStr = objVal.JSON
-	} else if objVal.Type == catalog.TypeText {
+	case catalog.TypeText:
 		jsonStr = objVal.Text
-	} else {
+	default:
 		return catalog.Value{}, fmt.Errorf("-> operator requires JSON or TEXT, got %v", objVal.Type)
 	}
 
@@ -2606,11 +2584,12 @@ func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, 
 
 	// Get JSON string
 	var jsonStr string
-	if objVal.Type == catalog.TypeJSON {
+	switch objVal.Type {
+	case catalog.TypeJSON:
 		jsonStr = objVal.JSON
-	} else if objVal.Type == catalog.TypeText {
+	case catalog.TypeText:
 		jsonStr = objVal.Text
-	} else {
+	default:
 		return catalog.Value{}, fmt.Errorf("#> operator requires JSON or TEXT, got %v", objVal.Type)
 	}
 
@@ -2704,19 +2683,21 @@ func (e *MVCCExecutor) evalJSONContains(expr *JSONContainsExpr, schema *catalog.
 
 	// Get JSON strings
 	var leftJSON, rightJSON string
-	if leftVal.Type == catalog.TypeJSON {
+	switch leftVal.Type {
+	case catalog.TypeJSON:
 		leftJSON = leftVal.JSON
-	} else if leftVal.Type == catalog.TypeText {
+	case catalog.TypeText:
 		leftJSON = leftVal.Text
-	} else {
+	default:
 		return catalog.Value{}, fmt.Errorf("@> operator requires JSON or TEXT")
 	}
 
-	if rightVal.Type == catalog.TypeJSON {
+	switch rightVal.Type {
+	case catalog.TypeJSON:
 		rightJSON = rightVal.JSON
-	} else if rightVal.Type == catalog.TypeText {
+	case catalog.TypeText:
 		rightJSON = rightVal.Text
-	} else {
+	default:
 		return catalog.Value{}, fmt.Errorf("@> operator requires JSON or TEXT")
 	}
 
@@ -2805,11 +2786,12 @@ func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Sche
 
 	// Get JSON string
 	var jsonStr string
-	if objVal.Type == catalog.TypeJSON {
+	switch objVal.Type {
+	case catalog.TypeJSON:
 		jsonStr = objVal.JSON
-	} else if objVal.Type == catalog.TypeText {
+	case catalog.TypeText:
 		jsonStr = objVal.Text
-	} else {
+	default:
 		return catalog.Value{}, fmt.Errorf("? operator requires JSON or TEXT")
 	}
 
@@ -3360,9 +3342,10 @@ func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalo
 			for _, rowIdx := range rowIndices {
 				val := rows[rowIdx][colIdx]
 				if !val.IsNull {
-					if val.Type == catalog.TypeInt32 {
+					switch val.Type {
+					case catalog.TypeInt32:
 						runningSum += int64(val.Int32)
-					} else if val.Type == catalog.TypeInt64 {
+					case catalog.TypeInt64:
 						runningSum += val.Int64
 					}
 				}
@@ -3392,9 +3375,10 @@ func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalo
 			for _, rowIdx := range rowIndices {
 				val := rows[rowIdx][colIdx]
 				if !val.IsNull {
-					if val.Type == catalog.TypeInt32 {
+					switch val.Type {
+					case catalog.TypeInt32:
 						runningSum += int64(val.Int32)
-					} else if val.Type == catalog.TypeInt64 {
+					case catalog.TypeInt64:
 						runningSum += val.Int64
 					}
 					count++
@@ -3763,6 +3747,7 @@ func (e *MVCCExecutor) executeMerge(stmt *MergeStmt, tx *txn.Transaction) (*Resu
 		for _, col := range sourceSchema.Columns {
 			sourceCols = append(sourceCols, col.Name)
 		}
+		_ = sourceCols // sourceCols collected for potential future use
 		err = e.mtm.Scan(stmt.SourceTable, tx, func(row *catalog.MVCCRow) (bool, error) {
 			rowCopy := make([]catalog.Value, len(row.Values))
 			copy(rowCopy, row.Values)
