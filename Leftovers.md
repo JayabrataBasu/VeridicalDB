@@ -5,12 +5,11 @@
 **Purpose:** Track and complete all remaining SQL features in priority order
 
 **Recent updates (Dec 16, 2025):**
-- **🎉 ALL FEATURES COMPLETED! 🎉**
-- Replication: Full primary-replica streaming with WAL, failover handling, promotion/demotion.
-- Stored Procedures: Full PL/pgSQL support with CREATE PROCEDURE/FUNCTION, CALL, control flow, variables, and SQL execution.
+- Replication: some components implemented; full streaming and failover work remains.
+- Stored Procedures: PL/pgSQL support with CREATE PROCEDURE/FUNCTION, CALL, control flow, and SQL execution implemented.
 - Full-Text Search implemented (package + SQL support + tests).
-- Table Partitioning fully implemented (parser, catalog, executor integration, routing, end-to-end tests).
-- Index Range Scans: `<`, `>`, `<=`, `>=` operators now utilize B-tree indexes for efficient range queries.
+- Table Partitioning implemented (parser, catalog, executor integration, routing, end-to-end tests).
+- Index Range Scans: `<`, `>`, `<=`, `>=` operators utilize B-tree indexes for efficient range queries.
 
 ---
 
@@ -33,10 +32,10 @@ These features have parsing support but incomplete execution. **Complete these f
 - **Completed:** Iterative fixed-point execution with UNION support
 - **Test:** `TestRecursiveCTE` in sql_test.go
 
-### 1.2 View Execution (SELECT FROM view) ✅ COMPLETED
-- **Status:** ✅ Fully implemented
-- **Completed:** CREATE VIEW, DROP VIEW, SELECT FROM view with WHERE/JOIN
-- **Test:** `TestViewExecution` in sql_test.go
+### 1.2 View Execution (SELECT FROM view) ⚠️ PARTIAL
+- **Status:** ⚠️ Partial
+- **Notes:** Parsing and many SELECT-from-view use-cases are supported; however, server-level MVCC execution for CREATE VIEW/DROP VIEW currently returns a "not yet implemented" error. Some tests in `pkg/sql` verify view-related parsing and planner behavior, but runtime execution via the MVCC executor is pending.
+- **Test:** `TestViewExecution` covers parsing; execution paths have guarded TODOs
 
 ### 1.3 Window Frame Execution ✅ COMPLETED
 - **Status:** ✅ Fully implemented
@@ -536,8 +535,8 @@ Advanced features for future enhancement.
 
 ---
 
-## 🎉 ALL FEATURES COMPLETED! 🎉
+## Progress summary (Dec 16, 2025)
 
-All planned features for VeridicalDB have been implemented as of December 16, 2025.
+Significant progress has been made across the project; many features are implemented and tested. A few items remain partially implemented (for example, CREATE VIEW execution and some MVCC subquery paths). Please consult `TODO.md` for a short actionable list of remaining work.
 
 *Update this file as features are completed. Mark items with ✅ when done.*
