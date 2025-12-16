@@ -116,6 +116,11 @@ func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Ma
 		} else {
 			repl.logger.Warn("procedure catalog not available", "error", err)
 		}
+
+		// If DatabaseManager is present but no database selected, print a short hint
+		if repl.session.HasDatabaseManager() && repl.session.CurrentDatabase() == "" {
+			fmt.Fprintln(repl.out, "No database selected. Run: CREATE DATABASE <name>; then USE <name> to select it.")
+		}
 	}
 
 	return repl.Run()
@@ -176,7 +181,21 @@ func (r *REPL) Run() error {
 
 // getPrompt returns the appropriate prompt based on transaction state.
 func (r *REPL) getPrompt() string {
-	if r.session != nil && r.session.InTransaction() {
+	var db string
+	if r.session != nil {
+		db = r.session.CurrentDatabase()
+	}
+
+	inTx := r.session != nil && r.session.InTransaction()
+
+	if db != "" {
+		if inTx {
+			return fmt.Sprintf("veridical[%s] [tx]> ", db)
+		}
+		return fmt.Sprintf("veridical[%s]> ", db)
+	}
+
+	if inTx {
 		return "veridical [tx]> "
 	}
 	return Prompt

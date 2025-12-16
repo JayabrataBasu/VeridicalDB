@@ -41,9 +41,11 @@ echo ""
 OUTPUT=$(./veridicaldb --config "$TEST_DIR/config.yaml" << 'EOF'
 CREATE USER testuser WITH PASSWORD 'secret123';
 CREATE USER readonly WITH PASSWORD 'readpass';
+CREATE TABLE orphan (id INT);
 CREATE DATABASE testdb;
 CREATE DATABASE analytics;
 SHOW DATABASES;
+USE testdb;
 CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL, email TEXT, age INT, active BOOLEAN DEFAULT true);
 CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, quantity INT, status TEXT DEFAULT 'pending');
 CREATE TABLE products (id INT PRIMARY KEY, name TEXT NOT NULL, category TEXT, stock INT DEFAULT 0);
@@ -168,6 +170,7 @@ check "CREATE USER readonly" "User.*created\|readonly"
 check "CREATE DATABASE testdb" "Database.*created\|CREATE DATABASE"
 check "CREATE DATABASE analytics" "Database.*created\|analytics"
 check "SHOW DATABASES" "default"
+check "CREATE TABLE without DB fails" "no database selected"
 
 echo ""
 echo "--- DDL: Table Operations ---"

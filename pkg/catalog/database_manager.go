@@ -165,9 +165,12 @@ func (dm *DatabaseManager) DropDatabase(name string, ifExists bool) error {
 		return fmt.Errorf("database %q does not exist", name)
 	}
 
-	// Prevent dropping default database
+	// Prevent dropping default database when it's the only database
 	if name == "default" {
-		return fmt.Errorf("cannot drop the default database")
+		if len(dm.databases) <= 1 {
+			return fmt.Errorf("cannot drop the default database when it is the only database")
+		}
+		// otherwise allow dropping default if other databases exist
 	}
 
 	// Check if database directory is empty (except for meta.json and empty subdirs)

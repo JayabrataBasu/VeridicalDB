@@ -23,8 +23,15 @@ func newTestSession(t *testing.T) *Session {
 func TestCreateTableRequiresDatabase(t *testing.T) {
 	s := newTestSession(t)
 
+	// Attach a DatabaseManager (server mode) but do not select a database
+	dm, err := catalog.NewDatabaseManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewDatabaseManager error: %v", err)
+	}
+	s.SetDatabaseManager(dm)
+
 	// Attempt to create table without selecting a database
-	_, err := s.ExecuteSQL("CREATE TABLE foo (id INT);")
+	_, err = s.ExecuteSQL("CREATE TABLE foo (id INT);")
 	if err == nil || !strings.Contains(err.Error(), "no database selected") {
 		t.Fatalf("expected error about no database selected, got: %v", err)
 	}

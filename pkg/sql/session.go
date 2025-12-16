@@ -86,21 +86,24 @@ func (s *Session) SetUserCatalog(userCat *auth.UserCatalog) {
 // SetDatabaseManager sets the database manager for multi-database support.
 func (s *Session) SetDatabaseManager(dbMgr *catalog.DatabaseManager) {
 	s.dbMgr = dbMgr
-	// Default to "default" database if not set
-	if s.currentDatabase == "" {
-		s.currentDatabase = "default"
-	}
+}
+
+// HasDatabaseManager returns true if a DatabaseManager is configured for this session.
+func (s *Session) HasDatabaseManager() bool {
+	return s.dbMgr != nil
 }
 
 // requireDatabaseSelected ensures a current database is selected and exists.
 func (s *Session) requireDatabaseSelected() error {
+	// If DatabaseManager is not configured (single-database/embedded mode), allow DDL
+	if s.dbMgr == nil {
+		return nil
+	}
 	if s.currentDatabase == "" {
 		return fmt.Errorf("no database selected; run CREATE DATABASE <name> then USE <name>")
 	}
-	if s.dbMgr != nil {
-		if !s.dbMgr.DatabaseExists(s.currentDatabase) {
-			return fmt.Errorf("current database %q does not exist", s.currentDatabase)
-		}
+	if !s.dbMgr.DatabaseExists(s.currentDatabase) {
+		return fmt.Errorf("current database %q does not exist", s.currentDatabase)
 	}
 	return nil
 }

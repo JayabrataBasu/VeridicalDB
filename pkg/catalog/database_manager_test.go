@@ -171,10 +171,25 @@ func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
 		t.Fatalf("failed to create database manager: %v", err)
 	}
 
-	// Cannot drop default database
+	// Cannot drop default database when it's the only database
 	err = dm.DropDatabase("default", false)
 	if err == nil {
-		t.Error("expected error dropping default database")
+		t.Error("expected error dropping default database when only one exists")
+	}
+
+	// Create another database and now dropping default should be allowed
+	_, err = dm.CreateDatabase("other", "")
+	if err != nil {
+		t.Fatalf("failed to create other database: %v", err)
+	}
+
+	// Now drop default should succeed
+	err = dm.DropDatabase("default", false)
+	if err != nil {
+		t.Fatalf("expected dropping default to succeed when other DBs exist: %v", err)
+	}
+	if dm.DatabaseExists("default") {
+		t.Error("expected default to be dropped")
 	}
 }
 

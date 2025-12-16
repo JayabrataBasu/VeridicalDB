@@ -8,7 +8,46 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
+
+func TestGetPromptIncludesDatabase(t *testing.T) {
+	var buf bytes.Buffer
+	logger := log.New(&buf, log.LevelError, log.FormatText)
+	tm, err := catalog.NewTableManager(t.TempDir(), 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager error: %v", err)
+	}
+	// create WAL for txn logger
+	walLog, err := wal.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("wal.Open error: %v", err)
+	}
+	repl := NewREPL(nil, nil, logger, tm, txn.NewManager(), wal.NewTxnLogger(walLog, txn.NewManager()))
+
+	// Initially no DatabaseManager wired in RunInteractive; simulate by creating one
+	dbm, err := catalog.NewDatabaseManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewDatabaseManager error: %v", err)
+	}
+	repl.session.SetDatabaseManager(dbm)
+
+	// No current database selected -> default prompt
+	p := repl.getPrompt()
+	if p != "veridical> " {
+		t.Fatalf("unexpected prompt without DB: %q", p)
+	}
+
+	// Select database and expect it in the prompt
+	if err := repl.session.SetCurrentDatabase("default"); err != nil {
+		t.Fatalf("SetCurrentDatabase failed: %v", err)
+	}
+	p = repl.getPrompt()
+	if p != "veridical[default]> " {
+		t.Fatalf("unexpected prompt with DB: %q", p)
+	}
+}
 
 func TestREPLCommands(t *testing.T) {
 	tests := []struct {
