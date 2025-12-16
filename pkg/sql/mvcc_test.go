@@ -402,6 +402,56 @@ func TestMVCCSubqueries(t *testing.T) {
 	}
 }
 
+// TestMVCCGroupBy tests GROUP BY and HAVING under MVCC executor.
+func TestMVCCGroupBy(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE sales (dept TEXT, salary INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO sales VALUES ('A', 10), ('A', 20), ('B', 5);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	res, err := session.ExecuteSQL("SELECT dept, SUM(salary) as total FROM sales GROUP BY dept ORDER BY dept;")
+	if err != nil {
+		t.Fatalf("GROUP BY SELECT failed: %v", err)
+	}
+	if len(res.Rows) != 2 {
+		t.Fatalf("unexpected GROUP BY rows: %#v", res.Rows)
+	}
+	if res.Rows[0][0].Text != "A" || res.Rows[0][1].Int64 != 30 {
+		t.Fatalf("unexpected GROUP BY first row: %#v", res.Rows[0])
+	}
+
+	// HAVING
+	// (debug logged above)
+
+	res, err = session.ExecuteSQL("SELECT dept, SUM(salary) as total FROM sales GROUP BY dept HAVING SUM(salary) > 15 ORDER BY dept;")
+	if err != nil {
+		t.Fatalf("HAVING SELECT failed: %v", err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0].Text != "A" || res.Rows[0][1].Int64 != 30 {
+		t.Fatalf("unexpected HAVING result: %#v", res.Rows)
+	}
+
+	// Debug: inspect parsed columns (temporary)
+	p := NewParser("SELECT dept, SUM(salary) as total FROM sales GROUP BY dept HAVING SUM(salary) > 15 ORDER BY dept;")
+	parsed, perr := p.Parse()
+	if perr != nil {
+		t.Fatalf("parse failed: %v", perr)
+	}
+	sel, ok := parsed.(*SelectStmt)
+	if !ok {
+		t.Fatalf("unexpected parsed statement type: %T", parsed)
+	}
+	t.Logf("Parsed columns: %+v", sel.Columns)
+}
+
 // TestMVCCNestedBeginError tests that nested BEGIN fails.
 func TestMVCCNestedBeginError(t *testing.T) {
 	session, cleanup := setupMVCCTest(t)

@@ -757,21 +757,230 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 		return nil, err
 	}
 
-	// We'll support global aggregates (no GROUP BY) for now
-	// Prepare aggregator states per column
-	type aggState struct {
-		count    int64
-		sum      int64
-		sumFloat float64
-		hasValue bool
-		max      catalog.Value
+	// If GROUP BY is not present, keep the old global-aggregate behavior
+	if len(stmt.GroupBy) == 0 {
+		// Prepare aggregator states per column
+		type aggState struct {
+			count    int64
+			sum      int64
+			sumFloat float64
+			hasValue bool
+			max      catalog.Value
+		}
+
+		states := make([]aggState, len(stmt.Columns))
+
+		// Scan rows and update aggregators
+		err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+			// WHERE filter
+			if stmt.Where != nil {
+				match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return true, nil
+				}
+			}
+
+			for i, sc := range stmt.Columns {
+				if sc.Aggregate == nil {
+					continue
+				}
+				agg := sc.Aggregate
+				switch agg.Function {
+				case "COUNT":
+					if agg.Arg == "*" || agg.Arg == "" {
+						states[i].count++
+						states[i].hasValue = true
+					} else {
+						col, idx := meta.Schema.ColumnByName(agg.Arg)
+						if col == nil {
+							return false, fmt.Errorf("unknown column: %s", agg.Arg)
+						}
+						val := row.Values[idx]
+						if !val.IsNull {
+							states[i].count++
+							states[i].hasValue = true
+						}
+					}
+				case "SUM":
+					col, idx := meta.Schema.ColumnByName(agg.Arg)
+					if col == nil {
+						return false, fmt.Errorf("unknown column: %s", agg.Arg)
+					}
+					val := row.Values[idx]
+					if val.IsNull {
+						continue
+					}
+					switch val.Type {
+					case catalog.TypeInt32:
+						states[i].sum += int64(val.Int32)
+						states[i].hasValue = true
+					case catalog.TypeInt64:
+						states[i].sum += val.Int64
+						states[i].hasValue = true
+					default:
+						// treat as float
+						states[i].sumFloat += val.Float64
+						states[i].hasValue = true
+					}
+				case "MAX":
+					col, idx := meta.Schema.ColumnByName(agg.Arg)
+					if col == nil {
+						return false, fmt.Errorf("unknown column: %s", agg.Arg)
+					}
+					val := row.Values[idx]
+					if val.IsNull {
+						continue
+					}
+					if !states[i].hasValue {
+						states[i].max = val
+						states[i].hasValue = true
+					} else {
+						if compareValuesForSort(val, states[i].max) > 0 {
+							states[i].max = val
+						}
+					}
+				case "AVG":
+					col, idx := meta.Schema.ColumnByName(agg.Arg)
+					if col == nil {
+						return false, fmt.Errorf("unknown column: %s", agg.Arg)
+					}
+					val := row.Values[idx]
+					if val.IsNull {
+						continue
+					}
+					switch val.Type {
+					case catalog.TypeInt32:
+						states[i].sumFloat += float64(val.Int32)
+					case catalog.TypeInt64:
+						states[i].sumFloat += float64(val.Int64)
+					default:
+						states[i].sumFloat += val.Float64
+					}
+					states[i].count++
+					states[i].hasValue = true
+				default:
+					return false, fmt.Errorf("unsupported aggregate: %s", agg.Function)
+				}
+			}
+
+			return true, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// Build result row (single row for global aggregates)
+		outCols := make([]string, len(stmt.Columns))
+		row := make([]catalog.Value, len(stmt.Columns))
+		for i, sc := range stmt.Columns {
+			if sc.Aggregate == nil {
+				// Non-aggregate without GROUP BY: undefined, return NULL
+				outCols[i] = sc.Alias
+				row[i] = catalog.Null(catalog.TypeUnknown)
+				continue
+			}
+			agg := sc.Aggregate
+			outCols[i] = sc.Alias
+			st := states[i]
+			switch agg.Function {
+			case "COUNT":
+				row[i] = catalog.NewInt64(st.count)
+			case "SUM":
+				if st.hasValue {
+					row[i] = catalog.NewInt64(st.sum)
+				} else {
+					row[i] = catalog.Null(catalog.TypeInt64)
+				}
+			case "MAX":
+				if st.hasValue {
+					row[i] = st.max
+				} else {
+					row[i] = catalog.Null(catalog.TypeUnknown)
+				}
+			case "AVG":
+				if st.count == 0 {
+					row[i] = catalog.Null(catalog.TypeFloat64)
+				} else {
+					row[i] = catalog.NewFloat64(st.sumFloat / float64(st.count))
+				}
+			default:
+				row[i] = catalog.Null(catalog.TypeUnknown)
+			}
+		}
+
+		return &Result{Columns: outCols, Rows: [][]catalog.Value{row}}, nil
 	}
 
-	states := make([]aggState, len(stmt.Columns))
+	// GROUP BY handling
+	// Resolve GROUP BY column indices
+	groupByIndices := make([]int, len(stmt.GroupBy))
+	for i, colName := range stmt.GroupBy {
+		_, idx := meta.Schema.ColumnByName(colName)
+		if idx < 0 {
+			return nil, fmt.Errorf("unknown column in GROUP BY: %s", colName)
+		}
+		groupByIndices[i] = idx
+	}
 
-	// Scan rows and update aggregators
+	// Validate that non-aggregate columns appear in GROUP BY
+	type columnInfo struct {
+		isAggregate bool
+		aggregate   *AggregateFunc
+		colName     string
+		colIdx      int // schema column index for regular columns
+	}
+	columnInfos := make([]columnInfo, len(stmt.Columns))
+	outputCols := make([]string, len(stmt.Columns))
+	for i, col := range stmt.Columns {
+		if col.Aggregate != nil {
+			agg := col.Aggregate
+			columnInfos[i].isAggregate = true
+			columnInfos[i].aggregate = agg
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = fmt.Sprintf("%s(%s)", agg.Function, agg.Arg)
+			}
+
+			if agg.Arg != "*" {
+				_, idx := meta.Schema.ColumnByName(agg.Arg)
+				if idx < 0 {
+					return nil, fmt.Errorf("unknown column: %s", agg.Arg)
+				}
+			}
+		} else if col.Name != "" {
+			columnInfos[i].colName = col.Name
+			if col.Alias != "" {
+				outputCols[i] = col.Alias
+			} else {
+				outputCols[i] = col.Name
+			}
+
+			// Verify column is in GROUP BY
+			found := false
+			for j, gbCol := range stmt.GroupBy {
+				if gbCol == col.Name {
+					found = true
+					columnInfos[i].colIdx = groupByIndices[j]
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("column %s must appear in GROUP BY clause or be used in an aggregate function", col.Name)
+			}
+		}
+	}
+
+	// Use a map with string key for grouping
+	groups := make(map[string]*groupState)
+	var groupOrder []string
+
+	// Scan rows
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
-		// WHERE filter
+		// Apply WHERE filter
 		if stmt.Where != nil {
 			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
 			if err != nil {
@@ -782,86 +991,104 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 			}
 		}
 
-		for i, sc := range stmt.Columns {
-			if sc.Aggregate == nil {
+		// Build group key
+		var groupKey []catalog.Value
+		var keyStr string
+		if len(groupByIndices) > 0 {
+			groupKey = make([]catalog.Value, len(groupByIndices))
+			for i, idx := range groupByIndices {
+				groupKey[i] = row.Values[idx]
+			}
+			keyStr = groupKeyString(groupKey)
+		} else {
+			keyStr = ""
+		}
+
+		// Get or create group
+		grp, exists := groups[keyStr]
+		if !exists {
+			grp = &groupState{groupKey: groupKey, aggregators: make([]aggregatorState, len(stmt.Columns))}
+			groups[keyStr] = grp
+			groupOrder = append(groupOrder, keyStr)
+		}
+
+		// Update aggregators
+		for i, colInfo := range columnInfos {
+			if !colInfo.isAggregate {
 				continue
 			}
-			agg := sc.Aggregate
+			agg := colInfo.aggregate
+			aggState := &grp.aggregators[i]
+
 			switch agg.Function {
 			case "COUNT":
-				if agg.Arg == "*" || agg.Arg == "" {
-					states[i].count++
-					states[i].hasValue = true
+				if agg.Arg == "*" {
+					aggState.count++
 				} else {
-					col, idx := meta.Schema.ColumnByName(agg.Arg)
-					if col == nil {
-						return false, fmt.Errorf("unknown column: %s", agg.Arg)
-					}
-					val := row.Values[idx]
-					if !val.IsNull {
-						states[i].count++
-						states[i].hasValue = true
+					_, idx := meta.Schema.ColumnByName(agg.Arg)
+					if idx >= 0 && !row.Values[idx].IsNull {
+						aggState.count++
 					}
 				}
 			case "SUM":
-				col, idx := meta.Schema.ColumnByName(agg.Arg)
-				if col == nil {
-					return false, fmt.Errorf("unknown column: %s", agg.Arg)
-				}
-				val := row.Values[idx]
-				if val.IsNull {
-					continue
-				}
-				switch val.Type {
-				case catalog.TypeInt32:
-					states[i].sum += int64(val.Int32)
-					states[i].hasValue = true
-				case catalog.TypeInt64:
-					states[i].sum += val.Int64
-					states[i].hasValue = true
-				default:
-					// treat as float
-					states[i].sumFloat += val.Float64
-					states[i].hasValue = true
-				}
-			case "MAX":
-				col, idx := meta.Schema.ColumnByName(agg.Arg)
-				if col == nil {
-					return false, fmt.Errorf("unknown column: %s", agg.Arg)
-				}
-				val := row.Values[idx]
-				if val.IsNull {
-					continue
-				}
-				if !states[i].hasValue {
-					states[i].max = val
-					states[i].hasValue = true
-				} else {
-					if compareValuesForSort(val, states[i].max) > 0 {
-						states[i].max = val
+				_, idx := meta.Schema.ColumnByName(agg.Arg)
+				if idx >= 0 {
+					val := row.Values[idx]
+					if !val.IsNull {
+						aggState.hasValue = true
+						switch val.Type {
+						case catalog.TypeInt32:
+							aggState.sum += int64(val.Int32)
+						case catalog.TypeInt64:
+							aggState.sum += val.Int64
+						default:
+							// ignore floats for now
+						}
 					}
 				}
 			case "AVG":
-				col, idx := meta.Schema.ColumnByName(agg.Arg)
-				if col == nil {
-					return false, fmt.Errorf("unknown column: %s", agg.Arg)
+				_, idx := meta.Schema.ColumnByName(agg.Arg)
+				if idx >= 0 {
+					val := row.Values[idx]
+					if !val.IsNull {
+						aggState.count++
+						aggState.hasValue = true
+						switch val.Type {
+						case catalog.TypeInt32:
+							aggState.sumFloat += float64(val.Int32)
+						case catalog.TypeInt64:
+							aggState.sumFloat += float64(val.Int64)
+						default:
+							aggState.sumFloat += val.Float64
+						}
+					}
 				}
-				val := row.Values[idx]
-				if val.IsNull {
-					continue
+			case "MIN":
+				_, idx := meta.Schema.ColumnByName(agg.Arg)
+				if idx >= 0 {
+					val := row.Values[idx]
+					if !val.IsNull {
+						if !aggState.hasValue {
+							aggState.min = val
+							aggState.hasValue = true
+						} else if compareValuesForSort(val, aggState.min) < 0 {
+							aggState.min = val
+						}
+					}
 				}
-				switch val.Type {
-				case catalog.TypeInt32:
-					states[i].sumFloat += float64(val.Int32)
-				case catalog.TypeInt64:
-					states[i].sumFloat += float64(val.Int64)
-				default:
-					states[i].sumFloat += val.Float64
+			case "MAX":
+				_, idx := meta.Schema.ColumnByName(agg.Arg)
+				if idx >= 0 {
+					val := row.Values[idx]
+					if !val.IsNull {
+						if !aggState.hasValue {
+							aggState.max = val
+							aggState.hasValue = true
+						} else if compareValuesForSort(val, aggState.max) > 0 {
+							aggState.max = val
+						}
+					}
 				}
-				states[i].count++
-				states[i].hasValue = true
-			default:
-				return false, fmt.Errorf("unsupported aggregate: %s", agg.Function)
 			}
 		}
 
@@ -871,46 +1098,70 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 		return nil, err
 	}
 
-	// Build result row (single row for global aggregates)
-	outCols := make([]string, len(stmt.Columns))
-	row := make([]catalog.Value, len(stmt.Columns))
-	for i, sc := range stmt.Columns {
-		if sc.Aggregate == nil {
-			// Non-aggregate without GROUP BY: undefined, return NULL
-			outCols[i] = sc.Alias
-			row[i] = catalog.Null(catalog.TypeUnknown)
-			continue
+	// Build result rows from groups
+	var resultRows [][]catalog.Value
+	for _, keyStr := range groupOrder {
+		grp := groups[keyStr]
+
+		// Apply HAVING filter if present
+		if stmt.Having != nil {
+			match, err := e.evalHavingConditionMVCC(stmt.Having, grp, stmt.Columns, meta.Schema)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
 		}
-		agg := sc.Aggregate
-		outCols[i] = sc.Alias
-		st := states[i]
-		switch agg.Function {
-		case "COUNT":
-			row[i] = catalog.NewInt64(st.count)
-		case "SUM":
-			if st.hasValue {
-				row[i] = catalog.NewInt64(st.sum)
+
+		// Build result row
+		resultRow := make([]catalog.Value, len(stmt.Columns))
+		for i, colInfo := range columnInfos {
+			if colInfo.isAggregate {
+				aggState := grp.aggregators[i]
+				switch colInfo.aggregate.Function {
+				case "COUNT":
+					resultRow[i] = catalog.NewInt64(aggState.count)
+				case "SUM":
+					if !aggState.hasValue {
+						resultRow[i] = catalog.Null(catalog.TypeInt64)
+					} else {
+						resultRow[i] = catalog.NewInt64(aggState.sum)
+					}
+				case "AVG":
+					if !aggState.hasValue || aggState.count == 0 {
+						resultRow[i] = catalog.Null(catalog.TypeInt64)
+					} else {
+						avg := aggState.sumFloat / float64(aggState.count)
+						resultRow[i] = catalog.NewInt64(int64(avg))
+					}
+				case "MIN":
+					if !aggState.hasValue {
+						resultRow[i] = catalog.Null(catalog.TypeUnknown)
+					} else {
+						resultRow[i] = aggState.min
+					}
+				case "MAX":
+					if !aggState.hasValue {
+						resultRow[i] = catalog.Null(catalog.TypeUnknown)
+					} else {
+						resultRow[i] = aggState.max
+					}
+				}
 			} else {
-				row[i] = catalog.Null(catalog.TypeInt64)
+				// Regular column from GROUP BY
+				for j, gbCol := range stmt.GroupBy {
+					if gbCol == colInfo.colName {
+						resultRow[i] = grp.groupKey[j]
+						break
+					}
+				}
 			}
-		case "MAX":
-			if st.hasValue {
-				row[i] = st.max
-			} else {
-				row[i] = catalog.Null(catalog.TypeUnknown)
-			}
-		case "AVG":
-			if st.count == 0 {
-				row[i] = catalog.Null(catalog.TypeFloat64)
-			} else {
-				row[i] = catalog.NewFloat64(st.sumFloat / float64(st.count))
-			}
-		default:
-			row[i] = catalog.Null(catalog.TypeUnknown)
 		}
+		resultRows = append(resultRows, resultRow)
 	}
 
-	return &Result{Columns: outCols, Rows: [][]catalog.Value{row}}, nil
+	return &Result{Columns: outputCols, Rows: resultRows}, nil
 }
 
 func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Result, error) {
@@ -1454,6 +1705,126 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 	default:
 		return false, fmt.Errorf("unsupported condition type: %T", expr)
 	}
+}
+
+// evalHavingConditionMVCC evaluates a HAVING condition against group aggregates for MVCC executor.
+func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState, columns []SelectColumn, schema *catalog.Schema) (bool, error) {
+	switch ex := expr.(type) {
+	case *BinaryExpr:
+		switch ex.Op {
+		case TOKEN_AND:
+			left, err := e.evalHavingConditionMVCC(ex.Left, grp, columns, schema)
+			if err != nil {
+				return false, err
+			}
+			if !left {
+				return false, nil
+			}
+			return e.evalHavingConditionMVCC(ex.Right, grp, columns, schema)
+
+		case TOKEN_OR:
+			left, err := e.evalHavingConditionMVCC(ex.Left, grp, columns, schema)
+			if err != nil {
+				return false, err
+			}
+			if left {
+				return true, nil
+			}
+			return e.evalHavingConditionMVCC(ex.Right, grp, columns, schema)
+
+		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+			left, err := e.evalHavingExprMVCC(ex.Left, grp, columns, schema)
+			if err != nil {
+				return false, err
+			}
+			right, err := e.evalHavingExprMVCC(ex.Right, grp, columns, schema)
+			if err != nil {
+				return false, err
+			}
+			return compareValuesMVCC(left, right, ex.Op)
+		}
+
+	case *LiteralExpr:
+		if ex.Value.Type == catalog.TypeBool {
+			return ex.Value.Bool, nil
+		}
+	}
+
+	return false, fmt.Errorf("cannot evaluate HAVING expression: %T", expr)
+}
+
+// evalHavingExprMVCC evaluates an expression in HAVING context (can reference aggregates).
+func (e *MVCCExecutor) evalHavingExprMVCC(expr Expression, grp *groupState, columns []SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
+	switch ex := expr.(type) {
+	case *LiteralExpr:
+		return ex.Value, nil
+
+	case *ColumnRef:
+		// Look in SELECT columns for non-aggregate columns
+		for i, col := range columns {
+			if col.Name == ex.Name && col.Aggregate == nil {
+				if i < len(grp.groupKey) {
+					return grp.groupKey[i], nil
+				}
+			}
+		}
+		return catalog.Value{}, fmt.Errorf("column %s not found in GROUP BY", ex.Name)
+
+	case *FunctionExpr:
+		funcName := strings.ToUpper(ex.Name)
+
+		// Try to extract simple first argument name (ColumnRef)
+		var argName string
+		if len(ex.Args) > 0 {
+			if cref, ok := ex.Args[0].(*ColumnRef); ok {
+				argName = cref.Name
+			}
+		}
+
+		// Find matching aggregate in SELECT columns (match function and optionally argument)
+		for i, col := range columns {
+			if col.Aggregate == nil {
+				continue
+			}
+			if strings.ToUpper(col.Aggregate.Function) != funcName {
+				continue
+			}
+			if argName != "" && col.Aggregate.Arg != argName {
+				continue
+			}
+			if i < len(grp.aggregators) {
+				aggState := grp.aggregators[i]
+				switch funcName {
+				case "COUNT":
+					return catalog.NewInt64(aggState.count), nil
+				case "SUM":
+					if !aggState.hasValue {
+						return catalog.Null(catalog.TypeInt64), nil
+					}
+					return catalog.NewInt64(aggState.sum), nil
+				case "AVG":
+					if aggState.count == 0 {
+						return catalog.Null(catalog.TypeInt64), nil
+					}
+					avg := int64(aggState.sumFloat / float64(aggState.count))
+					return catalog.NewInt64(avg), nil
+				case "MIN":
+					if !aggState.hasValue {
+						return catalog.Null(catalog.TypeUnknown), nil
+					}
+					return aggState.min, nil
+				case "MAX":
+					if !aggState.hasValue {
+						return catalog.Null(catalog.TypeUnknown), nil
+					}
+					return aggState.max, nil
+				}
+			}
+		}
+		return catalog.Value{}, fmt.Errorf("aggregate %s not found in SELECT columns", funcName)
+	}
+
+	return catalog.Value{}, fmt.Errorf("unsupported HAVING expression: %T", expr)
 }
 
 // compareValues compares two values with the given operator.
