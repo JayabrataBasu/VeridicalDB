@@ -20,6 +20,7 @@ const (
 	TypeBool
 	TypeTimestamp
 	TypeJSON
+	TypeTrigger // Special type for trigger function return type
 )
 
 // String returns the SQL name of the type.
@@ -39,6 +40,8 @@ func (t DataType) String() string {
 		return "TIMESTAMP"
 	case TypeJSON:
 		return "JSON"
+	case TypeTrigger:
+		return "TRIGGER"
 	default:
 		return "UNKNOWN"
 	}

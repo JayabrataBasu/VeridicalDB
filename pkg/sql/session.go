@@ -92,6 +92,19 @@ func (s *Session) SetDatabaseManager(dbMgr *catalog.DatabaseManager) {
 	}
 }
 
+// requireDatabaseSelected ensures a current database is selected and exists.
+func (s *Session) requireDatabaseSelected() error {
+	if s.currentDatabase == "" {
+		return fmt.Errorf("no database selected; run CREATE DATABASE <name> then USE <name>")
+	}
+	if s.dbMgr != nil {
+		if !s.dbMgr.DatabaseExists(s.currentDatabase) {
+			return fmt.Errorf("current database %q does not exist", s.currentDatabase)
+		}
+	}
+	return nil
+}
+
 // SetTriggerCatalog sets the trigger catalog for trigger support.
 func (s *Session) SetTriggerCatalog(triggerCat *catalog.TriggerCatalog) {
 	s.triggerCat = triggerCat
@@ -102,6 +115,10 @@ func (s *Session) SetTriggerCatalog(triggerCat *catalog.TriggerCatalog) {
 // SetProcedureCatalog sets the procedure catalog for stored procedure support.
 func (s *Session) SetProcedureCatalog(procCat *catalog.ProcedureCatalog) {
 	s.procCat = procCat
+	// Also set on executor for trigger function execution
+	s.executor.SetProcedureCatalog(procCat)
+	// Give executor a reference to this session for PL interpreter creation
+	s.executor.SetSession(s)
 }
 
 // Catalog returns the underlying catalog for table metadata.
@@ -184,12 +201,46 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 
 	// For DDL statements (CREATE/DROP), we don't need a transaction
 	switch typedStmt := stmt.(type) {
-	case *CreateTableStmt, *DropTableStmt:
+	case *CreateTableStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
+		return s.executor.Execute(stmt, nil)
+	case *DropTableStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
 		return s.executor.Execute(stmt, nil)
 	case *CreateIndexStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
 		return s.handleCreateIndex(typedStmt)
 	case *DropIndexStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
 		return s.handleDropIndex(typedStmt)
+	case *CreateViewStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
+		return s.executor.Execute(stmt, nil)
+	case *DropViewStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
+		return s.executor.Execute(stmt, nil)
+	case *CreateTriggerStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
+		return s.handleCreateTrigger(typedStmt)
+	case *DropTriggerStmt:
+		if err := s.requireDatabaseSelected(); err != nil {
+			return nil, err
+		}
+		return s.handleDropTrigger(typedStmt)
 	// User management statements
 	case *CreateUserStmt:
 		return s.handleCreateUser(typedStmt)
@@ -208,11 +259,6 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleDropDatabase(typedStmt)
 	case *UseDatabaseStmt:
 		return s.handleUseDatabase(typedStmt)
-	// Trigger management statements
-	case *CreateTriggerStmt:
-		return s.handleCreateTrigger(typedStmt)
-	case *DropTriggerStmt:
-		return s.handleDropTrigger(typedStmt)
 	// Stored procedure/function statements
 	case *CreateProcedureStmt:
 		return s.handleCreateProcedure(typedStmt)
@@ -228,6 +274,8 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleShowProcedures(typedStmt)
 	case *ShowFunctionsStmt:
 		return s.handleShowFunctions(typedStmt)
+	case *ShowStmt:
+		return s.handleShow(typedStmt)
 	}
 
 	// For DML statements, we need a transaction
@@ -1052,4 +1100,48 @@ func (s *Session) handleShowFunctions(_ *ShowFunctionsStmt) (*Result, error) {
 		Columns: []string{"function_name", "return_type", "language", "params"},
 		Rows:    rows,
 	}, nil
+}
+
+// handleShow handles SHOW statement (DATABASES, TABLES, etc.)
+func (s *Session) handleShow(stmt *ShowStmt) (*Result, error) {
+	switch strings.ToUpper(stmt.ShowType) {
+	case "DATABASES":
+		// Return actual database list from DatabaseManager
+		if s.dbMgr == nil {
+			// If no DatabaseManager, return just "default"
+			return &Result{
+				Columns: []string{"database_name"},
+				Rows:    [][]catalog.Value{{catalog.NewText("default")}},
+			}, nil
+		}
+		// Get all databases from DatabaseManager
+		dbNames := s.dbMgr.ListDatabases()
+		rows := make([][]catalog.Value, len(dbNames))
+		for i, name := range dbNames {
+			rows[i] = []catalog.Value{catalog.NewText(name)}
+		}
+		return &Result{
+			Columns: []string{"database_name"},
+			Rows:    rows,
+		}, nil
+	default:
+		// For other SHOW types (TABLES, TRIGGERS, etc.), pass to executor
+		tx, shouldCommit, err := s.ensureTransaction()
+		if err != nil {
+			return nil, err
+		}
+		result, err := s.executor.Execute(stmt, tx)
+		if shouldCommit {
+			if s.lockMgr != nil {
+				s.lockMgr.ReleaseAll(tx.ID)
+			}
+			if err == nil {
+				_ = s.txnMgr.Commit(tx.ID)
+			} else {
+				_ = s.txnMgr.Abort(tx.ID)
+			}
+			s.currentTx = nil
+		}
+		return result, err
+	}
 }

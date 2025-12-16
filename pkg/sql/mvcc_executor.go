@@ -285,6 +285,8 @@ type MVCCExecutor struct {
 	mtm        *catalog.MVCCTableManager
 	indexMgr   *btree.IndexManager
 	triggerCat *catalog.TriggerCatalog
+	procCat    *catalog.ProcedureCatalog
+	session    *Session
 }
 
 // NewMVCCExecutor creates a new MVCC-aware executor.
@@ -300,6 +302,16 @@ func (e *MVCCExecutor) SetIndexManager(mgr *btree.IndexManager) {
 // SetTriggerCatalog sets the trigger catalog for trigger firing during DML operations.
 func (e *MVCCExecutor) SetTriggerCatalog(cat *catalog.TriggerCatalog) {
 	e.triggerCat = cat
+}
+
+// SetProcedureCatalog sets the procedure catalog for trigger function execution.
+func (e *MVCCExecutor) SetProcedureCatalog(cat *catalog.ProcedureCatalog) {
+	e.procCat = cat
+}
+
+// SetSession sets the session for PL/pgSQL execution within triggers.
+func (e *MVCCExecutor) SetSession(s *Session) {
+	e.session = s
 }
 
 // Execute executes a SQL statement within a transaction context.
@@ -2162,11 +2174,11 @@ func (e *MVCCExecutor) executeShow(stmt *ShowStmt) (*Result, error) {
 		}, nil
 
 	case "DATABASES":
-		// List all databases - handled at session level, return placeholder
+		// SHOW DATABASES is handled at session level where DatabaseManager is available
+		// This case should not be reached, but return a fallback just in case
 		return &Result{
 			Columns: []string{"database_name"},
 			Rows:    [][]catalog.Value{{catalog.NewText("default")}},
-			Message: "SHOW DATABASES should be handled by session with DatabaseManager",
 		}, nil
 
 	case "TRIGGERS":
@@ -4058,9 +4070,8 @@ type TriggerContext struct {
 }
 
 // fireTriggers fires all triggers matching the given timing and event.
-// This is a placeholder implementation that logs trigger execution.
-// A full implementation would execute the trigger function.
-func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTiming, event catalog.TriggerEvent, _ *TriggerContext) error {
+// It executes the trigger function body with OLD/NEW row bindings.
+func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTiming, event catalog.TriggerEvent, ctx *TriggerContext) error {
 	if e.triggerCat == nil {
 		return nil // Triggers not enabled
 	}
@@ -4070,17 +4081,87 @@ func (e *MVCCExecutor) fireTriggers(tableName string, timing catalog.TriggerTimi
 		if !trigger.Enabled {
 			continue
 		}
-		// Log trigger execution (in a full implementation, this would call the trigger function)
-		// For now, we just note that triggers are being fired
-		_ = trigger.FunctionName // Would call this function with ctx
 
-		// TODO: Implement actual trigger function execution
-		// This would require:
-		// 1. Looking up the function definition
-		// 2. Binding OLD and NEW row variables
-		// 3. Executing the function body
-		// 4. Handling return values (for BEFORE triggers)
+		// Execute the trigger function
+		if err := e.executeTriggerFunction(trigger, ctx); err != nil {
+			return fmt.Errorf("trigger %q execution failed: %v", trigger.Name, err)
+		}
 	}
+	return nil
+}
+
+// executeTriggerFunction executes a single trigger's function body.
+func (e *MVCCExecutor) executeTriggerFunction(trigger *catalog.TriggerMeta, ctx *TriggerContext) error {
+	// Require procedure catalog for function lookup
+	if e.procCat == nil {
+		return fmt.Errorf("procedure catalog not available for trigger execution")
+	}
+
+	// Require session for PL interpreter
+	if e.session == nil {
+		return fmt.Errorf("session not available for trigger execution")
+	}
+
+	// Look up the trigger function
+	funcMeta, ok := e.procCat.GetFunction(trigger.FunctionName)
+	if !ok {
+		return fmt.Errorf("trigger function %q not found", trigger.FunctionName)
+	}
+
+	// Create a PL interpreter for this trigger execution
+	pl := NewPLInterpreter(e.session)
+
+	// Bind OLD and NEW row variables based on the trigger event
+	if ctx != nil && ctx.Schema != nil {
+		if err := e.bindTriggerRowVariables(pl, ctx); err != nil {
+			return err
+		}
+	}
+
+	// Parse the function body
+	body, err := NewParser(funcMeta.Body).parsePLBlock()
+	if err != nil {
+		return fmt.Errorf("error parsing trigger function body: %v", err)
+	}
+
+	// Execute the function
+	if err := pl.ExecuteBlock(body); err != nil {
+		return fmt.Errorf("trigger function error: %v", err)
+	}
+
+	return nil
+}
+
+// bindTriggerRowVariables binds OLD and NEW record variables in the PL interpreter.
+func (e *MVCCExecutor) bindTriggerRowVariables(pl *PLInterpreter, ctx *TriggerContext) error {
+	// For row-level triggers, we bind OLD and NEW as composite record types.
+	// For simplicity, we bind each column as OLD_colname and NEW_colname.
+	if ctx.Schema == nil {
+		return nil
+	}
+
+	// Bind OLD row columns (for UPDATE/DELETE)
+	if ctx.OldRow != nil {
+		for i, col := range ctx.Schema.Columns {
+			if i < len(ctx.OldRow) {
+				varName := "old_" + col.Name
+				pl.DeclareVariable(varName, col.Type, nil)
+				_ = pl.SetVariable(varName, ctx.OldRow[i])
+			}
+		}
+	}
+
+	// Bind NEW row columns (for INSERT/UPDATE)
+	if ctx.NewRow != nil {
+		for i, col := range ctx.Schema.Columns {
+			if i < len(ctx.NewRow) {
+				varName := "new_" + col.Name
+				pl.DeclareVariable(varName, col.Type, nil)
+				_ = pl.SetVariable(varName, ctx.NewRow[i])
+			}
+		}
+	}
+
 	return nil
 }
 

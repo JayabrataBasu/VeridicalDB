@@ -9,8 +9,11 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/chzyer/readline"
 )
 
@@ -24,6 +27,8 @@ type REPL struct {
 	catalog  *catalog.Catalog
 	tm       *catalog.TableManager
 	executor *sql.Executor
+	mtm      *catalog.MVCCTableManager
+	session  *sql.Session
 }
 
 // NewREPL creates a new REPL instance
@@ -50,6 +55,45 @@ func (r *REPL) Initialize() error {
 
 	r.catalog = r.tm.Catalog()
 	r.executor = sql.NewExecutor(r.tm)
+
+	// Create MVCC layer and session to support CREATE DATABASE and CREATE USER
+	txnMgr := txn.NewManager()
+	r.mtm = catalog.NewMVCCTableManager(r.tm, txnMgr, nil)
+	r.session = sql.NewSession(r.mtm)
+
+	// Wire optional DatabaseManager and UserCatalog
+	if dbMgr, err := catalog.NewDatabaseManager(r.config.Storage.DataDir); err == nil {
+		r.session.SetDatabaseManager(dbMgr)
+	} else {
+		r.log.Warn("database manager not available", "error", err)
+	}
+
+	if uc, err := auth.NewUserCatalog(r.config.Storage.DataDir); err == nil {
+		r.session.SetUserCatalog(uc)
+	} else {
+		r.log.Warn("user catalog not available", "error", err)
+	}
+
+	// Wire IndexManager (optional)
+	if idxMgr, err := btree.NewIndexManager(r.config.Storage.DataDir, pageSize); err == nil {
+		r.session.SetIndexManager(idxMgr)
+	} else {
+		r.log.Warn("index manager not available", "error", err)
+	}
+
+	// Wire TriggerCatalog (optional)
+	if tc, err := catalog.NewTriggerCatalog(r.config.Storage.DataDir); err == nil {
+		r.session.SetTriggerCatalog(tc)
+	} else {
+		r.log.Warn("trigger catalog not available", "error", err)
+	}
+
+	// Wire ProcedureCatalog (optional)
+	if pc, err := catalog.NewProcedureCatalog(r.config.Storage.DataDir); err == nil {
+		r.session.SetProcedureCatalog(pc)
+	} else {
+		r.log.Warn("procedure catalog not available", "error", err)
+	}
 	return nil
 }
 
@@ -161,17 +205,11 @@ func (r *REPL) processCommand(input string) commandResult {
 		r.printHelp()
 		return commandOK
 
-	case strings.HasPrefix(upperInput, "BEGIN"):
-		fmt.Println("Transaction started (single-statement transactions)")
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "COMMIT"):
-		fmt.Println("Transaction committed")
-		return commandOK
-
-	case strings.HasPrefix(upperInput, "ROLLBACK"):
-		fmt.Println("Transaction rolled back")
-		return commandOK
+	case strings.HasPrefix(upperInput, "BEGIN"),
+		strings.HasPrefix(upperInput, "COMMIT"),
+		strings.HasPrefix(upperInput, "ROLLBACK"):
+		// Route transaction commands through session for proper handling
+		return r.executeSQL(input)
 
 	default:
 		// Try to parse and execute as SQL
@@ -180,6 +218,26 @@ func (r *REPL) processCommand(input string) commandResult {
 }
 
 func (r *REPL) executeSQL(input string) commandResult {
+	// Prefer session (MVCC-enabled) over executor
+	if r.session != nil {
+		res, err := r.session.ExecuteSQL(input)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return commandError
+		}
+		if res.Message != "" {
+			fmt.Println(res.Message)
+		}
+		if len(res.Columns) > 0 {
+			r.printTable(res.Columns, res.Rows)
+		}
+		if res.RowsAffected > 0 && res.Message == "" {
+			fmt.Printf("%d row(s) affected\n", res.RowsAffected)
+		}
+		return commandOK
+	}
+
+	// Fallback to legacy executor if no session
 	// Parse the SQL
 	parser := sql.NewParser(input)
 	stmt, err := parser.Parse()

@@ -111,7 +111,7 @@ func main() {
 
 	// Run in interactive mode
 	if *interactive {
-		if err := cli.RunInteractive(logger, tm, txnMgr, txnLogger); err != nil {
+		if err := cli.RunInteractive(logger, tm, txnMgr, txnLogger, cfg.Storage.DataDir); err != nil {
 			logger.Error("REPL error", "error", err)
 			os.Exit(1)
 		}

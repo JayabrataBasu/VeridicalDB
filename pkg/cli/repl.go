@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
@@ -76,8 +78,46 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 }
 
 // RunInteractive starts the REPL in interactive mode.
-func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger) error {
+func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger, dataDir string) error {
 	repl := NewREPL(os.Stdin, os.Stdout, logger, tm, txnMgr, txnLogger)
+
+	// If we have a session, wire in optional components: DatabaseManager and UserCatalog
+	if repl.session != nil {
+		if dbMgr, err := catalog.NewDatabaseManager(dataDir); err == nil {
+			repl.session.SetDatabaseManager(dbMgr)
+		} else {
+			// Non-fatal: warn and continue
+			repl.logger.Warn("database manager not available", "error", err)
+		}
+
+		if uc, err := auth.NewUserCatalog(dataDir); err == nil {
+			repl.session.SetUserCatalog(uc)
+		} else {
+			repl.logger.Warn("user catalog not available", "error", err)
+		}
+
+		// Wire IndexManager (optional)
+		if idxMgr, err := btree.NewIndexManager(dataDir, 4096); err == nil {
+			repl.session.SetIndexManager(idxMgr)
+		} else {
+			repl.logger.Warn("index manager not available", "error", err)
+		}
+
+		// Wire TriggerCatalog (optional)
+		if tc, err := catalog.NewTriggerCatalog(dataDir); err == nil {
+			repl.session.SetTriggerCatalog(tc)
+		} else {
+			repl.logger.Warn("trigger catalog not available", "error", err)
+		}
+
+		// Wire ProcedureCatalog (optional)
+		if pc, err := catalog.NewProcedureCatalog(dataDir); err == nil {
+			repl.session.SetProcedureCatalog(pc)
+		} else {
+			repl.logger.Warn("procedure catalog not available", "error", err)
+		}
+	}
+
 	return repl.Run()
 }
 

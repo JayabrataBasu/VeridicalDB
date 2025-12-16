@@ -912,7 +912,8 @@ func (p *Parser) isIdentifierOrContextualKeyword() bool {
 	// Contextual keywords that can be used as identifiers
 	switch p.cur.Type {
 	case TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING,
-		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
+		TOKEN_DEFAULT: // Allow "default" as database name
 		return true
 	}
 	return false
@@ -2246,6 +2247,8 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 		col.Type = catalog.TypeBool
 	case TOKEN_TIMESTAMP:
 		col.Type = catalog.TypeTimestamp
+	case TOKEN_JSON_TYPE:
+		col.Type = catalog.TypeJSON
 	default:
 		return col, fmt.Errorf("expected type, got %v (%q)", p.cur.Type, p.cur.Literal)
 	}
@@ -5078,6 +5081,9 @@ func (p *Parser) parsePLDataType() (catalog.DataType, error) {
 	case TOKEN_JSON_TYPE:
 		p.nextToken()
 		return catalog.TypeJSON, nil
+	case TOKEN_TRIGGER:
+		p.nextToken()
+		return catalog.TypeTrigger, nil
 	default:
 		// Also check for identifier-style types
 		if p.curTokenIs(TOKEN_IDENT) {
@@ -5096,6 +5102,8 @@ func (p *Parser) parsePLDataType() (catalog.DataType, error) {
 				return catalog.TypeTimestamp, nil
 			case "JSON", "JSONB":
 				return catalog.TypeJSON, nil
+			case "TRIGGER":
+				return catalog.TypeTrigger, nil
 			default:
 				return catalog.TypeUnknown, fmt.Errorf("unknown type: %s", typeName)
 			}
@@ -5984,9 +5992,10 @@ func (p *Parser) parsePLSQL() (*PLSQL, error) {
 	}
 	stmt.Statement = sqlStmt
 
-	// Check for INTO clause (for SELECT)
-	// Note: INTO should be parsed within SELECT for PL/pgSQL
-	// This is simplified - real implementation would need more work
+	// Consume trailing semicolon if present
+	if p.curTokenIs(TOKEN_SEMICOLON) {
+		p.nextToken()
+	}
 
 	return stmt, nil
 }
