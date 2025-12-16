@@ -1,7 +1,7 @@
 .PHONY: all release-local docker build
 
 BIN=veridicaldb
-VERSION?=v0.0.0-beta
+VERSION?=v1.0.0
 
 all: build
 
@@ -22,7 +22,7 @@ docker:
 
 # Build variables
 BINARY_NAME=veridicaldb
-VERSION?=0.1.0
+VERSION?=v1.0.0
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
 
