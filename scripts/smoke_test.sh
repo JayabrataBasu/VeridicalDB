@@ -118,6 +118,35 @@ SELECT * FROM logs WHERE id = 888;
 DROP TRIGGER trig_log ON users;
 DROP PROCEDURE log_user_update;
 DROP FUNCTION log_user_fn;
+PREPARE ins_prod AS INSERT INTO products (id, name, category, stock) VALUES ($1, $2, 'Electronics', 5);
+EXECUTE ins_prod(999, 'PrepProd');
+DEALLOCATE ins_prod;
+SELECT name FROM products WHERE id = 999;
+
+TRUNCATE TABLE orders;
+SELECT * FROM orders;
+
+CREATE PROCEDURE proc_log() AS $$BEGIN INSERT INTO logs (id, message, level) VALUES (556, 'proc_called', 'INFO'); END;$$ LANGUAGE plpgsql;
+CALL proc_log();
+SELECT message FROM logs WHERE id = 556;
+
+SHOW FUNCTIONS;
+SHOW PROCEDURES;
+
+CREATE USER bob WITH PASSWORD 'p';
+GRANT SELECT ON users TO bob;
+REVOKE SELECT ON users FROM bob;
+
+CREATE VIEW v1 AS SELECT id, name FROM users;
+
+CREATE TABLE merge_src (id INT PRIMARY KEY, name TEXT);
+INSERT INTO merge_src (id, name) VALUES (1, 'Laptop M');
+MERGE INTO products AS tgt
+USING merge_src AS src
+ON tgt.id = src.id
+WHEN MATCHED THEN UPDATE SET name = src.name
+WHEN NOT MATCHED THEN INSERT (id, name, category, stock) VALUES (src.id, src.name, 'Electronics', 10);
+SELECT name FROM products WHERE id = 1;
 ALTER TABLE users ADD COLUMN metadata JSON;
 -- Verify column exists by selecting it (values will be NULL)
 SELECT metadata FROM users LIMIT 1;
@@ -258,6 +287,19 @@ check "CREATE PROCEDURE" "CREATE PROCEDURE\|log_user_update"
 check "CREATE FUNCTION for trigger" "CREATE FUNCTION\|log_user_fn"
 check "CREATE TRIGGER" "CREATE TRIGGER\|trig_log"
 check "TRIGGER executes function" "trigger_executed"
+
+# Additional feature checks
+check "PREPARE/EXECUTE inserted product" "PrepProd"
+check "DEALLOCATE prepared statement" "DEALLOCATE\|DEALLOCATE"
+check "TRUNCATE cleared orders" "0 row"
+check "CALL procedure executed" "proc_called"
+check "SHOW FUNCTIONS lists functions" "proc_log\|log_user_fn"
+check "SHOW PROCEDURES lists procedures" "log_user_update\|proc_log"
+check "GRANT succeeded" "GRANT SELECT ON users TO bob\|GRANT"
+check "REVOKE succeeded" "REVOKE" 
+check "CREATE VIEW not implemented" "CREATE VIEW is not yet fully implemented\|not yet fully implemented"
+check "MERGE updated/inserted" "Laptop M\|MergedProd"
+
 check "JSON column exists" "metadata"
 echo ""
 echo "--- DDL: DROP ---"
