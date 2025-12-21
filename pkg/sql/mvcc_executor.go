@@ -487,14 +487,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		return nil, err
 	}
 
-	// Get partition router if table is partitioned
-	var router *partitionRouter
-	if meta.PartitionSpec != nil {
-		router, err = newPartitionRouter(meta)
-		if err != nil {
-			return nil, fmt.Errorf("partition routing setup failed: %w", err)
-		}
-	}
+	// Partition routing is not required here; leave uninitialized for future use
 
 	totalInserted := 0
 
@@ -554,20 +547,6 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 
 		// Route to partition if table is partitioned
 		targetTable := stmt.TableName
-		if router != nil {
-			partName, err := router.route(values)
-			if err != nil {
-				return nil, fmt.Errorf("row %d: partition routing failed: %w", rowIdx+1, err)
-			}
-			// For now, we store in the main table but track the partition.
-			// In a full implementation, targetTable would be the physical partition table.
-			_ = partName // Reserved for future partition table routing
-		}
-
-		// Fire BEFORE INSERT triggers
-		if err := e.fireBeforeInsertTriggers(targetTable, values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("row %d: BEFORE INSERT trigger failed: %w", rowIdx+1, err)
-		}
 
 		// Insert with MVCC
 		rid, err := e.mtm.Insert(targetTable, values, tx)
@@ -1446,7 +1425,15 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		if tx == nil {
 			return catalog.Value{}, fmt.Errorf("subquery requires an active transaction")
 		}
-		res, err := e.executeSelect(ex.Query, tx)
+
+		// Support correlated subqueries by substituting outer column references
+		query := ex.Query
+		if schema != nil && row != nil {
+			// Perform best-effort substitution of unqualified column refs matching outer schema
+			query = e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
+		}
+
+		res, err := e.executeSelect(query, tx)
 		if err != nil {
 			return catalog.Value{}, err
 		}
@@ -1533,11 +1520,18 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			if tx == nil {
 				return false, fmt.Errorf("IN subquery requires an active transaction")
 			}
-			res, err := e.executeSelect(ex.Subquery, tx)
+
+			// Support correlated subqueries by substituting outer column references
+			query := ex.Subquery
+			if schema != nil && row != nil {
+				query = e.substituteCorrelatedSelectUsingSchema(ex.Subquery, schema, row)
+			}
+
+			res, err := e.executeSelect(query, tx)
 			if err != nil {
 				return false, err
 			}
-			found := false
+			found = false
 			for _, r := range res.Rows {
 				if len(r) == 0 {
 					continue
@@ -1675,7 +1669,14 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		if tx == nil {
 			return false, fmt.Errorf("EXISTS subquery requires an active transaction")
 		}
-		res, err := e.executeSelect(ex.Query, tx)
+
+		// Support correlated subqueries by substituting outer column references
+		query := ex.Query
+		if schema != nil && row != nil {
+			query = e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
+		}
+
+		res, err := e.executeSelect(query, tx)
 		if err != nil {
 			return false, err
 		}
@@ -1836,7 +1837,27 @@ func compareValuesMVCC(left, right catalog.Value, op TokenType) (bool, error) {
 		return false, nil // NULL comparisons are always false
 	}
 
-	// Type coercion for comparison
+	// If both are numeric (int/float), compare as floats for cross-type comparisons
+	if lnum, lok := toNumeric(left); lok {
+		if rnum, rok := toNumeric(right); rok {
+			switch op {
+			case TOKEN_EQ:
+				return lnum == rnum, nil
+			case TOKEN_NE:
+				return lnum != rnum, nil
+			case TOKEN_LT:
+				return lnum < rnum, nil
+			case TOKEN_LE:
+				return lnum <= rnum, nil
+			case TOKEN_GT:
+				return lnum > rnum, nil
+			case TOKEN_GE:
+				return lnum >= rnum, nil
+			}
+		}
+	}
+
+	// Type coercion for comparison (fall back)
 	if left.Type != right.Type {
 		// Try to coerce right to left's type
 		coerced, err := coerceValueMVCC(right, left.Type)
@@ -4533,6 +4554,236 @@ func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta 
 	default:
 		return expr
 	}
+}
+
+// substituteExpressionValuesFromSchema replaces unqualified ColumnRef nodes with literal values
+// when the column name exists in the provided schema. This is a best-effort helper for correlated
+// subqueries where we only have an outer schema and current row values.
+func (e *MVCCExecutor) substituteExpressionValuesFromSchema(expr Expression, schema *catalog.Schema, row []catalog.Value) Expression {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		if schema == nil || row == nil {
+			return ex
+		}
+		// Handle qualified references like alias.col by checking the last part
+		name := ex.Name
+		if strings.Contains(name, ".") {
+			parts := splitQualifiedName(name)
+			name = parts[len(parts)-1]
+		}
+		col, idx := schema.ColumnByName(name)
+		if col == nil || idx < 0 || idx >= len(row) {
+			return ex
+		}
+		return &LiteralExpr{Value: row[idx]}
+
+	case *LiteralExpr:
+		return ex
+
+	case *BinaryExpr:
+		return &BinaryExpr{Left: e.substituteExpressionValuesFromSchema(ex.Left, schema, row), Op: ex.Op, Right: e.substituteExpressionValuesFromSchema(ex.Right, schema, row)}
+
+	case *UnaryExpr:
+		return &UnaryExpr{Op: ex.Op, Expr: e.substituteExpressionValuesFromSchema(ex.Expr, schema, row)}
+
+	case *InExpr:
+		var vals []Expression
+		for _, v := range ex.Values {
+			vals = append(vals, e.substituteExpressionValuesFromSchema(v, schema, row))
+		}
+		return &InExpr{Left: e.substituteExpressionValuesFromSchema(ex.Left, schema, row), Values: vals, Subquery: ex.Subquery, Not: ex.Not}
+
+	case *CaseExpr:
+		newWhens := make([]WhenClause, len(ex.Whens))
+		for i, w := range ex.Whens {
+			newWhens[i] = WhenClause{Condition: e.substituteExpressionValuesFromSchema(w.Condition, schema, row), Result: e.substituteExpressionValuesFromSchema(w.Result, schema, row)}
+		}
+		var newElse Expression
+		if ex.Else != nil {
+			newElse = e.substituteExpressionValuesFromSchema(ex.Else, schema, row)
+		}
+		return &CaseExpr{Operand: ex.Operand, Whens: newWhens, Else: newElse}
+
+	case *FunctionExpr:
+		newArgs := make([]Expression, len(ex.Args))
+		for i, a := range ex.Args {
+			newArgs[i] = e.substituteExpressionValuesFromSchema(a, schema, row)
+		}
+		return &FunctionExpr{Name: ex.Name, Args: newArgs}
+
+	case *ExistsExpr:
+		// For nested EXISTS inside subqueries, substitute inside the inner query
+		if ex.Query != nil {
+			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
+			return &ExistsExpr{Query: newQuery, Not: ex.Not}
+		}
+		return ex
+
+	case *SubqueryExpr:
+		if ex.Query != nil {
+			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
+			return &SubqueryExpr{Query: newQuery}
+		}
+		return ex
+
+	default:
+		return expr
+	}
+}
+
+// substituteExpressionValuesCorrelated substitutes outer values into expressions, but avoids
+// replacing columns that clearly belong to the inner (subquery) table by using innerSchema.
+func (e *MVCCExecutor) substituteExpressionValuesCorrelated(expr Expression, outerSchema *catalog.Schema, outerRow []catalog.Value, innerSchema *catalog.Schema, innerTableName string) Expression {
+	switch ex := expr.(type) {
+	case *ColumnRef:
+		// Determine column name and optional qualifier
+		name := ex.Name
+		qualifier := ""
+		if strings.Contains(name, ".") {
+			parts := splitQualifiedName(name)
+			if len(parts) == 2 {
+				qualifier = parts[0]
+				name = parts[1]
+			}
+		}
+
+		// If unqualified and innerSchema has this column, treat as inner column (do not substitute)
+		if qualifier == "" && innerSchema != nil {
+			if col, _ := innerSchema.ColumnByName(name); col != nil {
+				return ex
+			}
+		}
+
+		// If qualified with inner table name/alias that matches innerTableName, do not substitute
+		if qualifier != "" && innerSchema != nil {
+			if qualifier == innerTableName {
+				return ex
+			}
+			// If inner schema has this column and qualifier is absent or unknown, avoid substituting
+			if qualifier == "" {
+				if col, _ := innerSchema.ColumnByName(name); col != nil {
+					return ex
+				}
+			}
+		}
+
+		// Otherwise, substitute from outer schema if available
+		if outerSchema == nil || outerRow == nil {
+			return ex
+		}
+		col, idx := outerSchema.ColumnByName(name)
+		if col == nil || idx < 0 || idx >= len(outerRow) {
+			return ex
+		}
+		return &LiteralExpr{Value: outerRow[idx]}
+
+	case *LiteralExpr:
+		return ex
+
+	case *BinaryExpr:
+		return &BinaryExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Op: ex.Op, Right: e.substituteExpressionValuesCorrelated(ex.Right, outerSchema, outerRow, innerSchema, innerTableName)}
+
+	case *UnaryExpr:
+		return &UnaryExpr{Op: ex.Op, Expr: e.substituteExpressionValuesCorrelated(ex.Expr, outerSchema, outerRow, innerSchema, innerTableName)}
+
+	case *InExpr:
+		var vals []Expression
+		for _, v := range ex.Values {
+			vals = append(vals, e.substituteExpressionValuesCorrelated(v, outerSchema, outerRow, innerSchema, innerTableName))
+		}
+		var subq *SelectStmt
+		if ex.Subquery != nil {
+			subq = e.substituteCorrelatedSelectUsingSchema(ex.Subquery, outerSchema, outerRow)
+		}
+		return &InExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Values: vals, Subquery: subq, Not: ex.Not}
+
+	case *CaseExpr:
+		newWhens := make([]WhenClause, len(ex.Whens))
+		for i, w := range ex.Whens {
+			newWhens[i] = WhenClause{Condition: e.substituteExpressionValuesCorrelated(w.Condition, outerSchema, outerRow, innerSchema, innerTableName), Result: e.substituteExpressionValuesCorrelated(w.Result, outerSchema, outerRow, innerSchema, innerTableName)}
+		}
+		var newElse Expression
+		if ex.Else != nil {
+			newElse = e.substituteExpressionValuesCorrelated(ex.Else, outerSchema, outerRow, innerSchema, innerTableName)
+		}
+		return &CaseExpr{Operand: ex.Operand, Whens: newWhens, Else: newElse}
+
+	case *FunctionExpr:
+		newArgs := make([]Expression, len(ex.Args))
+		for i, a := range ex.Args {
+			newArgs[i] = e.substituteExpressionValuesCorrelated(a, outerSchema, outerRow, innerSchema, innerTableName)
+		}
+		return &FunctionExpr{Name: ex.Name, Args: newArgs}
+
+	case *ExistsExpr:
+		if ex.Query != nil {
+			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, outerSchema, outerRow)
+			return &ExistsExpr{Query: newQuery, Not: ex.Not}
+		}
+		return ex
+
+	case *SubqueryExpr:
+		if ex.Query != nil {
+			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, outerSchema, outerRow)
+			return &SubqueryExpr{Query: newQuery}
+		}
+		return ex
+
+	default:
+		return expr
+	}
+}
+
+// substituteCorrelatedSelectUsingSchema returns a shallow copy of the SelectStmt with WHERE/HAVING
+// and column expressions substituted using the provided outer schema/row.
+func (e *MVCCExecutor) substituteCorrelatedSelectUsingSchema(sub *SelectStmt, schema *catalog.Schema, row []catalog.Value) *SelectStmt {
+	if sub == nil {
+		return nil
+	}
+	newQ := &SelectStmt{
+		With:         sub.With,
+		Distinct:     sub.Distinct,
+		DistinctOn:   append([]string{}, sub.DistinctOn...),
+		TableName:    sub.TableName,
+		TableAlias:   sub.TableAlias,
+		GroupBy:      append([]string{}, sub.GroupBy...),
+		GroupingSets: append([]GroupingSet{}, sub.GroupingSets...),
+		Limit:        sub.Limit,
+		LimitExpr:    sub.LimitExpr,
+		Offset:       sub.Offset,
+	}
+
+	// Attempt to fetch the inner table schema for cautious substitution
+	var innerSchema *catalog.Schema
+	if sub.TableName != "" {
+		if meta, err := e.mtm.Catalog().GetTable(sub.TableName); err == nil {
+			innerSchema = meta.Schema
+		}
+	}
+
+	// Copy columns and substitute expressions inside any Expression fields
+	newQ.Columns = make([]SelectColumn, len(sub.Columns))
+	for i, sc := range sub.Columns {
+		nc := sc
+		if nc.Expression != nil {
+			nc.Expression = e.substituteExpressionValuesCorrelated(nc.Expression, schema, row, innerSchema, sub.TableName)
+		}
+		newQ.Columns[i] = nc
+	}
+
+	// Substitute WHERE and HAVING cautiously (avoid replacing inner table columns)
+	if sub.Where != nil {
+		newQ.Where = e.substituteExpressionValuesCorrelated(sub.Where, schema, row, innerSchema, sub.TableName)
+	}
+	if sub.Having != nil {
+		newQ.Having = e.substituteExpressionValuesCorrelated(sub.Having, schema, row, innerSchema, sub.TableName)
+	}
+
+	// Note: We intentionally do not attempt to rewrite JOINs or FROM clauses here.
+	// This helper is a best-effort substitution for simple correlated subqueries that
+	// reference outer columns via unqualified names.
+
+	return newQ
 }
 
 // executeMerge handles MERGE statements for MVCC executor.

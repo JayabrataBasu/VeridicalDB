@@ -438,18 +438,105 @@ func TestMVCCGroupBy(t *testing.T) {
 	if len(res.Rows) != 1 || res.Rows[0][0].Text != "A" || res.Rows[0][1].Int64 != 30 {
 		t.Fatalf("unexpected HAVING result: %#v", res.Rows)
 	}
+}
 
-	// Debug: inspect parsed columns (temporary)
-	p := NewParser("SELECT dept, SUM(salary) as total FROM sales GROUP BY dept HAVING SUM(salary) > 15 ORDER BY dept;")
+// TestMVCCCorrelatedSubqueries tests correlated scalar/IN/EXISTS subqueries under MVCC.
+func TestMVCCCorrelatedSubqueries(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE emp (id INT, dept TEXT, salary INT);")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO emp VALUES (1, 'A', 100), (2, 'A', 200), (3, 'B', 50);")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Correlated scalar subquery: select employees whose salary > avg salary of their dept
+	// Sanity check: substitution should replace e.dept with literal 'A' for id=2 row
+	meta, _ := session.Catalog().GetTable("emp")
+	outerRow := []catalog.Value{catalog.NewInt32(2), catalog.NewText("A"), catalog.NewInt32(200)}
+	p := NewParser("SELECT AVG(salary) FROM emp WHERE dept = e.dept")
 	parsed, perr := p.Parse()
 	if perr != nil {
 		t.Fatalf("parse failed: %v", perr)
 	}
 	sel, ok := parsed.(*SelectStmt)
 	if !ok {
-		t.Fatalf("unexpected parsed statement type: %T", parsed)
+		t.Fatalf("unexpected parsed type: %T", parsed)
 	}
-	t.Logf("Parsed columns: %+v", sel.Columns)
+	sub := session.executor.substituteCorrelatedSelectUsingSchema(sel, meta.Schema, outerRow)
+	// Expect WHERE right side to be a literal 'A'
+	if sub.Where == nil {
+		t.Fatalf("expected substituted WHERE, got nil")
+	}
+	be, ok := sub.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected WHERE to be BinaryExpr after substitution, got %T", sub.Where)
+	}
+	// right side should be a LiteralExpr with text 'A' (or Value.Text)
+	lit, ok := be.Right.(*LiteralExpr)
+	if !ok {
+		t.Fatalf("expected RHS to be LiteralExpr after substitution, got %T", be.Right)
+	}
+	if lit.Value.Type != catalog.TypeText || lit.Value.Text != "A" {
+		t.Fatalf("expected RHS literal 'A', got %#v", lit.Value)
+	}
+	// Now run the real query
+	res, err := session.ExecuteSQL("SELECT id FROM emp e WHERE salary > (SELECT AVG(salary) FROM emp WHERE dept = e.dept) ORDER BY id;")
+	if err != nil {
+		t.Fatalf("correlated scalar subquery failed: %v", err)
+	}
+	if res == nil || len(res.Rows) != 1 || res.Rows[0][0].Int32 != 2 {
+		t.Fatalf("unexpected correlated scalar result: %#v (err: %v)", res, err)
+	}
+
+	// Correlated IN subquery
+	// Sanity: ensure substitution replaces e.salary with literal for outer row id=1 and id=3
+	p2 := NewParser("SELECT id FROM emp WHERE salary > e.salary")
+	parsed2, perr := p2.Parse()
+	if perr != nil {
+		t.Fatalf("parse failed: %v", perr)
+	}
+	sel2, ok := parsed2.(*SelectStmt)
+	if !ok {
+		t.Fatalf("unexpected parsed type: %T", parsed2)
+	}
+	sub2 := session.executor.substituteCorrelatedSelectUsingSchema(sel2, meta.Schema, outerRow)
+	if sub2.Where == nil {
+		t.Fatalf("expected substituted WHERE in IN subquery, got nil")
+	}
+	be2, ok := sub2.Where.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr for substituted WHERE, got %T", sub2.Where)
+	}
+	if _, ok := be2.Right.(*LiteralExpr); !ok {
+		t.Fatalf("expected RHS to be LiteralExpr after substitution, got %T", be2.Right)
+	}
+
+	res, err = session.ExecuteSQL("SELECT id FROM emp e WHERE id IN (SELECT id FROM emp WHERE salary < 150) ORDER BY id;")
+	if err != nil {
+		t.Fatalf("correlated IN subquery failed: %v", err)
+	}
+	// id 1 (100) and id 3 (50) are < 150
+	if len(res.Rows) != 2 || res.Rows[0][0].Int32 != 1 || res.Rows[1][0].Int32 != 3 {
+		t.Fatalf("unexpected correlated IN result: %#v", res.Rows)
+	}
+
+	// Correlated EXISTS subquery: find employees who have someone in their dept earning more than them
+	res, err = session.ExecuteSQL("SELECT id FROM emp e WHERE EXISTS (SELECT 1 FROM emp WHERE dept = e.dept AND salary > e.salary) ORDER BY id;")
+	if err != nil {
+		t.Fatalf("correlated EXISTS failed: %v", err)
+	}
+	// id 1 (A, 100) has id 2 (A, 200) -> TRUE
+	// id 2 (A, 200) has no one in A > 200 -> FALSE
+	// id 3 (B, 50) has no one in B > 50 -> FALSE
+	if len(res.Rows) != 1 || res.Rows[0][0].Int32 != 1 {
+		t.Fatalf("unexpected correlated EXISTS result: %#v", res.Rows)
+	}
 }
 
 // TestMVCCNestedBeginError tests that nested BEGIN fails.
