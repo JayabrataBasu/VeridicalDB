@@ -155,6 +155,12 @@ INSERT INTO users VALUES (2, 'Bob');
 -- Query data
 SELECT * FROM users;
 
+-- Create a view
+CREATE VIEW active_users AS SELECT id, name FROM users WHERE active = true;
+
+-- Query the view
+SELECT * FROM active_users;
+
 -- Exit
 \quit
 ```

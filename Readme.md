@@ -232,6 +232,16 @@ FROM users u
 INNER JOIN orders o ON u.id = o.user_id
 WHERE o.status = 'completed';
 
+-- Views
+CREATE VIEW active_users AS 
+SELECT id, name, email FROM users WHERE active = true;
+
+SELECT * FROM active_users WHERE name LIKE 'A%';
+CREATE OR REPLACE VIEW user_summary AS 
+SELECT name, COUNT(*) as order_count 
+FROM users u LEFT JOIN orders o ON u.id = o.user_id 
+GROUP BY u.id, u.name;
+
 -- CTEs and window functions
 WITH user_stats AS (
     SELECT 
@@ -276,6 +286,19 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **Subqueries** - Nested SELECT statements
 - **Common Table Expressions (CTEs)** with WITH clause
 - **Window Functions** - ROW_NUMBER, RANK, DENSE_RANK, etc.
+
+### Views & Virtual Tables
+- **CREATE VIEW** - Define virtual tables based on SELECT queries
+  - `CREATE VIEW view_name AS SELECT ...`
+  - `CREATE VIEW view_name (col1, col2) AS SELECT ...`
+  - `CREATE OR REPLACE VIEW view_name AS SELECT ...`
+- **DROP VIEW** - Remove views
+  - `DROP VIEW view_name`
+  - `DROP VIEW IF EXISTS view_name`
+- **Query Views** - Views can be queried like regular tables with full SQL support
+  - `SELECT * FROM view_name WHERE ... ORDER BY ... LIMIT ...`
+  - Views support WHERE, ORDER BY, LIMIT, JOINs, and all DQL operations
+- **Information Schema** - Views appear in `information_schema.tables` with type "VIEW"
 
 ### Data Control Language (DCL)
 - **CREATE USER** - Create database users
