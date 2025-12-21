@@ -293,11 +293,18 @@ type MVCCExecutor struct {
 	// Views defined in this executor (CREATE VIEW)
 	views   map[string]*ViewDef
 	viewsMu sync.RWMutex
+	// CTE data for the current query
+	cteData map[string]*Result
+	cteMu   sync.RWMutex
 }
 
 // NewMVCCExecutor creates a new MVCC-aware executor.
 func NewMVCCExecutor(mtm *catalog.MVCCTableManager) *MVCCExecutor {
-	return &MVCCExecutor{mtm: mtm, views: make(map[string]*ViewDef)}
+	return &MVCCExecutor{
+		mtm:     mtm,
+		views:   make(map[string]*ViewDef),
+		cteData: make(map[string]*Result),
+	}
 }
 
 // SetFTSManager sets the full-text search manager.
@@ -682,6 +689,19 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
 
+	// Handle WITH clause (CTEs)
+	if stmt.With != nil {
+		return e.executeSelectWithCTEs(stmt, tx)
+	}
+
+	// Check if the table is actually a CTE
+	e.cteMu.RLock()
+	cteResult, isCTE := e.cteData[stmt.TableName]
+	e.cteMu.RUnlock()
+	if isCTE {
+		return e.executeSelectFromCTE(stmt, cteResult)
+	}
+
 	// If the FROM refers to a view instead of a table, expand it early.
 	if _, err := e.mtm.Catalog().GetTable(stmt.TableName); err != nil {
 		e.viewsMu.RLock()
@@ -903,6 +923,7 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 			sumFloat float64
 			hasValue bool
 			max      catalog.Value
+			min      catalog.Value
 		}
 
 		states := make([]aggState, len(stmt.Columns))
@@ -979,6 +1000,23 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 							states[i].max = val
 						}
 					}
+				case "MIN":
+					col, idx := meta.Schema.ColumnByName(agg.Arg)
+					if col == nil {
+						return false, fmt.Errorf("unknown column: %s", agg.Arg)
+					}
+					val := row.Values[idx]
+					if val.IsNull {
+						continue
+					}
+					if !states[i].hasValue {
+						states[i].min = val
+						states[i].hasValue = true
+					} else {
+						if compareValuesForSort(val, states[i].min) < 0 {
+							states[i].min = val
+						}
+					}
 				case "AVG":
 					col, idx := meta.Schema.ColumnByName(agg.Arg)
 					if col == nil {
@@ -1034,6 +1072,12 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 			case "MAX":
 				if st.hasValue {
 					row[i] = st.max
+				} else {
+					row[i] = catalog.Null(catalog.TypeUnknown)
+				}
+			case "MIN":
+				if st.hasValue {
+					row[i] = st.min
 				} else {
 					row[i] = catalog.Null(catalog.TypeUnknown)
 				}
@@ -5953,4 +5997,179 @@ func isStopWord(word string) bool {
 		"my": true, "we": true, "our": true, "you": true, "your": true,
 	}
 	return stopWords[word]
+}
+
+// executeSelectWithCTEs handles SELECT with WITH clause (Common Table Expressions) for MVCC.
+func (e *MVCCExecutor) executeSelectWithCTEs(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+	// Save any existing CTE data (for nested CTEs)
+	e.cteMu.Lock()
+	oldCTEData := make(map[string]*Result)
+	for k, v := range e.cteData {
+		oldCTEData[k] = v
+	}
+	e.cteMu.Unlock()
+
+	// Execute each CTE and store results
+	for _, cte := range stmt.With.CTEs {
+		var cteResult *Result
+		var err error
+
+		// Check if this is a recursive CTE
+		if cte.Recursive && cte.UnionQuery != nil {
+			cteResult, err = e.executeRecursiveCTEMVCC(&cte, tx)
+		} else if cte.UnionQuery != nil {
+			// Non-recursive UNION in CTE
+			cteResult, err = e.executeUnion(cte.UnionQuery, tx)
+		} else if cte.Query != nil {
+			// Simple SELECT CTE
+			cteResult, err = e.executeSelect(cte.Query, tx)
+		} else {
+			err = fmt.Errorf("CTE '%s' has no query defined", cte.Name)
+		}
+
+		if err != nil {
+			e.cteMu.Lock()
+			e.cteData = oldCTEData // Restore on error
+			e.cteMu.Unlock()
+			return nil, fmt.Errorf("error executing CTE '%s': %w", cte.Name, err)
+		}
+
+		// If CTE has explicit column aliases, rename the result columns
+		if len(cte.Columns) > 0 {
+			if len(cte.Columns) != len(cteResult.Columns) {
+				e.cteMu.Lock()
+				e.cteData = oldCTEData
+				e.cteMu.Unlock()
+				return nil, fmt.Errorf("CTE '%s' column count mismatch: expected %d, got %d",
+					cte.Name, len(cte.Columns), len(cteResult.Columns))
+			}
+			cteResult.Columns = cte.Columns
+		}
+
+		e.cteMu.Lock()
+		e.cteData[cte.Name] = cteResult
+		e.cteMu.Unlock()
+	}
+
+	// Execute the main query (without the WITH clause)
+	mainStmt := *stmt
+	mainStmt.With = nil
+	result, err := e.executeSelect(&mainStmt, tx)
+
+	// Restore previous CTE data
+	e.cteMu.Lock()
+	e.cteData = oldCTEData
+	e.cteMu.Unlock()
+
+	return result, err
+}
+
+// executeSelectFromCTE executes a SELECT query against a CTE result set.
+func (e *MVCCExecutor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*Result, error) {
+	// Create a temporary schema for the CTE result
+	cols := make([]catalog.Column, len(cteResult.Columns))
+	for i, name := range cteResult.Columns {
+		// We don't know the types easily, so we'll use TypeUnknown or try to infer from first row
+		colType := catalog.TypeText
+		if len(cteResult.Rows) > 0 {
+			colType = cteResult.Rows[0][i].Type
+		}
+		cols[i] = catalog.Column{ID: i, Name: name, Type: colType}
+	}
+	schema := &catalog.Schema{Columns: cols}
+
+	// Filter and project rows from the CTE result
+	var rows [][]catalog.Value
+	for _, row := range cteResult.Rows {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, err := e.evalCondition(stmt.Where, schema, row, nil) // tx=nil since CTE is already materialized
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Project columns
+		var outRow []catalog.Value
+		if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
+			outRow = row
+		} else {
+			outRow = make([]catalog.Value, len(stmt.Columns))
+			for i, sc := range stmt.Columns {
+				_, idx := schema.ColumnByName(sc.Name)
+				if idx < 0 {
+					return nil, fmt.Errorf("unknown column in CTE: %s", sc.Name)
+				}
+				outRow[i] = row[idx]
+			}
+		}
+		rows = append(rows, outRow)
+	}
+
+	// Apply ORDER BY, LIMIT, OFFSET (simplified)
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit < len(rows) {
+			rows = rows[:limit]
+		}
+	}
+
+	return &Result{
+		Columns: cteResult.Columns,
+		Rows:    rows,
+	}, nil
+}
+
+// executeRecursiveCTEMVCC executes a recursive CTE with iterative fixed-point evaluation for MVCC.
+func (e *MVCCExecutor) executeRecursiveCTEMVCC(cte *CTE, tx *txn.Transaction) (*Result, error) {
+	const maxIterations = 1000
+
+	// Execute the base case (anchor query)
+	baseResult, err := e.executeSelect(cte.UnionQuery.Left, tx)
+	if err != nil {
+		return nil, fmt.Errorf("error executing base case of recursive CTE: %w", err)
+	}
+
+	// Initialize result with base case
+	result := &Result{
+		Columns: make([]string, len(baseResult.Columns)),
+		Rows:    make([][]catalog.Value, len(baseResult.Rows)),
+	}
+	copy(result.Columns, baseResult.Columns)
+	for i, row := range baseResult.Rows {
+		result.Rows[i] = make([]catalog.Value, len(row))
+		copy(result.Rows[i], row)
+	}
+
+	// Iteratively execute the recursive case
+	workingTable := baseResult
+	for i := 0; i < maxIterations; i++ {
+		if len(workingTable.Rows) == 0 {
+			break
+		}
+
+		// Store current working table as the CTE result for this iteration
+		e.cteMu.Lock()
+		e.cteData[cte.Name] = workingTable
+		e.cteMu.Unlock()
+
+		// Execute recursive case (right side of UNION)
+		nextResult, err := e.executeSelect(cte.UnionQuery.Right, tx)
+		if err != nil {
+			return nil, fmt.Errorf("error executing recursive case of CTE (iteration %d): %w", i, err)
+		}
+
+		if len(nextResult.Rows) == 0 {
+			break
+		}
+
+		// Append new rows to the final result
+		result.Rows = append(result.Rows, nextResult.Rows...)
+		workingTable = nextResult
+	}
+
+	return result, nil
 }

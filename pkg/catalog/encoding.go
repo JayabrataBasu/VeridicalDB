@@ -93,18 +93,69 @@ func EncodeRow(schema *Schema, values []Value) ([]byte, error) {
 // DecodeRow decodes bytes into values according to schema.
 func DecodeRow(schema *Schema, data []byte) ([]Value, error) {
 	numCols := len(schema.Columns)
-	nullBitmapSize := (numCols + 7) / 8
 
-	if len(data) < nullBitmapSize {
+	// Handle rows that were written with fewer columns (before ALTER TABLE ADD COLUMN)
+	// First, determine the actual number of columns in the data
+	// Try different column counts starting from 1 up to numCols
+	actualCols := numCols
+	for testCols := 1; testCols <= numCols; testCols++ {
+		testBitmapSize := (testCols + 7) / 8
+		if len(data) >= testBitmapSize {
+			// Try to decode with this many columns
+			valid := true
+			testPos := testBitmapSize
+			testBitmap := data[:testBitmapSize]
+			for i := 0; i < testCols && valid; i++ {
+				isNull := (testBitmap[i/8] & (1 << (i % 8))) != 0
+				if isNull {
+					continue
+				}
+				if i >= len(schema.Columns) {
+					valid = false
+					break
+				}
+				switch schema.Columns[i].Type {
+				case TypeInt32:
+					testPos += 4
+				case TypeInt64, TypeTimestamp:
+					testPos += 8
+				case TypeBool:
+					testPos += 1
+				case TypeText, TypeJSON:
+					if testPos+4 > len(data) {
+						valid = false
+					} else {
+						length := int(binary.LittleEndian.Uint32(data[testPos : testPos+4]))
+						testPos += 4 + length
+					}
+				default:
+					valid = false
+				}
+				if testPos > len(data) {
+					valid = false
+				}
+			}
+			if valid && testPos == len(data) {
+				actualCols = testCols
+				break
+			}
+		}
+	}
+
+	// Decode using the actual number of columns in the data
+	actualBitmapSize := (actualCols + 7) / 8
+	if len(data) < actualBitmapSize {
 		return nil, errors.New("data too short for null bitmap")
 	}
 
-	nullBitmap := data[:nullBitmapSize]
-	pos := nullBitmapSize
+	nullBitmap := data[:actualBitmapSize]
+	pos := actualBitmapSize
 
 	values := make([]Value, numCols)
 
-	for i, col := range schema.Columns {
+	// Decode existing columns
+	for i := 0; i < actualCols && i < len(schema.Columns); i++ {
+		col := schema.Columns[i]
 		isNull := (nullBitmap[i/8] & (1 << (i % 8))) != 0
 		if isNull {
 			values[i] = Null(col.Type)
@@ -163,6 +214,16 @@ func DecodeRow(schema *Schema, data []byte) ([]Value, error) {
 			pos += length
 		default:
 			return nil, errors.New("unknown type")
+		}
+	}
+
+	// For newly added columns (not in the original row), set to NULL or default
+	for i := actualCols; i < numCols; i++ {
+		col := schema.Columns[i]
+		if col.HasDefault && col.DefaultValue != nil {
+			values[i] = *col.DefaultValue
+		} else {
+			values[i] = Null(col.Type)
 		}
 	}
 

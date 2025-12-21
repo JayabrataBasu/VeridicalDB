@@ -48,19 +48,20 @@ SHOW DATABASES;
 USE testdb;
 CREATE TABLE users (id INT PRIMARY KEY, name TEXT NOT NULL, email TEXT, age INT, active BOOLEAN DEFAULT true);
 CREATE TABLE orders (id INT PRIMARY KEY, user_id INT, product TEXT, quantity INT, status TEXT DEFAULT 'pending');
-CREATE TABLE products (id INT PRIMARY KEY, name TEXT NOT NULL, category TEXT, stock INT DEFAULT 0);
+CREATE TABLE products (id INT PRIMARY KEY, name TEXT NOT NULL, category TEXT, stock INT DEFAULT 0, price INT DEFAULT 0);
 CREATE TABLE logs (id INT PRIMARY KEY, message TEXT, level TEXT, created_at TEXT);
+CREATE TABLE departments (id INT PRIMARY KEY, name TEXT NOT NULL);
 SHOW TABLES;
 INSERT INTO users (id, name, email, age, active) VALUES (1, 'Alice', 'alice@example.com', 30, true);
 INSERT INTO users (id, name, email, age, active) VALUES (2, 'Bob', 'bob@example.com', 25, true);
 INSERT INTO users (id, name, email, age, active) VALUES (3, 'Charlie', 'charlie@example.com', 35, false);
 INSERT INTO users (id, name, email, age, active) VALUES (4, 'Diana', 'diana@example.com', 28, true);
 INSERT INTO users (id, name, email, age, active) VALUES (5, 'Eve', 'eve@example.com', 32, true);
-INSERT INTO products (id, name, category, stock) VALUES (1, 'Laptop', 'Electronics', 50);
-INSERT INTO products (id, name, category, stock) VALUES (2, 'Mouse', 'Electronics', 200);
-INSERT INTO products (id, name, category, stock) VALUES (3, 'Desk', 'Furniture', 30);
-INSERT INTO products (id, name, category, stock) VALUES (4, 'Chair', 'Furniture', 45);
-INSERT INTO products (id, name, category, stock) VALUES (5, 'Monitor', 'Electronics', 75);
+INSERT INTO products (id, name, category, stock, price) VALUES (1, 'Laptop', 'Electronics', 50, 1000);
+INSERT INTO products (id, name, category, stock, price) VALUES (2, 'Mouse', 'Electronics', 200, 25);
+INSERT INTO products (id, name, category, stock, price) VALUES (3, 'Desk', 'Furniture', 30, 300);
+INSERT INTO products (id, name, category, stock, price) VALUES (4, 'Chair', 'Furniture', 45, 150);
+INSERT INTO products (id, name, category, stock, price) VALUES (5, 'Monitor', 'Electronics', 75, 400);
 INSERT INTO orders (id, user_id, product, quantity, status) VALUES (1, 1, 'Laptop', 1, 'completed');
 INSERT INTO orders (id, user_id, product, quantity, status) VALUES (2, 1, 'Mouse', 2, 'completed');
 INSERT INTO orders (id, user_id, product, quantity, status) VALUES (3, 2, 'Desk', 1, 'pending');
@@ -68,6 +69,8 @@ INSERT INTO orders (id, user_id, product, quantity, status) VALUES (4, 3, 'Chair
 INSERT INTO logs (id, message, level) VALUES (1, 'System started', 'INFO');
 INSERT INTO logs (id, message, level) VALUES (2, 'User logged in', 'INFO');
 INSERT INTO logs (id, message, level) VALUES (3, 'Error occurred', 'ERROR');
+INSERT INTO departments (id, name) VALUES (1, 'Engineering');
+INSERT INTO departments (id, name) VALUES (2, 'Sales');
 SELECT * FROM users;
 SELECT name, email FROM users WHERE age > 28;
 SELECT * FROM users WHERE active = true;
@@ -100,7 +103,134 @@ SELECT * FROM users WHERE id = 7;
 EXPLAIN SELECT * FROM users WHERE age > 30;
 EXPLAIN SELECT * FROM products WHERE category = 'Electronics';
 
--- Indexes, UPSERT, Procedures/Triggers, JSON
+
+
+
+INSERT INTO logs (id, message, level) VALUES (10, 'Batch1', 'DEBUG'), (11, 'Batch2', 'DEBUG'), (12, 'Batch3', 'DEBUG');
+SELECT * FROM logs WHERE level = 'DEBUG';
+
+
+SELECT name AS user_name, age AS user_age FROM users WHERE id = 1;
+
+
+SELECT name, age FROM users WHERE id = 1;
+
+
+SELECT COUNT(*) FROM users;
+SELECT COUNT(*) FROM users WHERE active = true;
+SELECT SUM(stock) FROM products;
+SELECT AVG(age) FROM users;
+SELECT MIN(age) FROM users;
+SELECT MAX(age) FROM users;
+SELECT SUM(price) FROM products WHERE category = 'Electronics';
+
+
+SELECT category, COUNT(*) FROM products GROUP BY category;
+SELECT category, SUM(stock) FROM products GROUP BY category;
+SELECT active, COUNT(*) FROM users GROUP BY active;
+
+
+SELECT category, SUM(stock) FROM products GROUP BY category HAVING SUM(stock) > 100;
+
+
+SELECT users.name, orders.product FROM users INNER JOIN orders ON users.id = orders.user_id;
+SELECT users.name, orders.product FROM users LEFT JOIN orders ON users.id = orders.user_id;
+SELECT users.name, orders.product FROM users JOIN orders ON users.id = orders.user_id WHERE orders.status = 'completed';
+
+
+SELECT name FROM users WHERE age = (SELECT MAX(age) FROM users);
+SELECT name FROM users WHERE age > (SELECT AVG(age) FROM users);
+
+
+SELECT name FROM users WHERE id IN (1, 2, 3);
+SELECT name FROM users WHERE id NOT IN (1, 2);
+SELECT name FROM products WHERE category IN ('Electronics', 'Furniture');
+
+
+SELECT name FROM users WHERE age BETWEEN 25 AND 32;
+SELECT name FROM products WHERE stock BETWEEN 40 AND 100;
+
+
+SELECT name FROM users WHERE name LIKE 'A%';
+SELECT name FROM users WHERE email LIKE '%example.com';
+SELECT name FROM users WHERE name ILIKE 'alice';
+
+
+SELECT name FROM users WHERE email IS NOT NULL;
+INSERT INTO users (id, name, age) VALUES (8, 'NullEmail', 22);
+SELECT name FROM users WHERE email IS NULL;
+
+
+SELECT name, CASE WHEN age < 30 THEN 'young' WHEN age < 40 THEN 'middle' ELSE 'senior' END AS age_group FROM users;
+SELECT name, CASE WHEN active = true THEN 'Active' ELSE 'Inactive' END AS status FROM users;
+
+
+SELECT name, COALESCE(email, 'no-email') FROM users WHERE id = 8;
+SELECT NULLIF(1, 1) FROM users WHERE id = 1;
+SELECT NULLIF(1, 2) FROM users WHERE id = 1;
+
+
+SELECT UPPER(name) FROM users WHERE id = 1;
+SELECT LOWER(name) FROM users WHERE id = 1;
+SELECT LENGTH(name) FROM users WHERE id = 1;
+SELECT CONCAT(name, ' - ', email) FROM users WHERE id = 1;
+
+
+SELECT ABS(-5) FROM users WHERE id = 1;
+SELECT ROUND(3.7) FROM users WHERE id = 1;
+SELECT FLOOR(3.9) FROM users WHERE id = 1;
+SELECT CEIL(3.1) FROM users WHERE id = 1;
+
+
+SELECT NOW() FROM users WHERE id = 1;
+SELECT CURRENT_TIMESTAMP FROM users WHERE id = 1;
+
+
+SELECT CAST(123 AS TEXT) FROM users WHERE id = 1;
+SELECT CAST('456' AS INT) FROM users WHERE id = 1;
+
+
+SELECT name FROM users WHERE id = 1 UNION SELECT name FROM users WHERE id = 2;
+SELECT name FROM users WHERE id IN (1, 2) UNION ALL SELECT name FROM users WHERE id IN (2, 3);
+SELECT name FROM users WHERE id IN (1, 2, 3) INTERSECT SELECT name FROM users WHERE id IN (2, 3, 4);
+SELECT name FROM users WHERE id IN (1, 2, 3) EXCEPT SELECT name FROM users WHERE id IN (3, 4);
+
+
+WITH active_users AS (SELECT * FROM users WHERE active = true) SELECT name FROM active_users;
+WITH user_counts AS (SELECT COUNT(*) AS cnt FROM users) SELECT cnt FROM user_counts;
+
+
+SELECT name, age, ROW_NUMBER() OVER (ORDER BY age) AS row_num FROM users;
+SELECT name, age, RANK() OVER (ORDER BY age DESC) AS rank FROM users;
+SELECT category, name, SUM(stock) OVER (PARTITION BY category) AS category_total FROM products;
+
+
+ALTER TABLE users ADD COLUMN phone TEXT;
+SELECT phone FROM users LIMIT 1;
+ALTER TABLE logs RENAME TO audit_logs;
+SHOW TABLES;
+ALTER TABLE audit_logs RENAME TO logs;
+
+
+CREATE TABLE checked_data (id INT PRIMARY KEY, value INT CHECK (value > 0));
+INSERT INTO checked_data (id, value) VALUES (1, 10);
+
+
+CREATE TABLE child_orders (id INT PRIMARY KEY, user_id INT REFERENCES users(id), amount INT);
+INSERT INTO child_orders (id, user_id, amount) VALUES (1, 1, 100);
+
+
+SELECT table_name FROM information_schema.tables;
+SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users';
+
+
+SHOW CREATE TABLE users;
+
+
+ALTER USER testuser WITH PASSWORD 'newpass123';
+DROP USER readonly;
+
+
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_products_category ON products(category);
 EXPLAIN SELECT * FROM users WHERE email = 'alice@example.com';
@@ -141,7 +271,7 @@ CREATE VIEW v1 AS SELECT id, name FROM users;
 SELECT * FROM v1;
 
 CREATE FULLTEXT INDEX fts_users ON users(name, email);
--- Search for Alice (should match name)
+
 SELECT name FROM users WHERE name @@ 'Alice';
 
 CREATE TABLE merge_src (id INT PRIMARY KEY, name TEXT);
@@ -153,8 +283,13 @@ WHEN MATCHED THEN UPDATE SET name = src.name
 WHEN NOT MATCHED THEN INSERT (id, name, category, stock) VALUES (src.id, src.name, 'Electronics', 10);
 SELECT name FROM products WHERE id = 1;
 ALTER TABLE users ADD COLUMN metadata JSON;
--- Verify column exists by selecting it (values will be NULL)
+
 SELECT metadata FROM users LIMIT 1;
+
+
+UPDATE users SET metadata = '{"role": "admin", "level": 5}' WHERE id = 1;
+SELECT metadata FROM users WHERE id = 1;
+
 DROP TABLE logs;
 SHOW TABLES;
 DROP DATABASE analytics;
@@ -284,7 +419,142 @@ check "EXPLAIN users" "TableScan"
 check "EXPLAIN products" "TableScan"
 
 echo ""
-echo "--- Additional Features ---"
+echo "--- Multi-row INSERT ---"
+check "Multi-row INSERT executed" "3 row.*inserted\|rows inserted"
+check "Multi-row INSERT data exists" "Batch1\|Batch2\|DEBUG"
+
+echo ""
+echo "--- Column and Table Aliases ---"
+check "Column alias (AS)" "user_name\|user_age"
+check "Table alias" "Alice"
+
+echo ""
+echo "--- Aggregate Functions ---"
+check "COUNT(*)" "[5-9]\|count"
+check "SUM(stock)" "[0-9]"
+check "AVG(age)" "[0-9]"
+check "MIN(age)" "2[2-5]"
+check "MAX(age)" "3[5-9]\|40"
+
+echo ""
+echo "--- GROUP BY ---"
+check "GROUP BY category" "Electronics\|Furniture"
+check "GROUP BY with count" "[0-9]"
+
+echo ""
+echo "--- GROUP BY with HAVING ---"
+check "HAVING clause filters groups" "Electronics\|Furniture"
+
+echo ""
+echo "--- JOINs ---"
+check "INNER JOIN" "Alice.*Laptop\|Laptop.*Alice"
+check "LEFT JOIN" "Alice\|Bob\|Charlie"
+check "JOIN with WHERE" "completed"
+
+echo ""
+echo "--- Subqueries ---"
+check "Subquery with MAX" "Charlie\|Frank"
+check "Subquery with AVG" "Charlie\|Eve\|Frank"
+
+echo ""
+echo "--- IN / NOT IN ---"
+check "IN clause" "Alice\|Bob\|Charlie"
+check "NOT IN clause" "Charlie\|Diana\|Eve"
+
+echo ""
+echo "--- BETWEEN ---"
+check "BETWEEN for age" "Bob\|Alice\|Eve\|Diana"
+check "BETWEEN for stock" "Laptop\|Chair\|Monitor"
+
+echo ""
+echo "--- LIKE / ILIKE ---"
+check "LIKE A%" "Alice"
+check "LIKE %example.com" "Alice\|Bob"
+check "ILIKE case insensitive" "Alice"
+
+echo ""
+echo "--- IS NULL / IS NOT NULL ---"
+check "IS NOT NULL" "Alice\|Bob"
+check "IS NULL" "NullEmail"
+
+echo ""
+echo "--- CASE WHEN ---"
+check "CASE WHEN age groups" "young\|middle\|senior"
+check "CASE WHEN active status" "Active\|Inactive"
+
+echo ""
+echo "--- COALESCE / NULLIF ---"
+check "COALESCE replaces NULL" "no-email"
+check "NULLIF returns NULL" "NULL\|null"
+
+echo ""
+echo "--- String Functions ---"
+check "UPPER function" "ALICE"
+check "LOWER function" "alice"
+check "LENGTH function" "[5-9]"
+check "CONCAT function" "Alice.*alice@example.com\|-"
+
+echo ""
+echo "--- Math Functions ---"
+check "ABS function" "5"
+check "ROUND function" "4"
+check "FLOOR function" "3"
+check "CEIL function" "4"
+
+echo ""
+echo "--- Date/Time Functions ---"
+check "NOW function" "20[0-9][0-9]"
+check "CURRENT_TIMESTAMP" "20[0-9][0-9]"
+
+echo ""
+echo "--- CAST ---"
+check "CAST to TEXT" "123"
+check "CAST to INT" "456"
+
+echo ""
+echo "--- UNION / INTERSECT / EXCEPT ---"
+check "UNION" "Alice\|Bob"
+check "UNION ALL" "Alice\|Bob\|Charlie"
+check "INTERSECT" "Bob\|Charlie"
+check "EXCEPT" "Alice"
+
+echo ""
+echo "--- CTE (WITH clause) ---"
+check "Simple CTE" "Alice\|Bob\|Diana\|Eve"
+check "CTE with aggregate" "[5-9]"
+
+echo ""
+echo "--- Window Functions ---"
+check "ROW_NUMBER" "row_num\|1\|2\|3"
+check "RANK" "rank\|1\|2"
+check "SUM OVER PARTITION" "category_total"
+
+echo ""
+echo "--- ALTER TABLE ---"
+check "ALTER TABLE ADD COLUMN" "phone\|column"
+check "ALTER TABLE RENAME" "audit_logs"
+
+echo ""
+echo "--- Constraints ---"
+check "CHECK constraint table created" "checked_data"
+check "FOREIGN KEY constraint" "child_orders"
+
+echo ""
+echo "--- information_schema ---"
+check "information_schema.tables" "users\|products\|orders"
+check "information_schema.columns" "name\|age\|email"
+
+echo ""
+echo "--- SHOW CREATE TABLE ---"
+check "SHOW CREATE TABLE" "CREATE TABLE\|users\|id\|name"
+
+echo ""
+echo "--- ALTER/DROP USER ---"
+check "ALTER USER" "ALTER USER\|Password"
+check "DROP USER readonly" "DROP USER\|dropped"
+
+echo ""
+echo "--- Indexes and Advanced Features ---"
 check "CREATE INDEX" "Index.*created\|CREATE INDEX\|idx_"
 check "EXPLAIN uses index" "Index\|IndexScan\|TableScan"
 check "UPSERT (ON CONFLICT)" "Laptop Pro\|30"
@@ -308,6 +578,8 @@ check "FTS search" "Alice"
 check "MERGE updated/inserted" "Laptop M\|MergedProd"
 
 check "JSON column exists" "metadata"
+check "JSON value stored" "admin\|level"
+
 echo ""
 echo "--- DDL: DROP ---"
 check "DROP TABLE logs" "dropped\|Table"
