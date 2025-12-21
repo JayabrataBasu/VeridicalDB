@@ -11,6 +11,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -288,6 +289,7 @@ type MVCCExecutor struct {
 	triggerCat *catalog.TriggerCatalog
 	procCat    *catalog.ProcedureCatalog
 	session    *Session
+	ftsMgr     *fts.Manager
 	// Views defined in this executor (CREATE VIEW)
 	views   map[string]*ViewDef
 	viewsMu sync.RWMutex
@@ -296,6 +298,11 @@ type MVCCExecutor struct {
 // NewMVCCExecutor creates a new MVCC-aware executor.
 func NewMVCCExecutor(mtm *catalog.MVCCTableManager) *MVCCExecutor {
 	return &MVCCExecutor{mtm: mtm, views: make(map[string]*ViewDef)}
+}
+
+// SetFTSManager sets the full-text search manager.
+func (e *MVCCExecutor) SetFTSManager(mgr *fts.Manager) {
+	e.ftsMgr = mgr
 }
 
 // SetIndexManager sets the index manager for index maintenance during DML operations.
@@ -353,6 +360,10 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 		return e.executeExplain(s, tx)
 	case *MergeStmt:
 		return e.executeMerge(s, tx)
+	case *CreateFTSIndexStmt:
+		return e.executeCreateFTSIndex(s)
+	case *DropFTSIndexStmt:
+		return e.executeDropFTSIndex(s)
 	case *BeginStmt, *CommitStmt, *RollbackStmt:
 		// These are handled by the session, not the executor
 		return nil, fmt.Errorf("transaction statements should be handled by session")
@@ -473,6 +484,73 @@ func (e *MVCCExecutor) executeDrop(stmt *DropTableStmt) (*Result, error) {
 	return &Result{
 		Message: fmt.Sprintf("Table '%s' dropped.", stmt.TableName),
 	}, nil
+}
+
+func (e *MVCCExecutor) executeCreateFTSIndex(stmt *CreateFTSIndexStmt) (*Result, error) {
+	if e.ftsMgr == nil {
+		return nil, fmt.Errorf("full-text search not enabled")
+	}
+
+	// Check if table exists
+	_, err := e.mtm.Catalog().GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	err = e.ftsMgr.CreateIndex(stmt.IndexName, stmt.TableName, stmt.Columns)
+	if err != nil {
+		if stmt.IfNotExists && strings.Contains(err.Error(), "already exists") {
+			return &Result{Message: fmt.Sprintf("FTS index %s already exists (ignored)", stmt.IndexName)}, nil
+		}
+		return nil, err
+	}
+
+	// Initial indexing of existing data
+	tx := e.mtm.TxnManager().Begin()
+	defer e.mtm.TxnManager().Abort(tx.ID)
+
+	idx, _ := e.ftsMgr.GetIndex(stmt.IndexName)
+	count := 0
+	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+		// Combine all indexed columns into one text blob
+		var sb strings.Builder
+		meta, _ := e.mtm.Catalog().GetTable(stmt.TableName)
+		for _, colName := range stmt.Columns {
+			for i, col := range meta.Schema.Columns {
+				if col.Name == colName {
+					sb.WriteString(row.Values[i].String())
+					sb.WriteString(" ")
+					break
+				}
+			}
+		}
+		docID := uint64(row.RID.Page)<<16 | uint64(row.RID.Slot)
+		_ = idx.IndexDocument(docID, sb.String())
+		count++
+		return true, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("initial FTS indexing failed: %w", err)
+	}
+
+	return &Result{Message: fmt.Sprintf("Full-text index %s created on %s (%d rows indexed)", stmt.IndexName, stmt.TableName, count)}, nil
+}
+
+func (e *MVCCExecutor) executeDropFTSIndex(stmt *DropFTSIndexStmt) (*Result, error) {
+	if e.ftsMgr == nil {
+		return nil, fmt.Errorf("full-text search not enabled")
+	}
+
+	err := e.ftsMgr.DropIndex(stmt.IndexName)
+	if err != nil {
+		if stmt.IfExists && strings.Contains(err.Error(), "not found") {
+			return &Result{Message: fmt.Sprintf("FTS index %s does not exist (ignored)", stmt.IndexName)}, nil
+		}
+		return nil, err
+	}
+
+	return &Result{Message: fmt.Sprintf("Full-text index %s dropped", stmt.IndexName)}, nil
 }
 
 func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Result, error) {

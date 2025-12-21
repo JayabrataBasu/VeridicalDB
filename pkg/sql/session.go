@@ -224,16 +224,6 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			return nil, err
 		}
 		return s.handleDropIndex(typedStmt)
-	case *CreateViewStmt:
-		if err := s.requireDatabaseSelected(); err != nil {
-			return nil, err
-		}
-		return s.executor.Execute(stmt, s.currentTx)
-	case *DropViewStmt:
-		if err := s.requireDatabaseSelected(); err != nil {
-			return nil, err
-		}
-		return s.executor.Execute(stmt, s.currentTx)
 	case *CreateTriggerStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err

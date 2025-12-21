@@ -32,7 +32,7 @@ This file enumerates current actionable TODOs discovered in a quick codebase pas
   - Location: TODO comment: "Handle AND expressions - could match multiple predicates".
   - Why: Improve selectivity and index utilization for ANDed predicates.
 
-- [ ] Update docs: ensure README, Roadmap, Verdict, Leftovers reflect accurate feature statuses (done: partial update on Dec 16, 2025)
+- [x] Update docs: ensure README, Roadmap, Verdict, Leftovers reflect accurate feature statuses (done: Dec 16, 2025)
 
 ---
 

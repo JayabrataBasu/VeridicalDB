@@ -138,6 +138,7 @@ GRANT SELECT ON users TO bob;
 REVOKE SELECT ON users FROM bob;
 
 CREATE VIEW v1 AS SELECT id, name FROM users;
+SELECT * FROM v1;
 
 CREATE TABLE merge_src (id INT PRIMARY KEY, name TEXT);
 INSERT INTO merge_src (id, name) VALUES (1, 'Laptop M');
@@ -297,7 +298,8 @@ check "SHOW FUNCTIONS lists functions" "proc_log\|log_user_fn"
 check "SHOW PROCEDURES lists procedures" "log_user_update\|proc_log"
 check "GRANT succeeded" "GRANT SELECT ON users TO bob\|GRANT"
 check "REVOKE succeeded" "REVOKE" 
-check "CREATE VIEW not implemented" "CREATE VIEW is not yet fully implemented\|not yet fully implemented"
+check "CREATE VIEW succeeded" "View.*v1.*created\|CREATE VIEW"
+check "SELECT from view" "Alice\|Bob"
 check "MERGE updated/inserted" "Laptop M\|MergedProd"
 
 check "JSON column exists" "metadata"

@@ -97,14 +97,14 @@ Structured logging	✅	Easy
 Ranked by Difficulty and Implementation Time (status updated Dec 16, 2025)
 Priority	Feature	Difficulty	Est. Time	Status / Notes
 HIGH	PostgreSQL wire protocol	Hard	3-4 weeks	✅ Implemented (basic startup, simple and extended query protocols)
-HIGH	Prepared statements	Medium	1-2 weeks	✅ Implemented (PREPARE/EXECUTE/DEALLOCATE supported; parameter binding partial in pgwire)
+HIGH	Prepared statements	Medium	1-2 weeks	✅ Implemented (PREPARE/EXECUTE/DEALLOCATE supported; parameter binding implemented in pgwire)
 HIGH	FOREIGN KEY constraints	Hard	2 weeks	✅ Implemented (catalog + enforcement)
-HIGH	CHECK constraints	Medium	1 week	Partially implemented (expression support present; more validation coverage needed)
+HIGH	CHECK constraints	Medium	1 week	✅ Implemented (expression support present; validation enforced in MVCC executor)
 MEDIUM	Authentication	Medium	1 week	✅ Implemented (user catalog, password hashing, GRANT/REVOKE)
 MEDIUM	TLS/SSL	Medium	1 week	Planned (server currently rejects SSL requests)
 MEDIUM	Connection pooling	Medium	1 week	Planned
-MEDIUM	Subqueries	Hard	2-3 weeks	Partially implemented (parser and many executor cases work; some MVCC executor subquery paths still return "not yet supported")
-MEDIUM	CREATE VIEW	Medium	1 week	Partially implemented (parsing supported; MVCC execution of CREATE VIEW/DROP VIEW is still incomplete)
+MEDIUM	Subqueries	Hard	2-3 weeks	✅ Implemented (Scalar, IN, EXISTS, and Correlated subqueries supported in MVCC executor)
+MEDIUM	CREATE VIEW	Medium	1 week	✅ Implemented (Transactional CREATE/DROP VIEW and runtime expansion supported)
 MEDIUM	Information schema	Medium	1 week	✅ Implemented (information_schema tables available)
 MEDIUM	CASE WHEN	Medium	1 week	Implemented
 MEDIUM	Date functions	Medium	1 week	Partial (basic date/timestamp functions present)
