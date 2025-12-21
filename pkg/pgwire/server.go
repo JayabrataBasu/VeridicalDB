@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -131,6 +132,19 @@ func (s *Server) acceptLoop() {
 	}
 }
 
+func (s *Server) cancelConnection(pid uint64, secret int32) {
+	s.connsMu.Lock()
+	conn, ok := s.conns[pid]
+	s.connsMu.Unlock()
+
+	if ok && int32(pid*7) == secret {
+		s.logger.Info("cancelling connection", "id", pid)
+		// In a real system, we would signal the session to cancel the current query.
+		// For now, we'll just close the connection to stop any ongoing work.
+		conn.Close()
+	}
+}
+
 func (s *Server) handleConnection(c *Conn) {
 	defer s.wg.Done()
 	defer func() {
@@ -235,8 +249,15 @@ func (c *Conn) handleStartup() error {
 		return c.handleStartup()
 
 	case CancelRequestCode:
-		// Cancel request - not implemented yet
-		return fmt.Errorf("cancel request not implemented")
+		// Cancel request
+		if len(payload) < 12 {
+			return fmt.Errorf("cancel request too short")
+		}
+		pid := ReadInt32(payload[4:8])
+		secret := ReadInt32(payload[8:12])
+
+		c.server.cancelConnection(uint64(pid), secret)
+		return io.EOF // Close this connection after processing cancel
 
 	case ProtocolVersionNumber:
 		// Normal startup
@@ -382,7 +403,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	}
 
 	// Send results
-	if err := c.sendResult(result, query); err != nil {
+	if _, err := c.sendResult(result, query, 0); err != nil {
 		return err
 	}
 
@@ -393,24 +414,30 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, _ string) error {
+func (c *Conn) sendResult(result *sql.Result, _ string, maxRows int32) (bool, error) {
 	if result == nil {
-		return c.sendCommandComplete("", 0)
+		return false, c.sendCommandComplete("", 0)
 	}
 
 	// If there are columns, send RowDescription and DataRows
 	if len(result.Columns) > 0 {
 		if err := c.sendRowDescription(result.Columns); err != nil {
-			return err
+			return false, err
 		}
 
+		count := 0
 		for _, row := range result.Rows {
-			if err := c.sendDataRow(row); err != nil {
-				return err
+			if maxRows > 0 && int32(count) >= maxRows {
+				// If we reached the limit, send PortalSuspended instead of CommandComplete
+				return true, c.writer.WriteMessage(MsgPortalSuspended, nil)
 			}
+			if err := c.sendDataRow(row); err != nil {
+				return false, err
+			}
+			count++
 		}
 
-		return c.sendCommandComplete("SELECT", len(result.Rows))
+		return false, c.sendCommandComplete("SELECT", len(result.Rows))
 	}
 
 	// For commands without results
@@ -418,7 +445,7 @@ func (c *Conn) sendResult(result *sql.Result, _ string) error {
 	if tag == "" {
 		tag = "OK"
 	}
-	return c.sendCommandComplete(tag, result.RowsAffected)
+	return false, c.sendCommandComplete(tag, result.RowsAffected)
 }
 
 func (c *Conn) sendRowDescription(columns []string) error {
@@ -624,27 +651,75 @@ func (c *Conn) handleDescribe(payload []byte) error {
 	}
 }
 
+func (c *Conn) decodeParam(data []byte, oid int32) (catalog.Value, error) {
+	if data == nil {
+		return catalog.Null(catalog.TypeUnknown), nil
+	}
+	s := string(data)
+	switch oid {
+	case OIDInt4, OIDInt2:
+		v, _ := strconv.ParseInt(s, 10, 32)
+		return catalog.NewInt32(int32(v)), nil
+	case OIDInt8:
+		v, _ := strconv.ParseInt(s, 10, 64)
+		return catalog.NewInt64(v), nil
+	case OIDFloat4, OIDFloat8:
+		v, _ := strconv.ParseFloat(s, 64)
+		return catalog.NewFloat64(v), nil
+	case OIDBool:
+		return catalog.NewBool(s == "t" || s == "true" || s == "1"), nil
+	case OIDText, OIDVarchar:
+		return catalog.NewText(s), nil
+	default:
+		// Fallback to text
+		return catalog.NewText(s), nil
+	}
+}
+
 func (c *Conn) handleExecute(payload []byte) error {
 	portalName, n := ReadCString(payload)
 	maxRows := ReadInt32(payload[n:])
-	_ = maxRows // TODO: implement row limiting
 
 	portal, ok := c.portals[portalName]
 	if !ok {
 		return fmt.Errorf("portal %q not found", portalName)
 	}
 
-	// Substitute parameters into the query
-	query := portal.Statement.Query
-	// For simplicity, we execute the query directly
-	// A proper implementation would substitute $1, $2, etc. with portal.Params
+	// Decode parameters
+	params := make([]catalog.Value, len(portal.Params))
+	for i, p := range portal.Params {
+		oid := int32(OIDUnknown)
+		if i < len(portal.Statement.ParamOIDs) {
+			oid = portal.Statement.ParamOIDs[i]
+		}
+		val, err := c.decodeParam(p, oid)
+		if err != nil {
+			return err
+		}
+		params[i] = val
+	}
 
-	result, err := c.session.ExecuteSQL(query)
+	// Parse the query
+	parser := sql.NewParser(portal.Statement.Query)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return c.sendError("ERROR", "42601", err.Error())
+	}
+
+	// Substitute parameters into the AST
+	newStmt, err := sql.SubstituteParams(stmt, params)
 	if err != nil {
 		return c.sendError("ERROR", "42000", err.Error())
 	}
 
-	return c.sendResult(result, query)
+	// Execute the substituted statement
+	result, err := c.session.Execute(newStmt)
+	if err != nil {
+		return c.sendError("ERROR", "42000", err.Error())
+	}
+
+	_, err = c.sendResult(result, portal.Statement.Query, maxRows)
+	return err
 }
 
 func (c *Conn) handleSync() error {

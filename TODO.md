@@ -4,31 +4,31 @@ This file enumerates current actionable TODOs discovered in a quick codebase pas
 
 ## High priority
 
-- [ ] Implement MVCC executor support for subqueries (pkg/sql/mvcc_executor.go)
+- [x] Implement MVCC executor support for subqueries (pkg/sql/mvcc_executor.go)
   - Location: lines around "subqueries not yet supported in MVCC executor" (executeSelect/evalCondition paths).
   - Why: Several query cases rely on subqueries; unit tests show parsing but some runtime paths return "not yet supported".
 
-- [ ] Implement CREATE VIEW execution and DROP VIEW in the MVCC executor (pkg/sql/mvcc_executor.go)
+- [x] Implement CREATE VIEW execution and DROP VIEW in the MVCC executor (pkg/sql/mvcc_executor.go)
   - Location: `executeCreateView` returns "not yet fully implemented".
   - Why: CREATE VIEW parsing works, but execution through the server returns an error; fix to support view persistence or runtime expansion.
 
 ## Medium priority
 
-- [ ] Implement row limiting for Extended Query protocol `Execute` message (pkg/pgwire/server.go)
+- [x] Implement row limiting for Extended Query protocol `Execute` message (pkg/pgwire/server.go)
   - Location: `handleExecute` – `_ = maxRows // TODO: implement row limiting`.
   - Why: Support portal-level row limiting for extended protocol semantics.
 
-- [ ] Implement parameter substitution for pgwire `Execute` (pkg/pgwire/server.go)
+- [x] Implement parameter substitution for pgwire `Execute` (pkg/pgwire/server.go)
   - Location: `handleExecute` – parameter binding comment; currently query executed directly without substitution.
   - Why: Extended protocol `Parse/Bind/Execute` should use provided parameter bytes to bind $1/$2 placeholders.
 
-- [ ] Support CancelRequest (pgwire CancelRequestCode) (pkg/pgwire/server.go)
+- [x] Support CancelRequest (pgwire CancelRequestCode) (pkg/pgwire/server.go)
   - Location: `handleStartup` returns "cancel request not implemented"
   - Why: Implement cancellation via BackendKeyData/secret key and connection lookup for cancelling running statements.
 
 ## Low priority / backlog
 
-- [ ] Planner: improve AND expression handling (pkg/sql/planner.go)
+- [x] Planner: improve AND expression handling (pkg/sql/planner.go)
   - Location: TODO comment: "Handle AND expressions - could match multiple predicates".
   - Why: Improve selectivity and index utilization for ANDed predicates.
 

@@ -653,3 +653,70 @@ func TestMVCCCreateView(t *testing.T) {
 		t.Fatalf("expected error selecting from dropped view, got nil")
 	}
 }
+
+func TestMVCCInsertSelect(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE source (id INT, name TEXT);")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = session.ExecuteSQL("CREATE TABLE target (id INT, name TEXT);")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO source VALUES (1, 'Alice'), (2, 'Bob');")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO target SELECT * FROM source;")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.ExecuteSQL("SELECT COUNT(*) FROM target;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows[0][0].Int64 != 2 {
+		t.Errorf("expected 2 rows in target, got %v", result.Rows[0][0].Int64)
+	}
+
+	result, err = session.ExecuteSQL("SELECT name FROM target ORDER BY id;")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Rows[0][0].Text != "Alice" || result.Rows[1][0].Text != "Bob" {
+		t.Errorf("unexpected names in target: %v, %v", result.Rows[0][0].Text, result.Rows[1][0].Text)
+	}
+}
+
+func TestMVCCDistinct(t *testing.T) {
+	session, cleanup := setupMVCCTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE colors (name TEXT);")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO colors VALUES ('red'), ('blue'), ('red'), ('green'), ('blue');")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := session.ExecuteSQL("SELECT DISTINCT name FROM colors ORDER BY name;")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Rows) != 3 {
+		t.Errorf("expected 3 distinct colors, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0].Text != "blue" || result.Rows[1][0].Text != "green" || result.Rows[2][0].Text != "red" {
+		t.Errorf("unexpected distinct colors: %v, %v, %v", result.Rows[0][0].Text, result.Rows[1][0].Text, result.Rows[2][0].Text)
+	}
+}

@@ -110,6 +110,7 @@ type InsertStmt struct {
 	TableName  string
 	Columns    []string          // optional column list
 	ValuesList [][]Expression    // multiple rows: INSERT INTO t VALUES (...), (...), ...
+	Select     *SelectStmt       // INSERT INTO t SELECT ...
 	OnConflict *OnConflictClause // optional ON CONFLICT clause
 }
 

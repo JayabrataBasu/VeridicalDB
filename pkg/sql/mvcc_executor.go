@@ -487,12 +487,10 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		return nil, err
 	}
 
-	// Partition routing is not required here; leave uninitialized for future use
-
 	totalInserted := 0
 
-	// Process each row in ValuesList
-	for rowIdx, rowValues := range stmt.ValuesList {
+	// Helper to process and insert a single row of values
+	processAndInsert := func(rowValues []catalog.Value, rowIdx int) error {
 		// Build values array
 		values := make([]catalog.Value, len(meta.Columns))
 
@@ -504,67 +502,92 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		// If column list specified, map values to columns
 		if len(stmt.Columns) > 0 {
 			if len(stmt.Columns) != len(rowValues) {
-				return nil, fmt.Errorf("row %d: column count (%d) doesn't match value count (%d)",
+				return fmt.Errorf("row %d: column count (%d) doesn't match value count (%d)",
 					rowIdx+1, len(stmt.Columns), len(rowValues))
 			}
 			for i, colName := range stmt.Columns {
 				col, idx := meta.Schema.ColumnByName(colName)
 				if col == nil {
-					return nil, fmt.Errorf("unknown column: %s", colName)
+					return fmt.Errorf("unknown column: %s", colName)
 				}
-				val, err := e.evalExpr(rowValues[i], meta.Schema, nil, nil)
+				val, err := coerceValueMVCC(rowValues[i], col.Type)
 				if err != nil {
-					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
-				}
-				val, err = coerceValueMVCC(val, col.Type)
-				if err != nil {
-					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, colName, err)
+					return fmt.Errorf("row %d, column %s: %w", rowIdx+1, colName, err)
 				}
 				values[idx] = val
 			}
 		} else {
 			// Positional values
 			if len(rowValues) != len(meta.Columns) {
-				return nil, fmt.Errorf("row %d: expected %d values, got %d", rowIdx+1, len(meta.Columns), len(rowValues))
+				return fmt.Errorf("row %d: expected %d values, got %d", rowIdx+1, len(meta.Columns), len(rowValues))
 			}
-			for i, expr := range rowValues {
-				val, err := e.evalExpr(expr, meta.Schema, nil, nil)
+			for i, val := range rowValues {
+				coerced, err := coerceValueMVCC(val, meta.Columns[i].Type)
 				if err != nil {
-					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+					return fmt.Errorf("row %d, column %s: %w", rowIdx+1, meta.Columns[i].Name, err)
 				}
-				val, err = coerceValueMVCC(val, meta.Columns[i].Type)
-				if err != nil {
-					return nil, fmt.Errorf("row %d, column %s: %w", rowIdx+1, meta.Columns[i].Name, err)
-				}
-				values[i] = val
+				values[i] = coerced
 			}
 		}
 
 		// Validate CHECK constraints
 		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
-			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
-		// Route to partition if table is partitioned
 		targetTable := stmt.TableName
+
+		// Fire BEFORE INSERT triggers
+		if err := e.fireBeforeInsertTriggers(targetTable, values, meta.Schema); err != nil {
+			return fmt.Errorf("row %d: BEFORE INSERT trigger failed: %w", rowIdx+1, err)
+		}
 
 		// Insert with MVCC
 		rid, err := e.mtm.Insert(targetTable, values, tx)
 		if err != nil {
-			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
 		// Update indexes for the new row
 		if err := e.updateIndexesOnInsert(targetTable, rid, values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("row %d: index update failed: %w", rowIdx+1, err)
+			return fmt.Errorf("row %d: index update failed: %w", rowIdx+1, err)
 		}
 
 		// Fire AFTER INSERT triggers
 		if err := e.fireAfterInsertTriggers(targetTable, values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("row %d: AFTER INSERT trigger failed: %w", rowIdx+1, err)
+			return fmt.Errorf("row %d: AFTER INSERT trigger failed: %w", rowIdx+1, err)
 		}
 
 		totalInserted++
+		return nil
+	}
+
+	if stmt.Select != nil {
+		// INSERT INTO ... SELECT ...
+		selectResult, err := e.executeSelect(stmt.Select, tx)
+		if err != nil {
+			return nil, fmt.Errorf("INSERT SELECT: %w", err)
+		}
+		for i, row := range selectResult.Rows {
+			if err := processAndInsert(row, i); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// INSERT INTO ... VALUES (...)
+		for rowIdx, rowExprs := range stmt.ValuesList {
+			rowValues := make([]catalog.Value, len(rowExprs))
+			for i, expr := range rowExprs {
+				val, err := e.evalExpr(expr, meta.Schema, nil, nil)
+				if err != nil {
+					return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+				}
+				rowValues[i] = val
+			}
+			if err := processAndInsert(rowValues, rowIdx); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	if totalInserted == 1 {
@@ -716,6 +739,63 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		orderByIndices := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			_, idx := meta.Schema.ColumnByName(ob.Column)
+			if idx < 0 {
+				// Try to find in output columns
+				found := false
+				for j, col := range outCols {
+					if strings.EqualFold(col, ob.Column) {
+						orderByIndices[i] = j
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+				}
+			} else {
+				orderByIndices[i] = idx
+			}
+		}
+		sortRowsMVCC(rows, stmt.OrderBy, orderByIndices)
+	}
+
+	// Apply DISTINCT
+	if stmt.Distinct {
+		uniqueRows := make(map[string]bool)
+		var distinctRows [][]catalog.Value
+		for _, row := range rows {
+			key := groupKeyString(row)
+			if !uniqueRows[key] {
+				uniqueRows[key] = true
+				distinctRows = append(distinctRows, row)
+			}
+		}
+		rows = distinctRows
+	}
+
+	// Apply OFFSET
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		offset := int(*stmt.Offset)
+		if offset >= len(rows) {
+			rows = nil
+		} else {
+			rows = rows[offset:]
+		}
+	}
+
+	// Apply LIMIT
+	if stmt.Limit != nil {
+		limit := int(*stmt.Limit)
+		if limit >= 0 && limit < len(rows) {
+			rows = rows[:limit]
+		}
 	}
 
 	return &Result{
@@ -2085,9 +2165,17 @@ type IndexScanInfo struct {
 
 // findUsableIndex checks if an index can be used for a WHERE clause.
 // Returns nil if no suitable index is found.
-func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, _ *catalog.Schema) *IndexScanInfo {
+func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schema *catalog.Schema) *IndexScanInfo {
 	if e.indexMgr == nil || where == nil {
 		return nil
+	}
+
+	// Handle AND expressions recursively
+	if binExpr, ok := where.(*BinaryExpr); ok && binExpr.Op == TOKEN_AND {
+		if info := e.findUsableIndex(tableName, binExpr.Left, schema); info != nil {
+			return info
+		}
+		return e.findUsableIndex(tableName, binExpr.Right, schema)
 	}
 
 	// Look for simple equality or range conditions: column <op> literal

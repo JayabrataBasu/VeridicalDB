@@ -93,6 +93,18 @@ type IndexInfo struct {
 
 // findIndexForCondition checks if an index can be used for a WHERE clause.
 func (p *Planner) findIndexForCondition(tableName string, where Expression, schema *catalog.Schema) *IndexInfo {
+	if where == nil {
+		return nil
+	}
+
+	// Handle AND expressions recursively
+	if binExpr, ok := where.(*BinaryExpr); ok && binExpr.Op == TOKEN_AND {
+		if info := p.findIndexForCondition(tableName, binExpr.Left, schema); info != nil {
+			return info
+		}
+		return p.findIndexForCondition(tableName, binExpr.Right, schema)
+	}
+
 	// Only handle simple binary expressions for now
 	binExpr, ok := where.(*BinaryExpr)
 	if !ok {
@@ -109,8 +121,6 @@ func (p *Planner) findIndexForCondition(tableName string, where Expression, sche
 		binExpr.Op == TOKEN_LE || binExpr.Op == TOKEN_GE {
 		return p.matchRangeToIndex(tableName, binExpr, schema)
 	}
-
-	// TODO: Handle AND expressions - could match multiple predicates
 
 	return nil
 }

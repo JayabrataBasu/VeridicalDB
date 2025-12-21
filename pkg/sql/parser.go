@@ -1343,43 +1343,50 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 		}
 	}
 
-	// VALUES
-	if err := p.expect(TOKEN_VALUES); err != nil {
-		return nil, err
-	}
-
-	// Parse multiple value rows: (v1, v2), (v3, v4), ...
-	for {
-		// (values)
-		if err := p.expect(TOKEN_LPAREN); err != nil {
-			return nil, err
-		}
-
-		var rowValues []Expression
+	// VALUES or SELECT
+	if p.curTokenIs(TOKEN_VALUES) {
+		p.nextToken()
+		// Parse multiple value rows: (v1, v2), (v3, v4), ...
 		for {
-			expr, err := p.parsePrimaryExpression()
-			if err != nil {
+			// (values)
+			if err := p.expect(TOKEN_LPAREN); err != nil {
 				return nil, err
 			}
-			rowValues = append(rowValues, expr)
 
+			var rowValues []Expression
+			for {
+				expr, err := p.parsePrimaryExpression()
+				if err != nil {
+					return nil, err
+				}
+				rowValues = append(rowValues, expr)
+
+				if !p.curTokenIs(TOKEN_COMMA) {
+					break
+				}
+				p.nextToken()
+			}
+
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, err
+			}
+
+			stmt.ValuesList = append(stmt.ValuesList, rowValues)
+
+			// Check for more value rows
 			if !p.curTokenIs(TOKEN_COMMA) {
 				break
 			}
-			p.nextToken()
+			p.nextToken() // consume comma between value rows
 		}
-
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+	} else if p.curTokenIs(TOKEN_SELECT) {
+		selectStmt, err := p.parseSelect()
+		if err != nil {
 			return nil, err
 		}
-
-		stmt.ValuesList = append(stmt.ValuesList, rowValues)
-
-		// Check for more value rows
-		if !p.curTokenIs(TOKEN_COMMA) {
-			break
-		}
-		p.nextToken() // consume comma between value rows
+		stmt.Select = selectStmt
+	} else {
+		return nil, fmt.Errorf("expected VALUES or SELECT, got %v", p.cur.Type)
 	}
 
 	// Parse optional ON CONFLICT clause
