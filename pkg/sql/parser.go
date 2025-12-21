@@ -240,6 +240,17 @@ func (p *Parser) parseWith() (Statement, error) {
 
 // parseSelect parses: SELECT [DISTINCT [ON (cols)]] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
 func (p *Parser) parseSelect() (*SelectStmt, error) {
+	return p.parseSelectFull(true)
+}
+
+// parseSelectForSetOp parses SELECT without ORDER BY/LIMIT/OFFSET (for UNION/INTERSECT/EXCEPT right side)
+func (p *Parser) parseSelectForSetOp() (*SelectStmt, error) {
+	return p.parseSelectFull(false)
+}
+
+// parseSelectFull parses a SELECT statement. If parseTrailingClauses is false,
+// it stops before ORDER BY/LIMIT/OFFSET (used for right side of set operations).
+func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error) {
 	stmt := &SelectStmt{}
 
 	p.nextToken() // consume SELECT
@@ -442,61 +453,65 @@ func (p *Parser) parseSelect() (*SelectStmt, error) {
 		stmt.Having = expr
 	}
 
-	// Optional ORDER BY
-	if p.curTokenIs(TOKEN_ORDER) {
-		p.nextToken() // consume ORDER
-		if err := p.expect(TOKEN_BY); err != nil {
-			return nil, err
-		}
-		orderBy, err := p.parseOrderByList()
-		if err != nil {
-			return nil, err
-		}
-		stmt.OrderBy = orderBy
-	}
-
-	// Optional LIMIT
-	if p.curTokenIs(TOKEN_LIMIT) {
-		p.nextToken() // consume LIMIT
-
-		// Check for integer literal (common case)
-		if p.curTokenIs(TOKEN_INT) {
-			limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+	// Optional ORDER BY, LIMIT, OFFSET - only parsed for standalone SELECTs
+	// (not for right side of UNION/INTERSECT/EXCEPT where these apply to the whole set operation)
+	if parseTrailingClauses {
+		// Optional ORDER BY
+		if p.curTokenIs(TOKEN_ORDER) {
+			p.nextToken() // consume ORDER
+			if err := p.expect(TOKEN_BY); err != nil {
+				return nil, err
+			}
+			orderBy, err := p.parseOrderByList()
 			if err != nil {
-				return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
+				return nil, err
 			}
-			if limit < 0 {
-				return nil, fmt.Errorf("LIMIT must be non-negative, got %d", limit)
+			stmt.OrderBy = orderBy
+		}
+
+		// Optional LIMIT
+		if p.curTokenIs(TOKEN_LIMIT) {
+			p.nextToken() // consume LIMIT
+
+			// Check for integer literal (common case)
+			if p.curTokenIs(TOKEN_INT) {
+				limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
+				}
+				if limit < 0 {
+					return nil, fmt.Errorf("LIMIT must be non-negative, got %d", limit)
+				}
+				stmt.Limit = &limit
+				p.nextToken()
+			} else if p.curTokenIs(TOKEN_LPAREN) {
+				// LIMIT with subquery or expression: LIMIT (SELECT ...)
+				expr, err := p.parsePrimaryExpression()
+				if err != nil {
+					return nil, fmt.Errorf("error parsing LIMIT expression: %v", err)
+				}
+				stmt.LimitExpr = expr
+			} else {
+				return nil, fmt.Errorf("expected integer or expression after LIMIT, got %v", p.cur.Type)
 			}
-			stmt.Limit = &limit
+		}
+
+		// Optional OFFSET
+		if p.curTokenIs(TOKEN_OFFSET) {
+			p.nextToken() // consume OFFSET
+			if !p.curTokenIs(TOKEN_INT) {
+				return nil, fmt.Errorf("expected integer after OFFSET, got %v", p.cur.Type)
+			}
+			offset, err := strconv.ParseInt(p.cur.Literal, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid OFFSET value: %s", p.cur.Literal)
+			}
+			if offset < 0 {
+				return nil, fmt.Errorf("OFFSET must be non-negative, got %d", offset)
+			}
+			stmt.Offset = &offset
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_LPAREN) {
-			// LIMIT with subquery or expression: LIMIT (SELECT ...)
-			expr, err := p.parsePrimaryExpression()
-			if err != nil {
-				return nil, fmt.Errorf("error parsing LIMIT expression: %v", err)
-			}
-			stmt.LimitExpr = expr
-		} else {
-			return nil, fmt.Errorf("expected integer or expression after LIMIT, got %v", p.cur.Type)
 		}
-	}
-
-	// Optional OFFSET
-	if p.curTokenIs(TOKEN_OFFSET) {
-		p.nextToken() // consume OFFSET
-		if !p.curTokenIs(TOKEN_INT) {
-			return nil, fmt.Errorf("expected integer after OFFSET, got %v", p.cur.Type)
-		}
-		offset, err := strconv.ParseInt(p.cur.Literal, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid OFFSET value: %s", p.cur.Literal)
-		}
-		if offset < 0 {
-			return nil, fmt.Errorf("OFFSET must be non-negative, got %d", offset)
-		}
-		stmt.Offset = &offset
-		p.nextToken()
 	}
 
 	return stmt, nil
@@ -2461,11 +2476,11 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 		p.nextToken()
 	}
 
-	// Parse the right SELECT
+	// Parse the right SELECT (without ORDER BY/LIMIT/OFFSET - those belong to UNION)
 	if !p.curTokenIs(TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT after %s", op)
 	}
-	right, err := p.parseSelect()
+	right, err := p.parseSelectForSetOp()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing right side of %s: %w", op, err)
 	}

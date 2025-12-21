@@ -1,0 +1,35 @@
+{
+  "tables": [
+    {
+      "id": 1,
+      "name": "users",
+      "storage_type": "row",
+      "columns": [
+        {
+          "ID": 1,
+          "Name": "id",
+          "Type": 1,
+          "NotNull": true,
+          "PrimaryKey": true,
+          "HasDefault": false,
+          "DefaultValue": null,
+          "AutoIncrement": false,
+          "CheckExpr": ""
+        },
+        {
+          "ID": 1,
+          "Name": "name",
+          "Type": 4,
+          "NotNull": false,
+          "PrimaryKey": false,
+          "HasDefault": false,
+          "DefaultValue": null,
+          "AutoIncrement": false,
+          "CheckExpr": ""
+        }
+      ],
+      "foreign_keys": null
+    }
+  ],
+  "next_id": 2
+}

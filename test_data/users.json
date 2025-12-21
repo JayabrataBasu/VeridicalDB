@@ -1,0 +1,9 @@
+[
+  {
+    "username": "admin",
+    "password_hash": "c1265daa4da7e7e312b74abbf1d90eefad13889a7a58cda42d360f0d94be3f13",
+    "salt": "72d628838cbbd6b8e6f6d07deb7a6e10",
+    "superuser": true,
+    "privileges": {}
+  }
+]
