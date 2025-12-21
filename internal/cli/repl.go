@@ -12,6 +12,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/chzyer/readline"
@@ -93,6 +94,13 @@ func (r *REPL) Initialize() error {
 		r.session.SetProcedureCatalog(pc)
 	} else {
 		r.log.Warn("procedure catalog not available", "error", err)
+	}
+
+	// Wire FTSManager (optional)
+	if ftsMgr, err := fts.NewManager(r.config.Storage.DataDir); err == nil {
+		r.session.SetFTSManager(ftsMgr)
+	} else {
+		r.log.Warn("FTS manager not available", "error", err)
 	}
 	return nil
 }

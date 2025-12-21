@@ -7,6 +7,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -122,6 +123,11 @@ func (s *Session) SetProcedureCatalog(procCat *catalog.ProcedureCatalog) {
 	s.executor.SetProcedureCatalog(procCat)
 	// Give executor a reference to this session for PL interpreter creation
 	s.executor.SetSession(s)
+}
+
+// SetFTSManager sets the full-text search manager.
+func (s *Session) SetFTSManager(ftsMgr *fts.Manager) {
+	s.executor.SetFTSManager(ftsMgr)
 }
 
 // Catalog returns the underlying catalog for table metadata.

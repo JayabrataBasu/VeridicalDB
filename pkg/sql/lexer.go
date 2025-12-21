@@ -630,9 +630,23 @@ func (l *Lexer) skipWhitespace() {
 	}
 }
 
+func (l *Lexer) skipComments() {
+	for {
+		l.skipWhitespace()
+		if l.ch == '-' && l.peekChar() == '-' {
+			// Skip until end of line
+			for l.ch != '\n' && l.ch != 0 {
+				l.readChar()
+			}
+			continue
+		}
+		break
+	}
+}
+
 // NextToken returns the next token from the input.
 func (l *Lexer) NextToken() Token {
-	l.skipWhitespace()
+	l.skipComments()
 
 	var tok Token
 	tok.Pos = l.pos
