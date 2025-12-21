@@ -349,17 +349,12 @@ VeridicalDB can be configured via:
 
 ## Testing
 
-VeridicalDB includes a comprehensive smoke test suite that validates all major features:
+VeridicalDB includes comprehensive testing suites:
 
+### Smoke Tests
 ```bash
 # Run the full smoke test suite (130+ tests)
 ./scripts/smoke_test.sh
-
-# Run unit tests
-make test
-
-# Run tests with coverage
-make test-coverage
 ```
 
 The smoke test covers:
@@ -368,6 +363,34 @@ The smoke test covers:
 - Transactions, indexes, and constraints
 - Stored procedures and triggers
 - JSON support and full-text search
+
+### Stress Tests
+```bash
+# Quick stress test (~500 rows, ~50 queries)
+./scripts/stress_test.sh --quick
+
+# Default stress test (~2000 rows, ~100 queries)
+./scripts/stress_test.sh
+
+# Full stress test (~5000 rows, ~200 queries)
+./scripts/stress_test.sh --full
+```
+
+The stress test measures:
+- Bulk insert performance (rows/sec)
+- Query throughput (operations/sec)
+- Transaction handling
+- Index creation and lookup
+- Data integrity under load
+
+### Unit Tests
+```bash
+# Run all unit tests
+make test
+
+# Run tests with coverage
+make test-coverage
+```
 
 ## Project Structure
 

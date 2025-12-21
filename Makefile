@@ -1,12 +1,21 @@
-.PHONY: all release-local docker build
+.PHONY: all release-local docker build build-cli build-server
 
 BIN=veridicaldb
 VERSION?=v1.0.0
 
 all: build
 
+# Build the CLI binary (default)
 build:
 	go build -o build/$(BIN) ./cmd/veridicaldb
+
+# Build the CLI binary (explicit)
+build-cli:
+	go build -o build/$(BIN) ./cmd/veridicaldb
+
+# Build the server binary
+build-server:
+	go build -o build/$(BIN)-server ./cmd/server
 
 release-local:
 	@echo "Running local release script (cross-compile)..."
@@ -15,47 +24,19 @@ release-local:
 docker:
 	@echo "Building Docker image"
 	docker build -t veridicaldb:$(VERSION) .
+
 # VeridicalDB Makefile
 # Build, test, and manage the database
 
-.PHONY: all build test clean install run init fmt lint help
+.PHONY: test clean install run init fmt lint help smoke-test stress-test
 
 # Build variables
-BINARY_NAME=veridicaldb
 VERSION?=v1.0.0
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
 
 # Directories
 BUILD_DIR=./build
-CMD_DIR=./cmd/server
-
-# Default target
-all: build
-
-# Build the binary
-build:
-	@echo "Building $(BINARY_NAME)..."
-	@mkdir -p $(BUILD_DIR)
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
-	@echo "Built: $(BUILD_DIR)/$(BINARY_NAME)"
-
-# Build for multiple platforms
-build-all: build-linux build-darwin build-windows
-
-build-linux:
-	@echo "Building for Linux..."
-	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(CMD_DIR)
-	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(CMD_DIR)
-
-build-darwin:
-	@echo "Building for macOS..."
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(CMD_DIR)
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(CMD_DIR)
-
-build-windows:
-	@echo "Building for Windows..."
-	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
 
 # Run tests
 test:
@@ -68,6 +49,24 @@ test-coverage:
 	go test -v -race -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
+
+# Run smoke tests
+smoke-test: build
+	@echo "Running smoke tests..."
+	./scripts/smoke_test.sh
+
+# Run stress tests
+stress-test: build
+	@echo "Running stress tests..."
+	./scripts/stress_test.sh
+
+stress-test-quick: build
+	@echo "Running quick stress tests..."
+	./scripts/stress_test.sh --quick
+
+stress-test-full: build
+	@echo "Running full stress tests..."
+	./scripts/stress_test.sh --full
 
 # Clean build artifacts
 clean:
