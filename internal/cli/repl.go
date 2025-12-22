@@ -18,7 +18,7 @@ import (
 	"github.com/chzyer/readline"
 )
 
-const Version = "0.1.0-beta"
+const Version = "1.0.0 - beta"
 
 // REPL implements the Read-Eval-Print Loop for VeridicalDB
 type REPL struct {
