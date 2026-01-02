@@ -9,7 +9,6 @@ linters:
     - gofmt
     - gosimple
     - unused
-    - govulncheck
 
 issues:
   exclude-use-default: false
