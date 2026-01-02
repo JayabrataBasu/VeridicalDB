@@ -42,10 +42,10 @@ jobs:
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
-          version: v1.59.0
+          version: v2.7.2
 
-      - name: Run linter (disabled 'typecheck' for runner compatibility)
-        run: golangci-lint run --disable=typecheck ./...
+      - name: Run linter
+        run: golangci-lint run ./...
 
       - name: Run go vet
         run: go vet ./...

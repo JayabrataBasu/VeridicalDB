@@ -1,3 +1,5 @@
+version: "2"
+
 run:
   skip-dirs: ["build", "data", ".github"]
 
@@ -6,8 +8,6 @@ linters:
     - govet
     - errcheck
     - staticcheck
-    - gofmt
-    - gosimple
     - unused
 
 issues:
