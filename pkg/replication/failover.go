@@ -393,7 +393,7 @@ func (fm *FailoverManager) Demote(newPrimaryAddr string) error {
 	// Close listener to unblock acceptLoop - this must happen before Wait()
 	fm.replicationMgr.mu.Lock()
 	if fm.replicationMgr.listener != nil {
-		fm.replicationMgr.listener.Close()
+		_ = fm.replicationMgr.listener.Close()
 		fm.replicationMgr.listener = nil
 	}
 	fm.replicationMgr.mu.Unlock()
@@ -402,9 +402,11 @@ func (fm *FailoverManager) Demote(newPrimaryAddr string) error {
 	fm.replicationMgr.replicasMu.Lock()
 	for _, rc := range fm.replicationMgr.replicas {
 		// Send demote message
-		rc.writer.writeMessage(MsgDemote, []byte(newPrimaryAddr))
+		if err := rc.writer.writeMessage(MsgDemote, []byte(newPrimaryAddr)); err != nil {
+			fmt.Printf("replication: failed to send demote to %s: %v\n", rc.info.ID, err)
+		}
 		rc.cancel()
-		rc.conn.Close()
+		_ = rc.conn.Close()
 	}
 	fm.replicationMgr.replicas = make(map[string]*replicaConn)
 	fm.replicationMgr.replicasMu.Unlock()
