@@ -270,6 +270,7 @@ type replicaConn struct {
 	conn       net.Conn
 	writer     *bufferWriter
 	reader     *bufferReader
+	mu         sync.Mutex
 	sendLSN    wal.LSN
 	lastStatus time.Time
 	ctx        context.Context

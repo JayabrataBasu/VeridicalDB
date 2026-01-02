@@ -3,6 +3,7 @@ package replication
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -191,7 +192,8 @@ func TestWALStreaming(t *testing.T) {
 	replicaWAL, _ := createTestWAL(t, "replica")
 	defer replicaWAL.Close()
 
-	// Track applied records
+	// Track applied records (guarded by mutex to avoid races)
+	var appliedMu sync.Mutex
 	appliedRecords := make([]*wal.Record, 0)
 	replicaConfig := Config{
 		NodeID:      "replica",
@@ -199,6 +201,8 @@ func TestWALStreaming(t *testing.T) {
 		PrimaryAddr: primaryAddr,
 		WAL:         replicaWAL,
 		ApplyFunc: func(rec *wal.Record) error {
+			appliedMu.Lock()
+			defer appliedMu.Unlock()
 			appliedRecords = append(appliedRecords, rec)
 			return nil
 		},
@@ -237,9 +241,11 @@ func TestWALStreaming(t *testing.T) {
 
 	// Check that records were received
 	// Note: May not receive all records depending on timing
+	appliedMu.Lock()
 	if len(appliedRecords) == 0 {
 		t.Log("No records applied yet (may be timing issue)")
 	}
+	appliedMu.Unlock()
 }
 
 // TestReplicaInfo tests ReplicaInfo tracking.

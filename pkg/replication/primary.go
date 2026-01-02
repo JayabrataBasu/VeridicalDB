@@ -211,8 +211,11 @@ func (m *Manager) streamWALToReplica(rc *replicaConn) error {
 		default:
 			// Check for new WAL data
 			currentLSN := m.wal.CurrentLSN()
-			if rc.sendLSN < currentLSN {
-				if err := m.sendWALRecords(rc, rc.sendLSN, currentLSN); err != nil {
+			rc.mu.Lock()
+			sendLSN := rc.sendLSN
+			rc.mu.Unlock()
+			if sendLSN < currentLSN {
+				if err := m.sendWALRecords(rc, sendLSN, currentLSN); err != nil {
 					return err
 				}
 			} else {
@@ -270,7 +273,9 @@ func (m *Manager) sendWALRecords(rc *replicaConn, startLSN, endLSN wal.LSN) erro
 			return err
 		}
 
-		rc.sendLSN = rec.LSN + wal.LSN(len(data))
+			rc.mu.Lock()
+			rc.sendLSN = rec.LSN + wal.LSN(len(data))
+			rc.mu.Unlock()
 		m.recordsSent.Add(1)
 		m.bytesSent.Add(uint64(len(data)))
 	}
@@ -364,7 +369,9 @@ func (m *Manager) BroadcastWAL(rec *wal.Record) error {
 	for _, rc := range m.replicas {
 		// Best-effort broadcast, don't fail if one replica is slow
 		rc.writer.writeMessage(MsgWALData, msg)
+		rc.mu.Lock()
 		rc.sendLSN = rec.LSN + wal.LSN(len(data))
+		rc.mu.Unlock()
 	}
 
 	m.recordsSent.Add(uint64(len(m.replicas)))
