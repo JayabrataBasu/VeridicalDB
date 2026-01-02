@@ -36,6 +36,9 @@ jobs:
           go version
           go env
 
+      - name: Download Go modules
+        run: go mod download
+
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v4
         with:
