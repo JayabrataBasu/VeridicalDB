@@ -35,17 +35,19 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 
 ## Top 6 items — details, acceptance criteria & first steps 🔧
 
-### 1) Strong authentication & remove default admin (Rank 1 — High / Small) ✅
+### 1) Strong authentication & remove default admin (Rank 1 — High / Small) ✅ (Completed)
 - Why: SHA-256 with salt is insufficient for password storage; having `admin/admin` on init is insecure.
-- Acceptance criteria:
-  - Passwords stored using bcrypt or Argon2 (verify with unit tests and migration path for existing `users.json`).
-  - On first `init`, require either an explicit admin password or generate a secure one and print it once with instructions to rotate.
-  - Tests: `pkg/auth` tests updated for new hashing and migration logic.
-- First steps:
-  - Replace `hashPassword` with bcrypt (`golang.org/x/crypto/bcrypt`) or Argon2.
-  - Add `--set-admin-password` flag or interactive prompt during `init` (`cmd/veridicaldb` / `internal/cli`).
+- Status: **Completed** — passwords are now stored using bcrypt; legacy SHA-256 passwords are migrated on successful authentication. Initial admin user is created with a secure random password (printed once on init) or can be set via `VERIDICALDB_DEFAULT_ADMIN_PASSWORD` env var.
+- Acceptance criteria (met):
+  - Passwords stored using bcrypt with tests and migration path for existing `users.json` (see `pkg/auth/auth_test.go`).
+  - On first `init`, a secure admin password is generated and printed if not provided via env var.
+  - Tests updated to reflect new behavior.
+- Next steps:
+  - Optionally add interactive prompt flag for `init` to allow setting admin password during initialization.
+- First steps taken:
+  - Replaced legacy hashing with bcrypt, implemented migration logic for legacy SHA-256 + salt hashes.
+  - Added secure default admin generation and updated documentation.
 - Suggested files: `pkg/auth/auth.go`, tests in `pkg/auth/auth_test.go`, `pkg/cli/repl.go`.
-
 ### 2) CI pipeline (Rank 2 — High / Small) ✅
 - Why: Ensure regressions are caught early and provide badge/status for contributors.
 - Acceptance criteria:
