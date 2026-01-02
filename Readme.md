@@ -168,6 +168,8 @@ go build -o build/veridicaldb ./cmd/veridicaldb
 #   ./data/tables/    - Table storage
 #   ./data/indexes/   - Index storage
 #   ./veridicaldb.yaml - Configuration file
+
+> **Security note:** On first initialization a default `admin` user is created with a secure, randomly-generated password. The generated password is printed once to stdout. To override the default, set the `VERIDICALDB_DEFAULT_ADMIN_PASSWORD` environment variable before running `init`.
 ```
 
 ### Run
