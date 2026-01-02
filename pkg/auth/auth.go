@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 var (
@@ -52,6 +54,15 @@ type UserCatalog struct {
 	filePath string
 }
 
+// generateRandomPassword returns a random password hex string of n bytes (2n hex chars).
+func generateRandomPassword(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // NewUserCatalog creates a new user catalog.
 func NewUserCatalog(dataDir string) (*UserCatalog, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
@@ -71,7 +82,18 @@ func NewUserCatalog(dataDir string) (*UserCatalog, error) {
 
 	// Create default admin user if no users exist
 	if len(uc.users) == 0 {
-		if err := uc.CreateUser("admin", "admin", true); err != nil {
+		adminPw := os.Getenv("VERIDICALDB_DEFAULT_ADMIN_PASSWORD")
+		if adminPw == "" {
+			pw, err := generateRandomPassword(12)
+			if err != nil {
+				return nil, fmt.Errorf("generate default admin password: %w", err)
+			}
+			// Inform operator of generated password
+			fmt.Printf("Created default admin user 'admin' with password: %s\n", pw)
+			adminPw = pw
+		}
+
+		if err := uc.CreateUser("admin", adminPw, true); err != nil {
 			return nil, fmt.Errorf("create default admin: %w", err)
 		}
 	}
@@ -112,20 +134,51 @@ func (uc *UserCatalog) save() error {
 	return os.WriteFile(uc.filePath, data, 0600)
 }
 
-// hashPassword creates a salted hash of the password.
-func hashPassword(password, salt string) string {
+// legacyHashPassword creates a salted SHA256 hash of the password (legacy behavior).
+func legacyHashPassword(password, salt string) string {
 	h := sha256.New()
 	h.Write([]byte(salt + password))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// generateSalt creates a random salt.
+// generateSalt creates a random salt for legacy accounts (kept for migration support).
 func generateSalt() (string, error) {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(bytes), nil
+}
+
+// bcrypt cost to use for new password hashes.
+const bcryptCost = 12
+
+// generateBcryptHash creates a bcrypt hashed password for storage.
+func generateBcryptHash(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// compareBcryptHash verifies a bcrypt hash against a plaintext password.
+func compareBcryptHash(hash, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+}
+
+// isLegacyHash determines whether a stored password looks like the legacy SHA256 hex hash.
+func isLegacyHash(hash string, salt string) bool {
+	// legacy hash is hex encoded 32 bytes -> 64 chars and salt is non-empty
+	if salt == "" {
+		return false
+	}
+	if len(hash) != 64 {
+		return false
+	}
+	// ensure it's valid hex
+	_, err := hex.DecodeString(hash)
+	return err == nil
 }
 
 // CreateUser creates a new user.
@@ -137,15 +190,16 @@ func (uc *UserCatalog) CreateUser(username, password string, superuser bool) err
 		return ErrUserExists
 	}
 
-	salt, err := generateSalt()
+	// Generate bcrypt hash for new users
+	hash, err := generateBcryptHash(password)
 	if err != nil {
-		return fmt.Errorf("generate salt: %w", err)
+		return fmt.Errorf("generate bcrypt hash: %w", err)
 	}
 
 	user := &User{
 		Username:     username,
-		PasswordHash: hashPassword(password, salt),
-		Salt:         salt,
+		PasswordHash: hash,
+		Salt:         "", // no salt needed for bcrypt
 		Superuser:    superuser,
 		Privileges:   make(map[string][]Priv),
 	}
@@ -180,13 +234,14 @@ func (uc *UserCatalog) AlterPassword(username, newPassword string) error {
 		return ErrUserNotFound
 	}
 
-	salt, err := generateSalt()
+	// Generate bcrypt hash for changed password
+	hash, err := generateBcryptHash(newPassword)
 	if err != nil {
-		return fmt.Errorf("generate salt: %w", err)
+		return fmt.Errorf("generate bcrypt hash: %w", err)
 	}
 
-	user.Salt = salt
-	user.PasswordHash = hashPassword(newPassword, salt)
+	user.Salt = ""
+	user.PasswordHash = hash
 	return uc.save()
 }
 
@@ -205,16 +260,36 @@ func (uc *UserCatalog) SetSuperuser(username string, superuser bool) error {
 }
 
 // Authenticate verifies username and password.
+// If the user has a legacy SHA-256 password, upgrade it to bcrypt on successful auth.
 func (uc *UserCatalog) Authenticate(username, password string) (*User, error) {
-	uc.mu.RLock()
-	defer uc.mu.RUnlock()
+	uc.mu.Lock()
+	defer uc.mu.Unlock()
 
 	user, exists := uc.users[username]
 	if !exists {
 		return nil, ErrUserNotFound
 	}
 
-	if hashPassword(password, user.Salt) != user.PasswordHash {
+	// Legacy SHA-256 + salt path: verify and migrate
+	if isLegacyHash(user.PasswordHash, user.Salt) {
+		if legacyHashPassword(password, user.Salt) != user.PasswordHash {
+			return nil, ErrInvalidPassword
+		}
+		// Migrate to bcrypt
+		hash, err := generateBcryptHash(password)
+		if err != nil {
+			return nil, fmt.Errorf("upgrade password to bcrypt: %w", err)
+		}
+		user.PasswordHash = hash
+		user.Salt = ""
+		if err := uc.save(); err != nil {
+			return nil, fmt.Errorf("save migrated user: %w", err)
+		}
+		return user, nil
+	}
+
+	// bcrypt verification
+	if err := compareBcryptHash(user.PasswordHash, password); err != nil {
 		return nil, ErrInvalidPassword
 	}
 

@@ -1,8 +1,10 @@
 package auth
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -465,24 +467,24 @@ func TestPasswordHashing(t *testing.T) {
 	password := "testpassword123"
 	salt := "0001020304050607"
 
-	// Hash password
-	hash := hashPassword(password, salt)
+	// Hash password (legacy SHA256)
+	hash := legacyHashPassword(password, salt)
 
 	// Verify same password produces same hash
-	hash2 := hashPassword(password, salt)
+	hash2 := legacyHashPassword(password, salt)
 	if hash != hash2 {
 		t.Error("same password and salt should produce same hash")
 	}
 
 	// Verify different password produces different hash
-	hash3 := hashPassword("differentpassword", salt)
+	hash3 := legacyHashPassword("differentpassword", salt)
 	if hash == hash3 {
 		t.Error("different passwords should produce different hashes")
 	}
 
 	// Verify different salt produces different hash
 	salt2 := "0102030405060708"
-	hash4 := hashPassword(password, salt2)
+	hash4 := legacyHashPassword(password, salt2)
 	if hash == hash4 {
 		t.Error("different salts should produce different hashes")
 	}
@@ -547,10 +549,61 @@ func TestUserCatalog_DefaultAdmin(t *testing.T) {
 		t.Error("expected default admin to be superuser")
 	}
 
-	// Default admin should authenticate with 'admin' password
+	// Default admin should NOT authenticate with literal 'admin' password
 	_, err = catalog.Authenticate("admin", "admin")
+	if err == nil {
+		t.Error("did not expect default admin to authenticate with literal 'admin' password")
+	}
+
+	// Password should be stored using bcrypt (no legacy salt)
+	if admin.Salt != "" {
+		t.Errorf("expected admin salt to be empty for bcrypt users, got '%s'", admin.Salt)
+	}
+	if !strings.HasPrefix(admin.PasswordHash, "$2") {
+		t.Errorf("expected bcrypt hash for admin, got '%s'", admin.PasswordHash)
+	}
+}
+
+func TestUserCatalog_LegacyPasswordMigration(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "auth_test")
 	if err != nil {
-		t.Errorf("expected default admin to authenticate with 'admin' password: %v", err)
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create a legacy user JSON file (SHA256 hex with salt)
+	salt := "deadbeefcafebabe"
+	legacyHash := legacyHashPassword("oldpass", salt)
+	users := []*User{{Username: "legacy", PasswordHash: legacyHash, Salt: salt, Superuser: false, Privileges: map[string][]Priv{}}}
+	data, _ := json.MarshalIndent(users, "", "  ")
+	if err := os.WriteFile(filepath.Join(tmpDir, "users.json"), data, 0600); err != nil {
+		t.Fatalf("failed to write users.json: %v", err)
+	}
+
+	catalog, err := NewUserCatalog(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create catalog: %v", err)
+	}
+
+	// Authenticate should succeed and migrate password to bcrypt
+	if _, err := catalog.Authenticate("legacy", "oldpass"); err != nil {
+		t.Fatalf("expected legacy user to authenticate: %v", err)
+	}
+
+	// Reload and verify migration persisted
+	catalog2, err := NewUserCatalog(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to reload catalog: %v", err)
+	}
+	u, err := catalog2.GetUser("legacy")
+	if err != nil {
+		t.Fatalf("expected migrated user to exist: %v", err)
+	}
+	if u.Salt != "" {
+		t.Errorf("expected migrated user salt to be empty, got '%s'", u.Salt)
+	}
+	if !strings.HasPrefix(u.PasswordHash, "$2") {
+		t.Errorf("expected migrated bcrypt hash, got '%s'", u.PasswordHash)
 	}
 }
 
