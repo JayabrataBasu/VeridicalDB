@@ -70,7 +70,7 @@ func (m *Manager) acceptLoop() {
 // handleReplicaConnection handles a connection from a replica.
 func (m *Manager) handleReplicaConnection(conn net.Conn) {
 	defer m.wg.Done()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ctx, cancel := context.WithCancel(m.ctx)
 	defer cancel()
@@ -84,25 +84,33 @@ func (m *Manager) handleReplicaConnection(conn net.Conn) {
 		return
 	}
 	if msgType != MsgIdentify {
-		writer.writeMessage(MsgError, []byte("expected IDENTIFY message"))
+		if err := writer.writeMessage(MsgError, []byte("expected IDENTIFY message")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 
 	if len(data) < 10 {
-		writer.writeMessage(MsgError, []byte("invalid IDENTIFY message"))
+		if err := writer.writeMessage(MsgError, []byte("invalid IDENTIFY message")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 
 	// Parse identify message: [version:2][idLen:4][id:var]
 	version := binary.BigEndian.Uint16(data[0:2])
 	if version != ProtocolVersion {
-		writer.writeMessage(MsgError, []byte("protocol version mismatch"))
+		if err := writer.writeMessage(MsgError, []byte("protocol version mismatch")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 
 	idLen := binary.BigEndian.Uint32(data[2:6])
 	if int(idLen) > len(data)-6 {
-		writer.writeMessage(MsgError, []byte("invalid replica ID"))
+		if err := writer.writeMessage(MsgError, []byte("invalid replica ID")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 	replicaID := string(data[6 : 6+idLen])
@@ -121,12 +129,16 @@ func (m *Manager) handleReplicaConnection(conn net.Conn) {
 		return
 	}
 	if msgType != MsgStartReplication {
-		writer.writeMessage(MsgError, []byte("expected START_REPLICATION message"))
+		if err := writer.writeMessage(MsgError, []byte("expected START_REPLICATION message")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 
 	if len(data) < 8 {
-		writer.writeMessage(MsgError, []byte("invalid START_REPLICATION message"))
+		if err := writer.writeMessage(MsgError, []byte("invalid START_REPLICATION message")); err != nil {
+			fmt.Printf("replication: failed to write error message: %v\n", err)
+		}
 		return
 	}
 
@@ -242,7 +254,7 @@ func (m *Manager) sendWALRecords(rc *replicaConn, startLSN, endLSN wal.LSN) erro
 	if err != nil {
 		return fmt.Errorf("create WAL iterator: %w", err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	for {
 		rec, err := iter.Next()
@@ -273,9 +285,9 @@ func (m *Manager) sendWALRecords(rc *replicaConn, startLSN, endLSN wal.LSN) erro
 			return err
 		}
 
-			rc.mu.Lock()
-			rc.sendLSN = rec.LSN + wal.LSN(len(data))
-			rc.mu.Unlock()
+		rc.mu.Lock()
+		rc.sendLSN = rec.LSN + wal.LSN(len(data))
+		rc.mu.Unlock()
 		m.recordsSent.Add(1)
 		m.bytesSent.Add(uint64(len(data)))
 	}
@@ -293,7 +305,9 @@ func (m *Manager) handleReplicaStatus(rc *replicaConn) error {
 		}
 
 		// Set read deadline for status messages
-		rc.conn.SetReadDeadline(time.Now().Add(m.config.HeartbeatInterval * 3))
+		if err := rc.conn.SetReadDeadline(time.Now().Add(m.config.HeartbeatInterval * 3)); err != nil {
+			return err
+		}
 
 		msgType, data, err := rc.reader.readMessage()
 		if err != nil {
@@ -368,7 +382,10 @@ func (m *Manager) BroadcastWAL(rec *wal.Record) error {
 
 	for _, rc := range m.replicas {
 		// Best-effort broadcast, don't fail if one replica is slow
-		rc.writer.writeMessage(MsgWALData, msg)
+		if err := rc.writer.writeMessage(MsgWALData, msg); err != nil {
+			fmt.Printf("replication: broadcast write failed to %s: %v\n", rc.info.ID, err)
+			continue
+		}
 		rc.mu.Lock()
 		rc.sendLSN = rec.LSN + wal.LSN(len(data))
 		rc.mu.Unlock()
