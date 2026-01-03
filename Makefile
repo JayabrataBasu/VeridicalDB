@@ -35,6 +35,11 @@ VERSION?=v1.0.0
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
 
+# Where instruments may install binaries (for go install)
+GOBIN := $(shell go env GOBIN)
+GOPATH := $(shell go env GOPATH)
+GOLANGCI_BIN := $(if $(GOBIN),$(GOBIN)/golangci-lint,$(GOPATH)/bin/golangci-lint)
+
 # Directories
 BUILD_DIR=./build
 
@@ -105,8 +110,37 @@ lint:
 .PHONY: ci
 ci: deps
 	@echo "Running CI: lint, vet, tests..."
-	@command -v golangci-lint >/dev/null || (echo "golangci-lint not found, installing v2.7.2..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.7.2)
-	golangci-lint run ./... --timeout 10m
+	@if command -v $(GOLANGCI_BIN) >/dev/null; then \
+		if ! $(GOLANGCI_BIN) --version 2>/dev/null | grep -q "version 2"; then \
+			echo "golangci-lint v2 not found, attempting go install v2.7.2..."; \
+			if ! go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.7.2 2>/dev/null; then \
+				echo "go install failed, falling back to downloading prebuilt binary..."; \
+				mkdir -p tools && \
+				curl -sL -o /tmp/golangci.tar.gz https://github.com/golangci/golangci-lint/releases/download/v2.7.2/golangci-lint-2.7.2-linux-amd64.tar.gz && \
+				tar -xzf /tmp/golangci.tar.gz -C tools --strip-components=1 && \
+				chmod +x tools/golangci-lint; \
+			fi; \
+		fi; \
+	else \
+		echo "golangci-lint not found, attempting go install v2.7.2..."; \
+		if ! go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.7.2 2>/dev/null; then \
+			echo "go install failed, downloading prebuilt binary..."; \
+			mkdir -p tools && \
+			curl -sL -o /tmp/golangci.tar.gz https://github.com/golangci/golangci-lint/releases/download/v2.7.2/golangci-lint-2.7.2-linux-amd64.tar.gz && \
+			tar -xzf /tmp/golangci.tar.gz -C tools --strip-components=1 && \
+			chmod +x tools/golangci-lint; \
+		fi; \
+	fi; \
+	# Select binary location (prefer system v2, otherwise ./tools)
+	if command -v $(GOLANGCI_BIN) >/dev/null && $(GOLANGCI_BIN) --version 2>/dev/null | grep -q "version 2"; then \
+		BIN=$$(command -v $(GOLANGCI_BIN)); \
+	elif [ -x "$$(pwd)/tools/golangci-lint" ]; then \
+		BIN=$$(pwd)/tools/golangci-lint; \
+	else \
+		BIN=$$(command -v $(GOLANGCI_BIN) 2>/dev/null || true); \
+	fi; \
+	$$BIN --version 2>/dev/null | grep -q "version 2" || { echo "Failed to obtain golangci-lint v2. Please install it manually."; exit 1; } ; \
+	$$BIN run ./... --timeout 10m
 	go vet ./...
 	go test ./... -v -coverprofile=coverage.out
 
