@@ -331,7 +331,9 @@ func (c *Conn) processStartup(params []byte) error {
 
 func (c *Conn) sendReadyForQuery() error {
 	buf := NewBuffer()
-	buf.WriteByte(c.txnStatus)
+	if err := buf.WriteByte(c.txnStatus); err != nil {
+		return err
+	}
 	return c.writer.WriteMessage(MsgReadyForQuery, buf.Bytes())
 }
 
@@ -347,9 +349,15 @@ func (c *Conn) run() {
 
 		if err := c.handleMessage(msgType, payload); err != nil {
 			c.server.logger.Error("handle message error", "id", c.id, "type", string(msgType), "error", err)
-			c.sendError("ERROR", "XX000", err.Error())
-			c.sendReadyForQuery()
-			c.bufW.Flush()
+			if err2 := c.sendError("ERROR", "XX000", err.Error()); err2 != nil {
+				c.server.logger.Error("sendError failed", "id", c.id, "error", err2)
+			}
+			if err2 := c.sendReadyForQuery(); err2 != nil {
+				c.server.logger.Error("sendReadyForQuery failed", "id", c.id, "error", err2)
+			}
+			if err2 := c.bufW.Flush(); err2 != nil {
+				c.server.logger.Error("bufW.Flush failed", "id", c.id, "error", err2)
+			}
 		}
 	}
 }
@@ -397,10 +405,13 @@ func (c *Conn) handleQuery(payload []byte) error {
 	// Execute the query
 	result, err := c.session.ExecuteSQL(query)
 	if err != nil {
-		c.sendError("ERROR", "42000", err.Error())
-		c.sendReadyForQuery()
+		if err2 := c.sendError("ERROR", "42000", err.Error()); err2 != nil {
+			c.server.logger.Error("sendError failed", "id", c.id, "error", err2)
+		}
+		if err2 := c.sendReadyForQuery(); err2 != nil {
+			c.server.logger.Error("sendReadyForQuery failed", "id", c.id, "error", err2)
+		}
 		return c.bufW.Flush()
-	}
 
 	// Send results
 	if _, err := c.sendResult(result, query, 0); err != nil {
@@ -518,13 +529,21 @@ func (c *Conn) sendCommandComplete(command string, rowCount int) error {
 
 func (c *Conn) sendError(severity, code, message string) error {
 	buf := NewBuffer()
-	buf.WriteByte(FieldSeverity)
+	if err := buf.WriteByte(FieldSeverity); err != nil {
+		return err
+	}
 	buf.WriteString(severity)
-	buf.WriteByte(FieldSQLStateCode)
+	if err := buf.WriteByte(FieldSQLStateCode); err != nil {
+		return err
+	}
 	buf.WriteString(code)
-	buf.WriteByte(FieldMessage)
+	if err := buf.WriteByte(FieldMessage); err != nil {
+		return err
+	}
 	buf.WriteString(message)
-	buf.WriteByte(0) // terminator
+	if err := buf.WriteByte(0); err != nil { // terminator
+		return err
+	}
 
 	return c.writer.WriteMessage(MsgErrorResponse, buf.Bytes())
 }
