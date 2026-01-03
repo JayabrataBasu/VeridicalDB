@@ -99,7 +99,16 @@ fmt:
 lint:
 	@echo "Running linter..."
 	@which golangci-lint > /dev/null || (echo "Install golangci-lint: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest" && exit 1)
-	golangci-lint run
+	golangci-lint run ./... --timeout 10m
+
+# Run full CI steps locally: deps, lint, vet, tests (coverage)
+.PHONY: ci
+ci: deps
+	@echo "Running CI: lint, vet, tests..."
+	@command -v golangci-lint >/dev/null || (echo "golangci-lint not found, installing v2.7.2..." && go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.7.2)
+	golangci-lint run ./... --timeout 10m
+	go vet ./...
+	go test ./... -v -coverprofile=coverage.out
 
 # Download dependencies
 deps:
