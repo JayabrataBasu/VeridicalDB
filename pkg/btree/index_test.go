@@ -15,7 +15,7 @@ func TestIndexManagerCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
 	// Create an index
 	err = im.CreateIndex(IndexMeta{
@@ -52,7 +52,7 @@ func TestIndexManagerDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
 	// Create an index
 	err = im.CreateIndex(IndexMeta{
@@ -83,10 +83,10 @@ func TestIndexManagerDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
 	// Create an index
-	im.CreateIndex(IndexMeta{
+	_ = im.CreateIndex(IndexMeta{
 		Name:      "idx_drop",
 		TableName: "test",
 		Columns:   []string{"id"},
@@ -112,10 +112,10 @@ func TestIndexManagerInsertSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
 	// Create an index
-	im.CreateIndex(IndexMeta{
+	_ = im.CreateIndex(IndexMeta{
 		Name:      "idx_search",
 		TableName: "test",
 		Columns:   []string{"id"},
@@ -153,9 +153,9 @@ func TestIndexManagerRangeSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
-	im.CreateIndex(IndexMeta{
+	_ = im.CreateIndex(IndexMeta{
 		Name:      "idx_range",
 		TableName: "test",
 		Columns:   []string{"id"},
@@ -165,7 +165,7 @@ func TestIndexManagerRangeSearch(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		key := EncodeIntKey(int64(i))
 		rid := storage.RID{Page: uint32(i), Slot: 0}
-		im.Insert("idx_range", key, rid)
+		_ = im.Insert("idx_range", key, rid)
 	}
 
 	// Range search [25, 50]
@@ -187,12 +187,12 @@ func TestIndexManagerListIndexes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer im.Close()
+	defer func() { _ = im.Close() }()
 
 	// Create indexes on different tables
-	im.CreateIndex(IndexMeta{Name: "idx_a", TableName: "users", Columns: []string{"id"}})
-	im.CreateIndex(IndexMeta{Name: "idx_b", TableName: "users", Columns: []string{"email"}})
-	im.CreateIndex(IndexMeta{Name: "idx_c", TableName: "orders", Columns: []string{"id"}})
+	_ = im.CreateIndex(IndexMeta{Name: "idx_a", TableName: "users", Columns: []string{"id"}})
+	_ = im.CreateIndex(IndexMeta{Name: "idx_b", TableName: "users", Columns: []string{"email"}})
+	_ = im.CreateIndex(IndexMeta{Name: "idx_c", TableName: "orders", Columns: []string{"id"}})
 
 	// List all
 	all := im.ListIndexes("")
@@ -222,7 +222,7 @@ func TestIndexManagerPersistence(t *testing.T) {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
 
-	im1.CreateIndex(IndexMeta{
+	_ = im1.CreateIndex(IndexMeta{
 		Name:      "idx_persist",
 		TableName: "test",
 		Columns:   []string{"id"},
@@ -232,17 +232,17 @@ func TestIndexManagerPersistence(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		key := EncodeIntKey(int64(i))
 		rid := storage.RID{Page: uint32(i), Slot: 0}
-		im1.Insert("idx_persist", key, rid)
+		_ = im1.Insert("idx_persist", key, rid)
 	}
 
-	im1.Close()
+	_ = im1.Close()
 
 	// Reopen
 	im2, err := NewIndexManager(dir, 4096)
 	if err != nil {
 		t.Fatalf("Failed to reopen index manager: %v", err)
 	}
-	defer im2.Close()
+	defer func() { _ = im2.Close() }()
 
 	// Verify index exists
 	idx, err := im2.GetIndex("idx_persist")

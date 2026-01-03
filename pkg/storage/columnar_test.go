@@ -266,7 +266,8 @@ func TestColumnarEngine_SegmentFlush(t *testing.T) {
 		colFile := filepath.Join(segDir, "col_"+string(rune('0'+i))+".dat")
 		if _, err := os.Stat(colFile); os.IsNotExist(err) {
 			// Check alternative format
-			colFile = filepath.Join(segDir, "col_"+string([]byte{byte('0' + i)})+".dat")
+			altColFile := filepath.Join(segDir, "col_"+string([]byte{byte('0' + i)})+".dat")
+			_ = altColFile // existence check only
 		}
 	}
 

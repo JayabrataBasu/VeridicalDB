@@ -90,7 +90,7 @@ func (s *Server) Stop() error {
 
 	// Close listener to stop accepting new connections
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
 
 	// Close all active connections
@@ -303,14 +303,14 @@ func (c *Connection) formatResult(result *sql.Result) string {
 // send writes a response to the client.
 func (c *Connection) send(msg string) {
 	if !c.closed.Load() {
-		c.conn.Write([]byte(msg))
+		_, _ = c.conn.Write([]byte(msg))
 	}
 }
 
 // Close closes the connection.
 func (c *Connection) Close() {
 	if c.closed.CompareAndSwap(false, true) {
-		c.conn.Close()
+		_ = c.conn.Close()
 	}
 }
 
@@ -318,7 +318,7 @@ func (c *Connection) Close() {
 func (c *Connection) cleanup() {
 	// If in a transaction, abort it and release locks
 	if c.session.InTransaction() {
-		c.session.ExecuteSQL("ROLLBACK;")
+		_, _ = c.session.ExecuteSQL("ROLLBACK;")
 	}
 	c.Close()
 }

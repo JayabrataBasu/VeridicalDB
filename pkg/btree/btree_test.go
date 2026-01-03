@@ -35,7 +35,7 @@ func createTestBTree(t *testing.T, dir string, name string, unique bool) (*BTree
 		RootPageID: InvalidPageID, // Signal new tree
 	})
 	if err != nil {
-		pager.Close()
+		_ = pager.Close()
 		t.Fatalf("Failed to create B+ tree: %v", err)
 	}
 
@@ -56,11 +56,6 @@ func intKey(n int) []byte {
 // Note: B+ tree doesn't store Table name, only Page and Slot
 func testRID(page uint32, slot uint16) storage.RID {
 	return storage.RID{Table: "", Page: page, Slot: slot}
-}
-
-// Test helper: compare RIDs (ignoring Table name since B+ tree doesn't store it)
-func sameRID(a, b storage.RID) bool {
-	return a.Page == b.Page && a.Slot == b.Slot
 }
 
 // === Basic Tests ===
@@ -494,7 +489,7 @@ func TestBTreePersistence(t *testing.T) {
 		RootPageID: InvalidPageID, // New tree
 	})
 	if err != nil {
-		pager1.Close()
+		_ = pager1.Close()
 		t.Fatalf("Failed to create B+ tree: %v", err)
 	}
 
@@ -506,7 +501,7 @@ func TestBTreePersistence(t *testing.T) {
 	}
 
 	rootPage := bt1.RootPage()
-	pager1.Close()
+	_ = pager1.Close()
 
 	// Reopen and verify
 	pager2, err := storage.OpenPager(dir, "persist.idx", testPageSize)

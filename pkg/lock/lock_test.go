@@ -59,7 +59,7 @@ func TestMultipleSharedLocks(t *testing.T) {
 
 	// Release all
 	for i := txn.TxID(1); i <= 5; i++ {
-		mgr.Release(i, resource)
+		_ = mgr.Release(i, resource)
 	}
 
 	active, _ = mgr.Stats()
@@ -89,7 +89,7 @@ func TestExclusiveBlocksShared(t *testing.T) {
 	}
 
 	// Release tx1, now tx2 should be able to acquire
-	mgr.Release(tx1, resource)
+	_ = mgr.Release(tx1, resource)
 
 	err = mgr.Acquire(tx2, resource, ModeShared)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestSharedBlocksExclusive(t *testing.T) {
 	}
 
 	// Release tx1, now tx2 should be able to acquire
-	mgr.Release(tx1, resource)
+	_ = mgr.Release(tx1, resource)
 
 	err = mgr.Acquire(tx2, resource, ModeExclusive)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestConcurrentLocking(t *testing.T) {
 				counter++
 				counterMu.Unlock()
 
-				mgr.Release(txID, resource)
+				_ = mgr.Release(txID, resource)
 			}
 		}(txn.TxID(i + 1))
 	}
@@ -287,7 +287,7 @@ func TestWaitAndGrant(t *testing.T) {
 	}
 
 	// Release tx1's lock
-	mgr.Release(tx1, resource)
+	_ = mgr.Release(tx1, resource)
 
 	// Wait for tx2 to complete
 	wg.Wait()

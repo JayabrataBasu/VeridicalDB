@@ -69,7 +69,6 @@ type Segment struct {
 
 	// Loaded column data (lazy loaded)
 	columnData [][]byte
-	loaded     bool
 }
 
 const (

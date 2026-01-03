@@ -98,27 +98,27 @@ func (l *Logger) Named(name string) *Logger {
 
 // Info logs a message with key-value pairs at Info level
 func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
-	l.SugaredLogger.Infow(msg, keysAndValues...)
+	l.Infow(msg, keysAndValues...)
 }
 
 // Debug logs a message with key-value pairs at Debug level
 func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
-	l.SugaredLogger.Debugw(msg, keysAndValues...)
+	l.Debugw(msg, keysAndValues...)
 }
 
 // Warn logs a message with key-value pairs at Warn level
 func (l *Logger) Warn(msg string, keysAndValues ...interface{}) {
-	l.SugaredLogger.Warnw(msg, keysAndValues...)
+	l.Warnw(msg, keysAndValues...)
 }
 
 // Error logs a message with key-value pairs at Error level
 func (l *Logger) Error(msg string, keysAndValues ...interface{}) {
-	l.SugaredLogger.Errorw(msg, keysAndValues...)
+	l.Errorw(msg, keysAndValues...)
 }
 
 // Fatal logs a message with key-value pairs at Fatal level then calls os.Exit(1)
 func (l *Logger) Fatal(msg string, keysAndValues ...interface{}) {
-	l.SugaredLogger.Fatalw(msg, keysAndValues...)
+	l.Fatalw(msg, keysAndValues...)
 }
 
 // NewNop returns a no-op Logger for testing

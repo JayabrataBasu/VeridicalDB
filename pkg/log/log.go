@@ -153,7 +153,7 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 			}
 		}
 		data, _ := json.Marshal(entry)
-		fmt.Fprintln(l.out, string(data))
+		_, _ = fmt.Fprintln(l.out, string(data))
 	} else {
 		// Text format
 		timestamp := now.Format("2006-01-02 15:04:05")
@@ -164,7 +164,7 @@ func (l *Logger) log(level Level, msg string, args ...interface{}) {
 		for i := 0; i+1 < len(args); i += 2 {
 			fieldsStr += fmt.Sprintf(" %v=%v", args[i], args[i+1])
 		}
-		fmt.Fprintf(l.out, "%s [%s] %s%s\n", timestamp, level.String(), msg, fieldsStr)
+		_, _ = fmt.Fprintf(l.out, "%s [%s] %s%s\n", timestamp, level.String(), msg, fieldsStr)
 	}
 }
 

@@ -108,13 +108,6 @@ func (im *IndexManager) loadIndexes() error {
 	return nil
 }
 
-// saveIndexes saves index metadata to disk.
-func (im *IndexManager) saveIndexes() error {
-	im.mu.Lock()
-	defer im.mu.Unlock()
-	return im.saveIndexesLocked()
-}
-
 // saveIndexesLocked saves index metadata (caller must hold lock).
 func (im *IndexManager) saveIndexesLocked() error {
 	var indexes []IndexMeta
@@ -157,7 +150,7 @@ func (im *IndexManager) CreateIndex(meta IndexMeta) error {
 		RootPageID: InvalidPageID,
 	})
 	if err != nil {
-		pager.Close()
+		_ = pager.Close()
 		return fmt.Errorf("create btree: %w", err)
 	}
 
@@ -192,7 +185,7 @@ func (im *IndexManager) DropIndex(name string) error {
 		delete(im.btrees, name)
 	}
 	if pager, ok := im.pagers[name]; ok {
-		pager.Close()
+		_ = pager.Close()
 		delete(im.pagers, name)
 	}
 
@@ -200,7 +193,7 @@ func (im *IndexManager) DropIndex(name string) error {
 	delete(im.indexes, name)
 
 	// Remove the index file
-	os.Remove(im.indexFilePath(name))
+	_ = os.Remove(im.indexFilePath(name))
 
 	// Persist metadata
 	if err := im.saveIndexesLocked(); err != nil {
@@ -264,7 +257,7 @@ func (im *IndexManager) GetBTree(name string) (*BTree, error) {
 		RootPageID: idx.RootPage,
 	})
 	if err != nil {
-		pager.Close()
+		_ = pager.Close()
 		return nil, fmt.Errorf("open btree: %w", err)
 	}
 
@@ -375,7 +368,7 @@ func (im *IndexManager) Close() error {
 	}
 
 	// Save updated metadata
-	im.saveIndexesLocked()
+	_ = im.saveIndexesLocked()
 
 	var lastErr error
 	for name, pager := range im.pagers {

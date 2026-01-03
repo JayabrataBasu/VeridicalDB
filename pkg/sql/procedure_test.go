@@ -413,7 +413,7 @@ func TestProcedureCatalog(t *testing.T) {
 	// Test persistence
 	t.Run("Persistence", func(t *testing.T) {
 		// Create a new procedure
-		pc.CreateProcedure(&catalog.ProcedureMeta{
+		_ = pc.CreateProcedure(&catalog.ProcedureMeta{
 			Name:     "persisted_proc",
 			Body:     "BEGIN END",
 			Language: "plpgsql",

@@ -100,130 +100,6 @@ func exprToCatalogValue(expr Expression) catalog.Value {
 	}
 }
 
-// partitionRouter routes rows to the correct partition.
-type partitionRouter struct {
-	spec       *catalog.PartitionSpec
-	colIndexes []int // indexes of partition columns in the schema
-}
-
-// newPartitionRouter creates a partition router for a partitioned table.
-func newPartitionRouter(meta *catalog.TableMeta) (*partitionRouter, error) {
-	if meta.PartitionSpec == nil {
-		return nil, fmt.Errorf("table is not partitioned")
-	}
-
-	// Map partition column names to indexes
-	colIndexes := make([]int, len(meta.PartitionSpec.Columns))
-	for i, colName := range meta.PartitionSpec.Columns {
-		found := false
-		for j, col := range meta.Columns {
-			if strings.EqualFold(col.Name, colName) {
-				colIndexes[i] = j
-				found = true
-				break
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("partition column %q not found in table", colName)
-		}
-	}
-
-	return &partitionRouter{
-		spec:       meta.PartitionSpec,
-		colIndexes: colIndexes,
-	}, nil
-}
-
-// route determines which partition a row belongs to.
-func (r *partitionRouter) route(values []catalog.Value) (string, error) {
-	if len(r.colIndexes) == 0 {
-		return "", fmt.Errorf("no partition columns defined")
-	}
-
-	// Get the partition key value (for single-column partitioning)
-	keyIdx := r.colIndexes[0]
-	keyVal := values[keyIdx]
-
-	switch r.spec.Type {
-	case catalog.PartitionTypeRange:
-		return r.routeRange(keyVal)
-	case catalog.PartitionTypeList:
-		return r.routeList(keyVal)
-	case catalog.PartitionTypeHash:
-		return r.routeHash(keyVal)
-	default:
-		return "", fmt.Errorf("unknown partition type")
-	}
-}
-
-// routeRange routes a value to a RANGE partition.
-func (r *partitionRouter) routeRange(val catalog.Value) (string, error) {
-	for _, part := range r.spec.Partitions {
-		if part.Bound.IsMaxValue {
-			return part.Name, nil
-		}
-		// Handle unset bounds
-		bound := part.Bound.LessThan
-		if bound.Type == catalog.TypeUnknown && !bound.IsNull {
-			// Bound not properly set, skip this partition
-			continue
-		}
-		if bound.IsNull && bound.Type == catalog.TypeUnknown {
-			continue
-		}
-		cmp := comparePartitionValues(val, bound)
-		if cmp < 0 {
-			return part.Name, nil
-		}
-	}
-	return "", fmt.Errorf("no partition found for value %v", val)
-}
-
-// comparePartitionValues compares two values, coercing numeric types if needed.
-func comparePartitionValues(a, b catalog.Value) int {
-	// Handle nulls
-	if a.IsNull && b.IsNull {
-		return 0
-	}
-	if a.IsNull {
-		return -1
-	}
-	if b.IsNull {
-		return 1
-	}
-
-	// If types match, use standard comparison
-	if a.Type == b.Type {
-		return a.Compare(b)
-	}
-
-	// Coerce numeric types for comparison
-	aNum, aIsNum := toNumeric(a)
-	bNum, bIsNum := toNumeric(b)
-
-	if aIsNum && bIsNum {
-		if aNum < bNum {
-			return -1
-		} else if aNum > bNum {
-			return 1
-		}
-		return 0
-	}
-
-	// For text comparison
-	if a.Type == catalog.TypeText && b.Type == catalog.TypeText {
-		if a.Text < b.Text {
-			return -1
-		} else if a.Text > b.Text {
-			return 1
-		}
-		return 0
-	}
-
-	// Fallback to standard compare
-	return a.Compare(b)
-}
-
 // toNumeric converts a value to float64 for numeric comparison.
 func toNumeric(v catalog.Value) (float64, bool) {
 	switch v.Type {
@@ -236,50 +112,6 @@ func toNumeric(v catalog.Value) (float64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-// routeList routes a value to a LIST partition.
-func (r *partitionRouter) routeList(val catalog.Value) (string, error) {
-	for _, part := range r.spec.Partitions {
-		for _, boundVal := range part.Bound.Values {
-			if comparePartitionValues(val, boundVal) == 0 {
-				return part.Name, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("no partition found for value %v", val)
-}
-
-// routeHash routes a value to a HASH partition.
-func (r *partitionRouter) routeHash(val catalog.Value) (string, error) {
-	if r.spec.NumBuckets <= 0 {
-		return "", fmt.Errorf("invalid number of hash buckets")
-	}
-
-	// Simple hash: convert value to a hash
-	var hash uint64
-	switch {
-	case val.Type == catalog.TypeInt32:
-		hash = uint64(val.Int32)
-	case val.Type == catalog.TypeInt64:
-		hash = uint64(val.Int64)
-	case val.Type == catalog.TypeText:
-		for _, c := range val.Text {
-			hash = hash*31 + uint64(c)
-		}
-	default:
-		hash = 0
-	}
-
-	bucketIdx := int(hash % uint64(r.spec.NumBuckets))
-
-	// Find the partition for this bucket
-	if bucketIdx < len(r.spec.Partitions) {
-		return r.spec.Partitions[bucketIdx].Name, nil
-	}
-
-	// Generate partition name for hash buckets
-	return fmt.Sprintf("p%d", bucketIdx), nil
 }
 
 // MVCCExecutor executes SQL statements with MVCC transaction support.
@@ -514,7 +346,7 @@ func (e *MVCCExecutor) executeCreateFTSIndex(stmt *CreateFTSIndexStmt) (*Result,
 
 	// Initial indexing of existing data
 	tx := e.mtm.TxnManager().Begin()
-	defer e.mtm.TxnManager().Abort(tx.ID)
+	defer func() { _ = e.mtm.TxnManager().Abort(tx.ID) }()
 
 	idx, _ := e.ftsMgr.GetIndex(stmt.IndexName)
 	count := 0
@@ -4760,81 +4592,6 @@ func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta 
 			Values: newValues,
 			Not:    ex.Not,
 		}
-
-	default:
-		return expr
-	}
-}
-
-// substituteExpressionValuesFromSchema replaces unqualified ColumnRef nodes with literal values
-// when the column name exists in the provided schema. This is a best-effort helper for correlated
-// subqueries where we only have an outer schema and current row values.
-func (e *MVCCExecutor) substituteExpressionValuesFromSchema(expr Expression, schema *catalog.Schema, row []catalog.Value) Expression {
-	switch ex := expr.(type) {
-	case *ColumnRef:
-		if schema == nil || row == nil {
-			return ex
-		}
-		// Handle qualified references like alias.col by checking the last part
-		name := ex.Name
-		if strings.Contains(name, ".") {
-			parts := splitQualifiedName(name)
-			name = parts[len(parts)-1]
-		}
-		col, idx := schema.ColumnByName(name)
-		if col == nil || idx < 0 || idx >= len(row) {
-			return ex
-		}
-		return &LiteralExpr{Value: row[idx]}
-
-	case *LiteralExpr:
-		return ex
-
-	case *BinaryExpr:
-		return &BinaryExpr{Left: e.substituteExpressionValuesFromSchema(ex.Left, schema, row), Op: ex.Op, Right: e.substituteExpressionValuesFromSchema(ex.Right, schema, row)}
-
-	case *UnaryExpr:
-		return &UnaryExpr{Op: ex.Op, Expr: e.substituteExpressionValuesFromSchema(ex.Expr, schema, row)}
-
-	case *InExpr:
-		var vals []Expression
-		for _, v := range ex.Values {
-			vals = append(vals, e.substituteExpressionValuesFromSchema(v, schema, row))
-		}
-		return &InExpr{Left: e.substituteExpressionValuesFromSchema(ex.Left, schema, row), Values: vals, Subquery: ex.Subquery, Not: ex.Not}
-
-	case *CaseExpr:
-		newWhens := make([]WhenClause, len(ex.Whens))
-		for i, w := range ex.Whens {
-			newWhens[i] = WhenClause{Condition: e.substituteExpressionValuesFromSchema(w.Condition, schema, row), Result: e.substituteExpressionValuesFromSchema(w.Result, schema, row)}
-		}
-		var newElse Expression
-		if ex.Else != nil {
-			newElse = e.substituteExpressionValuesFromSchema(ex.Else, schema, row)
-		}
-		return &CaseExpr{Operand: ex.Operand, Whens: newWhens, Else: newElse}
-
-	case *FunctionExpr:
-		newArgs := make([]Expression, len(ex.Args))
-		for i, a := range ex.Args {
-			newArgs[i] = e.substituteExpressionValuesFromSchema(a, schema, row)
-		}
-		return &FunctionExpr{Name: ex.Name, Args: newArgs}
-
-	case *ExistsExpr:
-		// For nested EXISTS inside subqueries, substitute inside the inner query
-		if ex.Query != nil {
-			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
-			return &ExistsExpr{Query: newQuery, Not: ex.Not}
-		}
-		return ex
-
-	case *SubqueryExpr:
-		if ex.Query != nil {
-			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, schema, row)
-			return &SubqueryExpr{Query: newQuery}
-		}
-		return ex
 
 	default:
 		return expr

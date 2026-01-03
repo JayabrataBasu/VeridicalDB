@@ -17,7 +17,7 @@ func TestIndexManagerPersistenceDebug(t *testing.T) {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
 
-	im1.CreateIndex(IndexMeta{
+	_ = im1.CreateIndex(IndexMeta{
 		Name:      "idx_persist",
 		TableName: "test",
 		Columns:   []string{"id"},
@@ -30,7 +30,7 @@ func TestIndexManagerPersistenceDebug(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		key := EncodeIntKey(int64(i))
 		rid := storage.RID{Page: uint32(i), Slot: 0}
-		im1.Insert("idx_persist", key, rid)
+		_ = im1.Insert("idx_persist", key, rid)
 	}
 
 	bt1, _ := im1.GetBTree("idx_persist")
@@ -39,7 +39,7 @@ func TestIndexManagerPersistenceDebug(t *testing.T) {
 	idx2, _ := im1.GetIndex("idx_persist")
 	t.Logf("Index metadata RootPage=%d", idx2.RootPage)
 
-	im1.Close()
+	_ = im1.Close()
 
 	// Read the metadata file
 	data, _ := os.ReadFile(im1.metaFilePath())
@@ -50,7 +50,7 @@ func TestIndexManagerPersistenceDebug(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to reopen index manager: %v", err)
 	}
-	defer im2.Close()
+	defer func() { _ = im2.Close() }()
 
 	idx3, _ := im2.GetIndex("idx_persist")
 	t.Logf("After reopen: RootPage=%d", idx3.RootPage)

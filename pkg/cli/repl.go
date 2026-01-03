@@ -119,7 +119,7 @@ func RunInteractive(logger *log.Logger, tm *catalog.TableManager, txnMgr *txn.Ma
 
 		// If DatabaseManager is present but no database selected, print a short hint
 		if repl.session.HasDatabaseManager() && repl.session.CurrentDatabase() == "" {
-			fmt.Fprintln(repl.out, "No database selected. Run: CREATE DATABASE <name>; then USE <name> to select it.")
+			_, _ = fmt.Fprintln(repl.out, "No database selected. Run: CREATE DATABASE <name>; then USE <name> to select it.")
 		}
 	}
 
@@ -137,9 +137,9 @@ func (r *REPL) Run() error {
 	for r.running {
 		// Print appropriate prompt (with transaction indicator if active)
 		if buffer.Len() == 0 {
-			fmt.Fprint(r.out, r.getPrompt())
+			_, _ = fmt.Fprint(r.out, r.getPrompt())
 		} else {
-			fmt.Fprint(r.out, ContinuePrompt)
+			_, _ = fmt.Fprint(r.out, ContinuePrompt)
 		}
 
 		// Read input
@@ -175,7 +175,7 @@ func (r *REPL) Run() error {
 		return fmt.Errorf("error reading input: %w", err)
 	}
 
-	fmt.Fprintln(r.out, "Goodbye!")
+	_, _ = fmt.Fprintln(r.out, "Goodbye!")
 	return nil
 }
 
@@ -203,7 +203,7 @@ func (r *REPL) getPrompt() string {
 
 // printWelcome displays the welcome banner.
 func (r *REPL) printWelcome() {
-	fmt.Fprintf(r.out, `
+	_, _ = fmt.Fprintf(r.out, `
 ╔═══════════════════════════════════════════════════════════╗
 ║                      VeridicalDB v%s                     ║
 ║          A Modern Database Built From Scratch             ║
@@ -232,7 +232,7 @@ func (r *REPL) execute(input string) {
 		r.printHelp()
 
 	case cmdUpper == "VERSION" || cmdUpper == "\\V":
-		fmt.Fprintf(r.out, "VeridicalDB version %s\n", Version)
+		_, _ = fmt.Fprintf(r.out, "VeridicalDB version %s\n", Version)
 
 	case cmdUpper == "\\LIST" || cmdUpper == "\\DT":
 		r.listTables()
@@ -240,7 +240,7 @@ func (r *REPL) execute(input string) {
 	case strings.HasPrefix(cmdUpper, "\\DESCRIBE ") || strings.HasPrefix(cmdUpper, "\\D "):
 		parts := strings.Fields(cmd)
 		if len(parts) < 2 {
-			fmt.Fprintln(r.out, "Usage: \\describe <table_name>")
+			_, _ = fmt.Fprintln(r.out, "Usage: \\describe <table_name>")
 		} else {
 			r.describeTable(parts[1])
 		}
@@ -265,7 +265,7 @@ func (r *REPL) execute(input string) {
 
 	case cmdUpper == "CLEAR" || cmdUpper == "\\C":
 		// Clear screen (ANSI escape code)
-		fmt.Fprint(r.out, "\033[2J\033[H")
+		_, _ = fmt.Fprint(r.out, "\033[2J\033[H")
 
 	case strings.HasPrefix(cmdUpper, "CREATE TABLE"):
 		r.executeSQL(input)
@@ -295,13 +295,13 @@ func (r *REPL) execute(input string) {
 		r.executeSQL(input)
 
 	default:
-		fmt.Fprintf(r.out, "Unknown command: %s\nType HELP; for available commands.\n", cmd)
+		_, _ = fmt.Fprintf(r.out, "Unknown command: %s\nType HELP; for available commands.\n", cmd)
 	}
 }
 
 // printHelp displays available commands.
 func (r *REPL) printHelp() {
-	fmt.Fprintln(r.out, `
+	_, _ = fmt.Fprintln(r.out, `
 Available Commands:
 ═══════════════════════════════════════════════════════════
 
@@ -353,7 +353,7 @@ func (r *REPL) printStatus() {
 	if r.session != nil && r.session.InTransaction() {
 		txnStatus = "Active"
 	}
-	fmt.Fprintf(r.out, `
+	_, _ = fmt.Fprintf(r.out, `
 Server Status:
 ═══════════════════════════════════════════════════════════
   Version:           %s (Stage 4 - MVCC)
@@ -371,46 +371,46 @@ Server Status:
 // listTables prints all tables in the database.
 func (r *REPL) listTables() {
 	if r.tm == nil {
-		fmt.Fprintln(r.out, "TableManager not initialized.")
+		_, _ = fmt.Fprintln(r.out, "TableManager not initialized.")
 		return
 	}
 	tables := r.tm.ListTables()
 	if len(tables) == 0 {
-		fmt.Fprintln(r.out, "No tables found.")
+		_, _ = fmt.Fprintln(r.out, "No tables found.")
 		return
 	}
 	sort.Strings(tables)
-	fmt.Fprintln(r.out, "\nTables:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "\nTables:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════")
 	for _, t := range tables {
-		fmt.Fprintf(r.out, "  %s\n", t)
+		_, _ = fmt.Fprintf(r.out, "  %s\n", t)
 	}
-	fmt.Fprintf(r.out, "\n(%d table(s))\n", len(tables))
+	_, _ = fmt.Fprintf(r.out, "\n(%d table(s))\n", len(tables))
 }
 
 // describeTable prints column info for a table.
 func (r *REPL) describeTable(name string) {
 	if r.tm == nil {
-		fmt.Fprintln(r.out, "TableManager not initialized.")
+		_, _ = fmt.Fprintln(r.out, "TableManager not initialized.")
 		return
 	}
 	cols, err := r.tm.DescribeTable(name)
 	if err != nil {
-		fmt.Fprintf(r.out, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(r.out, "Error: %v\n", err)
 		return
 	}
-	fmt.Fprintf(r.out, "\nTable: %s\n", name)
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
-	fmt.Fprintf(r.out, "%-4s %-20s %-12s %-10s\n", "ID", "Column", "Type", "Nullable")
-	fmt.Fprintln(r.out, "───────────────────────────────────────────────────────")
+	_, _ = fmt.Fprintf(r.out, "\nTable: %s\n", name)
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintf(r.out, "%-4s %-20s %-12s %-10s\n", "ID", "Column", "Type", "Nullable")
+	_, _ = fmt.Fprintln(r.out, "───────────────────────────────────────────────────────")
 	for _, c := range cols {
 		nullable := "YES"
 		if c.NotNull {
 			nullable = "NO"
 		}
-		fmt.Fprintf(r.out, "%-4d %-20s %-12s %-10s\n", c.ID, c.Name, c.Type.String(), nullable)
+		_, _ = fmt.Fprintf(r.out, "%-4d %-20s %-12s %-10s\n", c.ID, c.Name, c.Type.String(), nullable)
 	}
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }
 
 // executeSQL parses and executes a SQL statement.
@@ -419,7 +419,7 @@ func (r *REPL) executeSQL(input string) {
 	if r.session != nil {
 		result, err := r.session.ExecuteSQL(input)
 		if err != nil {
-			fmt.Fprintf(r.out, "Error: %v\n", err)
+			_, _ = fmt.Fprintf(r.out, "Error: %v\n", err)
 			return
 		}
 		r.displayResult(result)
@@ -428,7 +428,7 @@ func (r *REPL) executeSQL(input string) {
 
 	// Fallback to legacy executor if no session
 	if r.executor == nil {
-		fmt.Fprintln(r.out, "SQL executor not initialized.")
+		_, _ = fmt.Fprintln(r.out, "SQL executor not initialized.")
 		return
 	}
 
@@ -436,14 +436,14 @@ func (r *REPL) executeSQL(input string) {
 	parser := sql.NewParser(input)
 	stmt, err := parser.Parse()
 	if err != nil {
-		fmt.Fprintf(r.out, "Syntax error: %v\n", err)
+		_, _ = fmt.Fprintf(r.out, "Syntax error: %v\n", err)
 		return
 	}
 
 	// Execute the statement
 	result, err := r.executor.Execute(stmt)
 	if err != nil {
-		fmt.Fprintf(r.out, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(r.out, "Error: %v\n", err)
 		return
 	}
 
@@ -455,13 +455,13 @@ func (r *REPL) executeSQL(input string) {
 func (r *REPL) displayResult(result *sql.Result) {
 	// If it's a message-only result (CREATE, INSERT, UPDATE, DELETE)
 	if result.Message != "" && result.Columns == nil {
-		fmt.Fprintln(r.out, result.Message)
+		_, _ = fmt.Fprintln(r.out, result.Message)
 		return
 	}
 
 	// It's a SELECT query result
 	if len(result.Columns) == 0 {
-		fmt.Fprintln(r.out, "(no columns)")
+		_, _ = fmt.Fprintln(r.out, "(no columns)")
 		return
 	}
 
@@ -487,38 +487,38 @@ func (r *REPL) displayResult(result *sql.Result) {
 	}
 
 	// Print header
-	fmt.Fprint(r.out, "\n")
+	_, _ = fmt.Fprint(r.out, "\n")
 	for i, col := range result.Columns {
-		fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(col, widths[i]))
+		_, _ = fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(col, widths[i]))
 		if i < len(result.Columns)-1 {
-			fmt.Fprint(r.out, "│")
+			_, _ = fmt.Fprint(r.out, "│")
 		}
 	}
-	fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintln(r.out)
 
 	// Print separator
 	for i := range result.Columns {
-		fmt.Fprint(r.out, strings.Repeat("─", widths[i]+2))
+		_, _ = fmt.Fprint(r.out, strings.Repeat("─", widths[i]+2))
 		if i < len(result.Columns)-1 {
-			fmt.Fprint(r.out, "┼")
+			_, _ = fmt.Fprint(r.out, "┼")
 		}
 	}
-	fmt.Fprintln(r.out)
+	_, _ = fmt.Fprintln(r.out)
 
 	// Print rows
 	for _, row := range result.Rows {
 		for i, val := range row {
 			str := formatValue(val)
-			fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(str, widths[i]))
+			_, _ = fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(str, widths[i]))
 			if i < len(row)-1 {
-				fmt.Fprint(r.out, "│")
+				_, _ = fmt.Fprint(r.out, "│")
 			}
 		}
-		fmt.Fprintln(r.out)
+		_, _ = fmt.Fprintln(r.out)
 	}
 
 	// Print row count
-	fmt.Fprintf(r.out, "\n(%d row(s))\n", len(result.Rows))
+	_, _ = fmt.Fprintf(r.out, "\n(%d row(s))\n", len(result.Rows))
 }
 
 // formatValue converts a catalog.Value to a string for display.
@@ -560,17 +560,17 @@ func truncate(s string, maxLen int) string {
 func (r *REPL) listIndexes() {
 	// Indexes are managed by btree.IndexManager, which we don't have direct access to
 	// For now, show a placeholder message
-	fmt.Fprintln(r.out, "\nIndexes:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════")
-	fmt.Fprintln(r.out, "  (Index listing requires IndexManager integration)")
-	fmt.Fprintln(r.out, "  Use CREATE INDEX to create indexes on tables")
-	fmt.Fprintln(r.out, "")
+	_, _ = fmt.Fprintln(r.out, "\nIndexes:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "  (Index listing requires IndexManager integration)")
+	_, _ = fmt.Fprintln(r.out, "  Use CREATE INDEX to create indexes on tables")
+	_, _ = fmt.Fprintln(r.out, "")
 }
 
 // printStatistics prints database statistics.
 func (r *REPL) printStatistics() {
-	fmt.Fprintln(r.out, "\nDatabase Statistics:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "\nDatabase Statistics:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 
 	tableCount := 0
 	if r.tm != nil {
@@ -582,38 +582,38 @@ func (r *REPL) printStatistics() {
 		txnStatus = "Active"
 	}
 
-	fmt.Fprintf(r.out, "  %-25s %d\n", "Tables:", tableCount)
-	fmt.Fprintf(r.out, "  %-25s %s\n", "Current Transaction:", txnStatus)
-	fmt.Fprintln(r.out, "")
-	fmt.Fprintln(r.out, "  Note: Full statistics available via SystemCatalog API")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d\n", "Tables:", tableCount)
+	_, _ = fmt.Fprintf(r.out, "  %-25s %s\n", "Current Transaction:", txnStatus)
+	_, _ = fmt.Fprintln(r.out, "")
+	_, _ = fmt.Fprintln(r.out, "  Note: Full statistics available via SystemCatalog API")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }
 
 // printLocks prints current lock information.
 func (r *REPL) printLocks() {
-	fmt.Fprintln(r.out, "\nActive Locks:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
-	fmt.Fprintln(r.out, "  (Lock information requires LockManager integration)")
-	fmt.Fprintln(r.out, "  Use SystemCatalog.GetLocks() for programmatic access")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "\nActive Locks:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "  (Lock information requires LockManager integration)")
+	_, _ = fmt.Fprintln(r.out, "  Use SystemCatalog.GetLocks() for programmatic access")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }
 
 // printTransactions prints active transaction information.
 func (r *REPL) printTransactions() {
-	fmt.Fprintln(r.out, "\nActive Transactions:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "\nActive Transactions:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 
 	if r.session == nil {
-		fmt.Fprintln(r.out, "  (Session not initialized)")
+		_, _ = fmt.Fprintln(r.out, "  (Session not initialized)")
 	} else if r.session.InTransaction() {
-		fmt.Fprintln(r.out, "  Current session has an active transaction")
+		_, _ = fmt.Fprintln(r.out, "  Current session has an active transaction")
 	} else {
-		fmt.Fprintln(r.out, "  No active transaction in current session")
+		_, _ = fmt.Fprintln(r.out, "  No active transaction in current session")
 	}
 
-	fmt.Fprintln(r.out, "")
-	fmt.Fprintln(r.out, "  Use SystemCatalog.GetActiveTransactions() for full list")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "")
+	_, _ = fmt.Fprintln(r.out, "  Use SystemCatalog.GetActiveTransactions() for full list")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }
 
 // printMemoryStats prints memory statistics.
@@ -621,13 +621,13 @@ func (r *REPL) printMemoryStats() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
-	fmt.Fprintln(r.out, "\nMemory Statistics:")
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
-	fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap Allocated:", m.HeapAlloc/1024/1024)
-	fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap System:", m.HeapSys/1024/1024)
-	fmt.Fprintf(r.out, "  %-25s %d\n", "Heap Objects:", m.HeapObjects)
-	fmt.Fprintf(r.out, "  %-25s %d\n", "Goroutines:", runtime.NumGoroutine())
-	fmt.Fprintf(r.out, "  %-25s %d\n", "GC Cycles:", m.NumGC)
-	fmt.Fprintf(r.out, "  %-25s %.2f ms\n", "Last GC Pause:", float64(m.PauseNs[(m.NumGC+255)%256])/1e6)
-	fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(r.out, "\nMemory Statistics:")
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap Allocated:", m.HeapAlloc/1024/1024)
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d MB\n", "Heap System:", m.HeapSys/1024/1024)
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d\n", "Heap Objects:", m.HeapObjects)
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d\n", "Goroutines:", runtime.NumGoroutine())
+	_, _ = fmt.Fprintf(r.out, "  %-25s %d\n", "GC Cycles:", m.NumGC)
+	_, _ = fmt.Fprintf(r.out, "  %-25s %.2f ms\n", "Last GC Pause:", float64(m.PauseNs[(m.NumGC+255)%256])/1e6)
+	_, _ = fmt.Fprintln(r.out, "═══════════════════════════════════════════════════════")
 }

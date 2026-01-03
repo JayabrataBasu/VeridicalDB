@@ -111,15 +111,15 @@ func HashKey(key interface{}) uint32 {
 	h := fnv.New32a()
 	switch v := key.(type) {
 	case int32:
-		h.Write([]byte(fmt.Sprintf("%d", v)))
+		_, _ = fmt.Fprintf(h, "%d", v)
 	case int64:
-		h.Write([]byte(fmt.Sprintf("%d", v)))
+		_, _ = fmt.Fprintf(h, "%d", v)
 	case string:
-		h.Write([]byte(v))
+		_, _ = h.Write([]byte(v))
 	case []byte:
-		h.Write(v)
+		_, _ = h.Write(v)
 	default:
-		h.Write([]byte(fmt.Sprintf("%v", v)))
+		_, _ = fmt.Fprintf(h, "%v", v)
 	}
 	return h.Sum32()
 }

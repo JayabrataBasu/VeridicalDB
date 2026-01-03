@@ -105,7 +105,7 @@ func TestCheckpointIntegration(t *testing.T) {
 
 	// 5. Verify Persistence (Simulate Crash/Restart)
 	// Close everything
-	walLog.Close()
+	_ = walLog.Close()
 
 	// Reopen
 	walLog2, err := wal.Open(dataDir)

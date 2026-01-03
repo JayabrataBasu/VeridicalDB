@@ -177,17 +177,17 @@ func hashValue(v catalog.Value) uint32 {
 	h := fnv.New32a()
 	switch v.Type {
 	case catalog.TypeInt32:
-		h.Write([]byte(fmt.Sprintf("%d", v.Int32)))
+		_, _ = fmt.Fprintf(h, "%d", v.Int32)
 	case catalog.TypeInt64:
-		h.Write([]byte(fmt.Sprintf("%d", v.Int64)))
+		_, _ = fmt.Fprintf(h, "%d", v.Int64)
 	case catalog.TypeFloat64:
-		h.Write([]byte(fmt.Sprintf("%f", v.Float64)))
+		_, _ = fmt.Fprintf(h, "%f", v.Float64)
 	case catalog.TypeText:
-		h.Write([]byte(v.Text))
+		_, _ = h.Write([]byte(v.Text))
 	case catalog.TypeBool:
-		h.Write([]byte(fmt.Sprintf("%t", v.Bool)))
+		_, _ = fmt.Fprintf(h, "%t", v.Bool)
 	default:
-		h.Write([]byte(v.String()))
+		_, _ = h.Write([]byte(v.String()))
 	}
 	return h.Sum32()
 }

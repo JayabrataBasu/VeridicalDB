@@ -215,9 +215,9 @@ func TestInvertedIndexBasic(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
 	// Index some documents
-	idx.IndexDocument(1, "the quick brown fox")
-	idx.IndexDocument(2, "the lazy dog")
-	idx.IndexDocument(3, "quick quick quick fox")
+	_ = idx.IndexDocument(1, "the quick brown fox")
+	_ = idx.IndexDocument(2, "the lazy dog")
+	_ = idx.IndexDocument(3, "quick quick quick fox")
 
 	// Search for "quick"
 	results, err := idx.Search("quick", 10)
@@ -239,8 +239,8 @@ func TestInvertedIndexBasic(t *testing.T) {
 func TestInvertedIndexRemove(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
-	idx.IndexDocument(1, "hello world")
-	idx.IndexDocument(2, "hello universe")
+	_ = idx.IndexDocument(1, "hello world")
+	_ = idx.IndexDocument(2, "hello universe")
 
 	results, _ := idx.Search("hello", 10)
 	if len(results) != 2 {
@@ -261,9 +261,9 @@ func TestInvertedIndexRemove(t *testing.T) {
 func TestInvertedIndexPhraseSearch(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
-	idx.IndexDocument(1, "the quick brown fox jumps")
-	idx.IndexDocument(2, "brown quick fox")
-	idx.IndexDocument(3, "quick fox brown")
+	_ = idx.IndexDocument(1, "the quick brown fox jumps")
+	_ = idx.IndexDocument(2, "brown quick fox")
+	_ = idx.IndexDocument(3, "quick fox brown")
 
 	// Search for phrase "quick brown"
 	results, _ := idx.Search("\"quick brown\"", 10)
@@ -280,9 +280,9 @@ func TestInvertedIndexPhraseSearch(t *testing.T) {
 func TestInvertedIndexPrefixSearch(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
-	idx.IndexDocument(1, "testing tests tested")
-	idx.IndexDocument(2, "temporary template")
-	idx.IndexDocument(3, "hello world")
+	_ = idx.IndexDocument(1, "testing tests tested")
+	_ = idx.IndexDocument(2, "temporary template")
+	_ = idx.IndexDocument(3, "hello world")
 
 	// Search with prefix "test*"
 	results, _ := idx.Search("test*", 10)
@@ -298,9 +298,9 @@ func TestInvertedIndexPrefixSearch(t *testing.T) {
 func TestInvertedIndexBooleanSearch(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
-	idx.IndexDocument(1, "quick brown fox")
-	idx.IndexDocument(2, "slow brown dog")
-	idx.IndexDocument(3, "quick yellow cat")
+	_ = idx.IndexDocument(1, "quick brown fox")
+	_ = idx.IndexDocument(2, "slow brown dog")
+	_ = idx.IndexDocument(3, "quick yellow cat")
 
 	// Search for "+brown -fox"
 	results, _ := idx.Search("+brown -fox", 10)
@@ -317,8 +317,8 @@ func TestInvertedIndexBooleanSearch(t *testing.T) {
 func TestInvertedIndexFuzzySearch(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
-	idx.IndexDocument(1, "hello world")
-	idx.IndexDocument(2, "testing framework")
+	_ = idx.IndexDocument(1, "hello world")
+	_ = idx.IndexDocument(2, "testing framework")
 
 	// Search with slight typo using fuzzy modifier
 	results, _ := idx.Search("helo~", 10)
@@ -333,9 +333,9 @@ func TestBM25Ranking(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
 	// Index documents with varying term frequencies
-	idx.IndexDocument(1, "fox")                 // 1 occurrence
-	idx.IndexDocument(2, "fox fox fox fox fox") // 5 occurrences
-	idx.IndexDocument(3, "fox fox")             // 2 occurrences
+	_ = idx.IndexDocument(1, "fox")                 // 1 occurrence
+	_ = idx.IndexDocument(2, "fox fox fox fox fox") // 5 occurrences
+	_ = idx.IndexDocument(3, "fox fox")             // 2 occurrences
 
 	results, _ := idx.Search("fox", 10)
 
@@ -580,7 +580,7 @@ func TestFullTextSearchWorkflow(t *testing.T) {
 
 func TestEmptyQueries(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
-	idx.IndexDocument(1, "hello world")
+	_ = idx.IndexDocument(1, "hello world")
 
 	// Empty query
 	results, _ := idx.Search("", 10)
@@ -599,7 +599,7 @@ func TestSpecialCharacters(t *testing.T) {
 	idx := NewInvertedIndex("test_idx", "test_table", []string{"content"})
 
 	// Index document with special characters
-	idx.IndexDocument(1, "hello! world? foo-bar test_case")
+	_ = idx.IndexDocument(1, "hello! world? foo-bar test_case")
 
 	// Should still find "hello"
 	results, _ := idx.Search("hello", 10)
@@ -679,8 +679,8 @@ func TestIndexPersistence(t *testing.T) {
 
 	// Create and populate index
 	idx := NewInvertedIndex("persist_test", "test_table", []string{"content"})
-	idx.IndexDocument(1, "hello world")
-	idx.IndexDocument(2, "testing persistence")
+	_ = idx.IndexDocument(1, "hello world")
+	_ = idx.IndexDocument(2, "testing persistence")
 
 	// Save to disk
 	err = idx.Save(tmpDir)

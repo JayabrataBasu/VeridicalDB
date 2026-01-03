@@ -119,9 +119,10 @@ func (n *ShardNode) handleConnection(conn net.Conn) {
 		// Read query (newline-terminated)
 		query, err := reader.ReadString('\n')
 		if err != nil {
-			if err != io.EOF {
-				// Connection closed
+			if err == io.EOF {
+				return // Connection closed gracefully
 			}
+			// Other read error, just close
 			return
 		}
 

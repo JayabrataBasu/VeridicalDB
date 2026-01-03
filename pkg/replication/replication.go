@@ -266,15 +266,14 @@ type Manager struct {
 
 // replicaConn represents a connection to a replica (on primary).
 type replicaConn struct {
-	info       ReplicaInfo
-	conn       net.Conn
-	writer     *bufferWriter
-	reader     *bufferReader
-	mu         sync.Mutex
-	sendLSN    wal.LSN
-	lastStatus time.Time
-	ctx        context.Context
-	cancel     context.CancelFunc
+	info    ReplicaInfo
+	conn    net.Conn
+	writer  *bufferWriter
+	reader  *bufferReader
+	mu      sync.Mutex
+	sendLSN wal.LSN
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // primaryConn represents a connection to the primary (on replica).

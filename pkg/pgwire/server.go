@@ -496,28 +496,28 @@ func (c *Conn) sendDataRow(row []catalog.Value) error {
 
 func (c *Conn) sendCommandComplete(command string, rowCount int) error {
 	var tag string
-	switch {
-	case command == "SELECT":
+	switch command {
+	case "SELECT":
 		tag = fmt.Sprintf("SELECT %d", rowCount)
-	case command == "INSERT":
+	case "INSERT":
 		tag = fmt.Sprintf("INSERT 0 %d", rowCount)
-	case command == "UPDATE":
+	case "UPDATE":
 		tag = fmt.Sprintf("UPDATE %d", rowCount)
-	case command == "DELETE":
+	case "DELETE":
 		tag = fmt.Sprintf("DELETE %d", rowCount)
-	case command == "CREATE TABLE":
+	case "CREATE TABLE":
 		tag = "CREATE TABLE"
-	case command == "DROP TABLE":
+	case "DROP TABLE":
 		tag = "DROP TABLE"
-	case command == "CREATE INDEX":
+	case "CREATE INDEX":
 		tag = "CREATE INDEX"
-	case command == "DROP INDEX":
+	case "DROP INDEX":
 		tag = "DROP INDEX"
-	case command == "BEGIN":
+	case "BEGIN":
 		tag = "BEGIN"
-	case command == "COMMIT":
+	case "COMMIT":
 		tag = "COMMIT"
-	case command == "ROLLBACK":
+	case "ROLLBACK":
 		tag = "ROLLBACK"
 	default:
 		tag = command
@@ -622,8 +622,7 @@ func (c *Conn) handleBind(payload []byte) error {
 
 	// Number of result format codes (skip)
 	numResultFormats := ReadInt16(payload[offset:])
-	offset += 2
-	offset += int(numResultFormats) * 2
+	_ = numResultFormats // result format codes not used yet
 
 	c.portals[portalName] = &Portal{
 		Name:      portalName,

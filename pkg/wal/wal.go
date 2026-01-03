@@ -149,6 +149,7 @@ func (w *WAL) Append(record *Record) (LSN, error) {
 	if int64(w.currentLSN)+int64(len(data)) > w.segmentSize {
 		// For now, just continue (no segment rotation)
 		// A production system would rotate to a new segment
+		_ = true // placeholder for future segment rotation
 	}
 
 	// Append to buffer

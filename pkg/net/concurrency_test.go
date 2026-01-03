@@ -25,7 +25,7 @@ func TestConcurrentInserts(t *testing.T) {
 	conn := connectToServer(t, port)
 	skipWelcome(conn)
 	sendAndReceive(t, conn, "CREATE TABLE counters (id INT);")
-	conn.Close()
+	_ = conn.Close()
 
 	// Concurrently insert from multiple clients
 	const numClients = 5
@@ -40,7 +40,7 @@ func TestConcurrentInserts(t *testing.T) {
 			defer wg.Done()
 
 			clientConn := connectToServer(t, port)
-			defer clientConn.Close()
+			defer func() { _ = clientConn.Close() }()
 			skipWelcome(clientConn)
 
 			for i := 0; i < insertsPerClient; i++ {
@@ -63,7 +63,7 @@ func TestConcurrentInserts(t *testing.T) {
 
 	// Verify total count
 	verifyConn := connectToServer(t, port)
-	defer verifyConn.Close()
+	defer func() { _ = verifyConn.Close() }()
 	skipWelcome(verifyConn)
 
 	resp := sendAndReceive(t, verifyConn, "SELECT * FROM counters;")
@@ -84,7 +84,7 @@ func TestConcurrentTransactions(t *testing.T) {
 	sendAndReceive(t, conn, "CREATE TABLE accounts (id INT, balance INT);")
 	sendAndReceive(t, conn, "INSERT INTO accounts VALUES (1, 1000);")
 	sendAndReceive(t, conn, "INSERT INTO accounts VALUES (2, 1000);")
-	conn.Close()
+	_ = conn.Close()
 
 	// Client 1: Begin, update, wait, then commit
 	// Client 2: Begin, try to read during client 1's transaction
@@ -96,7 +96,7 @@ func TestConcurrentTransactions(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		c1 := connectToServer(t, port)
-		defer c1.Close()
+		defer func() { _ = c1.Close() }()
 		skipWelcome(c1)
 
 		sendAndReceive(t, c1, "BEGIN;")
@@ -117,7 +117,7 @@ func TestConcurrentTransactions(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 
 		c2 := connectToServer(t, port)
-		defer c2.Close()
+		defer func() { _ = c2.Close() }()
 		skipWelcome(c2)
 
 		// This should see the old value (1000) due to MVCC isolation
@@ -148,7 +148,7 @@ func TestConcurrentReads(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		sendAndReceive(t, conn, fmt.Sprintf("INSERT INTO data VALUES (%d, 'value%d');", i, i))
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	// Multiple concurrent readers
 	const numReaders = 10
@@ -160,7 +160,7 @@ func TestConcurrentReads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			c := connectToServer(t, port)
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			skipWelcome(c)
 
 			resp := sendAndReceive(t, c, "SELECT * FROM data;")
@@ -197,7 +197,7 @@ func setupConcurrencyTestServer(t *testing.T) (*Server, int, func()) {
 
 	tm, err := catalog.NewTableManager(dir, 8192, nil)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to create table manager: %v", err)
 	}
 
@@ -217,23 +217,23 @@ func setupConcurrencyTestServer(t *testing.T) (*Server, int, func()) {
 
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to find free port: %v", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	_ = listener.Close()
 
 	err = server.Start(port)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to start server: %v", err)
 	}
 
 	time.Sleep(50 * time.Millisecond)
 
 	cleanup := func() {
-		server.Stop()
-		os.RemoveAll(dir)
+		_ = server.Stop()
+		_ = os.RemoveAll(dir)
 	}
 
 	return server, port, cleanup

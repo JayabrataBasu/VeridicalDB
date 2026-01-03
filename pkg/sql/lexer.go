@@ -878,14 +878,8 @@ func (l *Lexer) readDollarQuote() string {
 	l.readChar() // consume first $
 	l.readChar() // consume second $
 	pos := l.pos
-	// Read until we find closing $$
-	for {
-		if l.ch == 0 {
-			break // EOF
-		}
-		if l.ch == '$' && l.peekChar() == '$' {
-			break // found closing $$
-		}
+	// Read until we find closing $$ or EOF
+	for l.ch != 0 && (l.ch != '$' || l.peekChar() != '$') {
 		l.readChar()
 	}
 	content := l.input[pos:l.pos]

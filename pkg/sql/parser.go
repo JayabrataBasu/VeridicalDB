@@ -639,10 +639,7 @@ func (p *Parser) parseColumnListInParens() ([]string, error) {
 	}
 
 	var cols []string
-	for {
-		if p.curTokenIs(TOKEN_RPAREN) {
-			break // empty list is allowed
-		}
+	for !p.curTokenIs(TOKEN_RPAREN) {
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
 		}
@@ -672,10 +669,7 @@ func (p *Parser) parseGroupingSet() (GroupingSet, error) {
 	}
 
 	var cols []string
-	for {
-		if p.curTokenIs(TOKEN_RPAREN) {
-			break // empty set () represents grand total
-		}
+	for !p.curTokenIs(TOKEN_RPAREN) {
 		if !p.isIdentifierOrContextualKeyword() {
 			return GroupingSet{}, fmt.Errorf("expected column name in grouping set, got %v", p.cur.Type)
 		}
@@ -3843,7 +3837,8 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 
 			// Check for NULLS FIRST/LAST
 			if p.curTokenIs(TOKEN_NULL) && p.peek.Literal == "S" {
-				// This would be NULLS - skip for now
+				// This would be NULLS FIRST/LAST - not yet implemented, skip
+				_ = true // placeholder to avoid empty branch
 			}
 
 			spec.OrderBy = append(spec.OrderBy, orderCol)

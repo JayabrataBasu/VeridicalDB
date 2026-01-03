@@ -37,7 +37,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 	session.SetIndexManager(idxMgr)
 
 	cleanup := func() {
-		idxMgr.Close()
+		_ = idxMgr.Close()
 		_ = os.RemoveAll(dir)
 	}
 

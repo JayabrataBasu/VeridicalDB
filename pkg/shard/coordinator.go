@@ -74,9 +74,6 @@ type Coordinator struct {
 	clients map[ShardID]*ShardClient
 	mu      sync.RWMutex
 
-	// parser for analyzing queries
-	parser *sql.Parser
-
 	// activeTxns tracks which shard each transaction is bound to
 	activeTxns map[string]ShardID // sessionID -> shardID
 	txnMu      sync.Mutex

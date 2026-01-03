@@ -60,8 +60,8 @@ func TestCrashRecoveryIntegration(t *testing.T) {
 		}
 
 		// Flush WAL to ensure records are on disk
-		w.Flush()
-		w.Close()
+		_ = w.Flush()
+		_ = w.Close()
 	}()
 
 	// Phase 2: Recover and Verify

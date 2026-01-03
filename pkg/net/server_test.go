@@ -25,7 +25,7 @@ func setupTestServer(t *testing.T) (*Server, int, func()) {
 
 	tm, err := catalog.NewTableManager(dir, 8192, nil)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to create table manager: %v", err)
 	}
 
@@ -46,15 +46,15 @@ func setupTestServer(t *testing.T) (*Server, int, func()) {
 	// Find a free port
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to find free port: %v", err)
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
-	listener.Close()
+	_ = listener.Close()
 
 	err = server.Start(port)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to start server: %v", err)
 	}
 
@@ -62,8 +62,8 @@ func setupTestServer(t *testing.T) (*Server, int, func()) {
 	time.Sleep(50 * time.Millisecond)
 
 	cleanup := func() {
-		server.Stop()
-		os.RemoveAll(dir)
+		_ = server.Stop()
+		_ = os.RemoveAll(dir)
 	}
 
 	return server, port, cleanup
@@ -82,7 +82,7 @@ func sendAndReceive(t *testing.T, conn net.Conn, command string) string {
 	t.Helper()
 
 	// Set timeout
-	conn.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
 	// Send command
 	_, err := conn.Write([]byte(command + "\n"))

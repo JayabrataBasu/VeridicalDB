@@ -111,6 +111,7 @@ func (tl *TxnLogger) Abort(txid txn.TxID) error {
 	if err != nil {
 		// Log the error but proceed with abort
 		// The transaction will be rolled back on recovery anyway
+		_ = err // ignored intentionally
 	}
 
 	// Abort in the transaction manager

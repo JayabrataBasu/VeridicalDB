@@ -455,7 +455,7 @@ func (s *Session) handleCreateIndex(stmt *CreateIndexStmt) (*Result, error) {
 	// Populate the index with existing data
 	// Use a read-only transaction to scan all visible rows
 	tempTx := s.txnMgr.Begin()
-	defer s.txnMgr.Commit(tempTx.ID)
+	defer func() { _ = s.txnMgr.Commit(tempTx.ID) }()
 
 	rowCount := 0
 	err = s.mtm.Scan(stmt.TableName, tempTx, func(row *catalog.MVCCRow) (bool, error) {
@@ -475,7 +475,7 @@ func (s *Session) handleCreateIndex(stmt *CreateIndexStmt) (*Result, error) {
 	})
 	if err != nil {
 		// Clean up the index if population failed
-		s.idxMgr.DropIndex(stmt.IndexName)
+		_ = s.idxMgr.DropIndex(stmt.IndexName)
 		return nil, fmt.Errorf("populate index: %w", err)
 	}
 

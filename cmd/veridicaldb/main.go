@@ -74,7 +74,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error initializing logger: %v\n", err)
 		os.Exit(1)
 	}
-	defer log.Sync()
+	defer func() { _ = log.Sync() }()
 
 	log.Info("Starting VeridicalDB",
 		"version", version,
