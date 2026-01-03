@@ -1,5 +1,7 @@
 # VeridicalDB
 
+[![CI](https://github.com/JayabrataBasu/VeridicalDB/actions/workflows/ci.yml/badge.svg)](https://github.com/JayabrataBasu/VeridicalDB/actions/workflows/ci.yml)
+
 > *Veridical: truthful, corresponding to facts*
 
 A modern, embeddable database engine built from scratch in Go.
