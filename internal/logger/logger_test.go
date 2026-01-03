@@ -42,7 +42,7 @@ func TestNewLogger(t *testing.T) {
 				t.Fatal("Logger is nil")
 			}
 
-			log.Sync()
+			_ = log.Sync()
 		})
 	}
 }
@@ -57,7 +57,7 @@ func TestLoggerToFile(t *testing.T) {
 	}
 
 	log.Info("test message", "key", "value")
-	log.Sync()
+	_ = log.Sync()
 
 	content, err := os.ReadFile(logFile)
 	if err != nil {
@@ -80,7 +80,7 @@ func TestLoggerNop(t *testing.T) {
 	log.Debug("test")
 	log.Warn("test")
 	log.Error("test")
-	log.Sync()
+	_ = log.Sync()
 }
 
 func TestLoggerWith(t *testing.T) {
@@ -117,7 +117,7 @@ func TestLoggerJSON(t *testing.T) {
 	}
 
 	log.Info("json test", "number", 42)
-	log.Sync()
+	_ = log.Sync()
 
 	content, err := os.ReadFile(logFile)
 	if err != nil {

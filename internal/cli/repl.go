@@ -125,7 +125,7 @@ func (r *REPL) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize readline: %w", err)
 	}
-	defer rl.Close()
+	defer func() { _ = rl.Close() }()
 	r.rl = rl
 
 	// Print welcome message

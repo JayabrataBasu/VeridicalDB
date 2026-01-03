@@ -82,7 +82,7 @@ func main() {
 		logger.Error("Failed to open WAL", "error", err)
 		os.Exit(1)
 	}
-	defer walLog.Close()
+	defer func() { _ = walLog.Close() }()
 
 	// Initialize TxnManager
 	txnMgr := txn.NewManager()
@@ -131,7 +131,7 @@ func main() {
 			logger.Error("Failed to start pgwire server", "error", err)
 			os.Exit(1)
 		}
-		defer pgServer.Stop()
+		defer func() { _ = pgServer.Stop() }()
 
 		logger.Info("PostgreSQL wire protocol server started", "port", cfg.Server.Port)
 		fmt.Printf("VeridicalDB is ready to accept connections on port %d\n", cfg.Server.Port)

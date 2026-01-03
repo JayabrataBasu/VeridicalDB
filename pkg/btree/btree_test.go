@@ -70,7 +70,7 @@ func TestBTreeCreateNew(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Verify root page is set
 	if bt.RootPage() == InvalidPageID {
@@ -83,7 +83,7 @@ func TestBTreeSingleInsertSearch(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert one key
 	key := []byte("hello")
@@ -109,7 +109,7 @@ func TestBTreeMultipleInserts(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert 100 keys sequentially
 	count := 100
@@ -140,13 +140,13 @@ func TestBTreeSearchNotFound(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert some keys
 	for i := 0; i < 10; i++ {
 		key := intKey(i * 2) // Even numbers only
 		rid := testRID(uint32(i), 0)
-		bt.Insert(key, rid)
+		_ = bt.Insert(key, rid)
 	}
 
 	// Search for non-existent key (odd number)
@@ -167,7 +167,7 @@ func TestBTreeDuplicateKey(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true) // unique=true
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	key := []byte("duplicate")
 	rid1 := testRID(1, 1)
@@ -196,7 +196,7 @@ func TestBTreeNonUniqueDuplicateKey(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", false) // unique=false
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	key := []byte("duplicate")
 	rid1 := testRID(1, 1)
@@ -218,7 +218,7 @@ func TestBTreeEmptyKey(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert with empty key should fail
 	err := bt.Insert([]byte{}, testRID(1, 1))
@@ -240,13 +240,13 @@ func TestBTreeRangeSearch(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert keys 0-99
 	for i := 0; i < 100; i++ {
 		key := intKey(i)
 		rid := testRID(uint32(i), 0)
-		bt.Insert(key, rid)
+		_ = bt.Insert(key, rid)
 	}
 
 	// Range query [25, 50]
@@ -274,13 +274,13 @@ func TestBTreeRangeSearchOpenEnded(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert keys 0-49
 	for i := 0; i < 50; i++ {
 		key := intKey(i)
 		rid := testRID(uint32(i), 0)
-		bt.Insert(key, rid)
+		_ = bt.Insert(key, rid)
 	}
 
 	// All keys from beginning to 10
@@ -318,13 +318,13 @@ func TestBTreeDelete(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert 20 keys
 	for i := 0; i < 20; i++ {
 		key := intKey(i)
 		rid := testRID(uint32(i), 0)
-		bt.Insert(key, rid)
+		_ = bt.Insert(key, rid)
 	}
 
 	// Delete key 10
@@ -355,11 +355,11 @@ func TestBTreeDeleteNonExistent(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert some keys
 	for i := 0; i < 10; i++ {
-		bt.Insert(intKey(i), testRID(uint32(i), 0))
+		_ = bt.Insert(intKey(i), testRID(uint32(i), 0))
 	}
 
 	// Delete non-existent key
@@ -374,12 +374,12 @@ func TestBTreeDeleteAll(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert keys
 	count := 50
 	for i := 0; i < count; i++ {
-		bt.Insert(intKey(i), testRID(uint32(i), 0))
+		_ = bt.Insert(intKey(i), testRID(uint32(i), 0))
 	}
 
 	// Delete all keys in random order
@@ -406,7 +406,7 @@ func TestBTreeRandomOperations(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Keep track of what we've inserted
 	inserted := make(map[int]storage.RID)
@@ -448,7 +448,7 @@ func TestBTreeLargeScale(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	count := 10000
 	for i := 0; i < count; i++ {
@@ -502,7 +502,7 @@ func TestBTreePersistence(t *testing.T) {
 	for i := 0; i < count; i++ {
 		key := intKey(i)
 		rid := testRID(uint32(i), uint16(i))
-		bt1.Insert(key, rid)
+		_ = bt1.Insert(key, rid)
 	}
 
 	rootPage := bt1.RootPage()
@@ -513,7 +513,7 @@ func TestBTreePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to reopen pager: %v", err)
 	}
-	defer pager2.Close()
+	defer func() { _ = pager2.Close() }()
 
 	bt2, err := New(Config{
 		Pager:      pager2,
@@ -548,7 +548,7 @@ func TestBTreeLeafSplit(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert enough keys to trigger splits
 	for i := 0; i < 200; i++ {
@@ -577,7 +577,7 @@ func TestBTreeReverseInsert(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert in reverse order
 	count := 100
@@ -614,12 +614,12 @@ func TestBTreeConcurrentReads(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Populate
 	count := 1000
 	for i := 0; i < count; i++ {
-		bt.Insert(intKey(i), testRID(uint32(i), 0))
+		_ = bt.Insert(intKey(i), testRID(uint32(i), 0))
 	}
 
 	// Concurrent reads
@@ -653,7 +653,7 @@ func TestBTreeLargeKey(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Create a reasonably large key (but not too large)
 	largeKey := make([]byte, 100)
@@ -680,7 +680,7 @@ func TestBTreeSingleByteKey(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Single byte key
 	key := []byte{0x42}
@@ -704,7 +704,7 @@ func TestBTreeVariableLengthKeys(t *testing.T) {
 	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// Insert keys of various lengths
 	keys := [][]byte{
