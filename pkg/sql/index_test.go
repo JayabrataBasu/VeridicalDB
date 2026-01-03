@@ -20,7 +20,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 
 	tm, err := catalog.NewTableManager(dir, 4096, nil)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("Failed to create table manager: %v", err)
 	}
 
@@ -29,7 +29,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
 
@@ -38,7 +38,7 @@ func setupIndexTest(t *testing.T) (*Session, *btree.IndexManager, func()) {
 
 	cleanup := func() {
 		idxMgr.Close()
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return session, idxMgr, cleanup
@@ -113,8 +113,8 @@ func TestDropIndex(t *testing.T) {
 	defer cleanup()
 
 	// Create a table and index
-	session.ExecuteSQL("CREATE TABLE orders (id INT, customer_id INT);")
-	session.ExecuteSQL("CREATE INDEX idx_orders_customer ON orders (customer_id);")
+	_, _ = session.ExecuteSQL("CREATE TABLE orders (id INT, customer_id INT);")
+	_, _ = session.ExecuteSQL("CREATE INDEX idx_orders_customer ON orders (customer_id);")
 
 	// Verify index exists
 	_, err := idxMgr.GetIndex("idx_orders_customer")
@@ -142,7 +142,7 @@ func TestCreateIndexErrors(t *testing.T) {
 	defer cleanup()
 
 	// Create a table
-	session.ExecuteSQL("CREATE TABLE test (id INT, name TEXT);")
+	_, _ = session.ExecuteSQL("CREATE TABLE test (id INT, name TEXT);")
 
 	// Test: index on non-existent table
 	_, err := session.ExecuteSQL("CREATE INDEX idx_foo ON nonexistent (id);")
@@ -157,7 +157,7 @@ func TestCreateIndexErrors(t *testing.T) {
 	}
 
 	// Test: duplicate index name
-	session.ExecuteSQL("CREATE INDEX idx_test_id ON test (id);")
+	_, _ = session.ExecuteSQL("CREATE INDEX idx_test_id ON test (id);")
 	_, err = session.ExecuteSQL("CREATE INDEX idx_test_id ON test (name);")
 	if err == nil {
 		t.Error("Expected error for duplicate index name")
@@ -170,7 +170,7 @@ func TestCreateIndexWithoutManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	// Setup without IndexManager
 	tm, err := catalog.NewTableManager(dir, 4096, nil)
@@ -184,7 +184,7 @@ func TestCreateIndexWithoutManager(t *testing.T) {
 	session := NewSession(mtm) // No IndexManager set
 
 	// Create a table
-	session.ExecuteSQL("CREATE TABLE test (id INT);")
+	_, _ = session.ExecuteSQL("CREATE TABLE test (id INT);")
 
 	// Try to create index without IndexManager - should fail
 	_, err = session.ExecuteSQL("CREATE INDEX idx_test ON test (id);")
@@ -388,21 +388,21 @@ func TestIndexScanSelect(t *testing.T) {
 	}
 
 	// Insert data AFTER index creation so index gets populated
-	session.ExecuteSQL("BEGIN;")
-	session.ExecuteSQL("INSERT INTO products VALUES (1, 'Widget', 100);")
-	session.ExecuteSQL("INSERT INTO products VALUES (2, 'Gadget', 200);")
-	session.ExecuteSQL("INSERT INTO products VALUES (3, 'Doohickey', 300);")
-	session.ExecuteSQL("INSERT INTO products VALUES (4, 'Gizmo', 100);")
-	session.ExecuteSQL("INSERT INTO products VALUES (5, 'Thingamajig', 100);")
-	session.ExecuteSQL("COMMIT;")
+	_, _ = session.ExecuteSQL("BEGIN;")
+	_, _ = session.ExecuteSQL("INSERT INTO products VALUES (1, 'Widget', 100);")
+	_, _ = session.ExecuteSQL("INSERT INTO products VALUES (2, 'Gadget', 200);")
+	_, _ = session.ExecuteSQL("INSERT INTO products VALUES (3, 'Doohickey', 300);")
+	_, _ = session.ExecuteSQL("INSERT INTO products VALUES (4, 'Gizmo', 100);")
+	_, _ = session.ExecuteSQL("INSERT INTO products VALUES (5, 'Thingamajig', 100);")
+	_, _ = session.ExecuteSQL("COMMIT;")
 
 	// Query using the indexed column
-	session.ExecuteSQL("BEGIN;")
+	_, _ = session.ExecuteSQL("BEGIN;")
 	result, err := session.ExecuteSQL("SELECT * FROM products WHERE price = 100;")
 	if err != nil {
 		t.Fatalf("SELECT failed: %v", err)
 	}
-	session.ExecuteSQL("COMMIT;")
+	_, _ = session.ExecuteSQL("COMMIT;")
 
 	// We should get 3 results (Widget, Gizmo, Thingamajig all have price=100)
 	if len(result.Rows) != 3 {
@@ -413,12 +413,12 @@ func TestIndexScanSelect(t *testing.T) {
 	}
 
 	// Query for a price that doesn't exist
-	session.ExecuteSQL("BEGIN;")
+	_, _ = session.ExecuteSQL("BEGIN;")
 	result, err = session.ExecuteSQL("SELECT * FROM products WHERE price = 999;")
 	if err != nil {
 		t.Fatalf("SELECT failed: %v", err)
 	}
-	session.ExecuteSQL("COMMIT;")
+	_, _ = session.ExecuteSQL("COMMIT;")
 
 	if len(result.Rows) != 0 {
 		t.Errorf("Expected 0 rows with price=999, got %d", len(result.Rows))
@@ -439,13 +439,13 @@ func TestIndexOnExistingData(t *testing.T) {
 	}
 
 	// Insert data BEFORE index creation
-	session.ExecuteSQL("BEGIN;")
-	session.ExecuteSQL("INSERT INTO items VALUES (1, 10, 'A');")
-	session.ExecuteSQL("INSERT INTO items VALUES (2, 20, 'B');")
-	session.ExecuteSQL("INSERT INTO items VALUES (3, 10, 'C');")
-	session.ExecuteSQL("INSERT INTO items VALUES (4, 30, 'D');")
-	session.ExecuteSQL("INSERT INTO items VALUES (5, 10, 'E');")
-	session.ExecuteSQL("COMMIT;")
+	_, _ = session.ExecuteSQL("BEGIN;")
+	_, _ = session.ExecuteSQL("INSERT INTO items VALUES (1, 10, 'A');")
+	_, _ = session.ExecuteSQL("INSERT INTO items VALUES (2, 20, 'B');")
+	_, _ = session.ExecuteSQL("INSERT INTO items VALUES (3, 10, 'C');")
+	_, _ = session.ExecuteSQL("INSERT INTO items VALUES (4, 30, 'D');")
+	_, _ = session.ExecuteSQL("INSERT INTO items VALUES (5, 10, 'E');")
+	_, _ = session.ExecuteSQL("COMMIT;")
 
 	// Create index AFTER data exists
 	_, err = session.ExecuteSQL("CREATE INDEX idx_items_category ON items (category);")
@@ -454,12 +454,12 @@ func TestIndexOnExistingData(t *testing.T) {
 	}
 
 	// Query using the indexed column - should use index scan
-	session.ExecuteSQL("BEGIN;")
+	_, _ = session.ExecuteSQL("BEGIN;")
 	result, err := session.ExecuteSQL("SELECT * FROM items WHERE category = 10;")
 	if err != nil {
 		t.Fatalf("SELECT failed: %v", err)
 	}
-	session.ExecuteSQL("COMMIT;")
+	_, _ = session.ExecuteSQL("COMMIT;")
 
 	// We should get 3 results (A, C, E all have category=10)
 	if len(result.Rows) != 3 {
@@ -559,12 +559,12 @@ func TestIndexRangeScan(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			session.ExecuteSQL("BEGIN;")
+			_, _ = session.ExecuteSQL("BEGIN;")
 			result, err := session.ExecuteSQL(tc.query)
 			if err != nil {
 				t.Fatalf("Query failed: %v", err)
 			}
-			session.ExecuteSQL("COMMIT;")
+			_, _ = session.ExecuteSQL("COMMIT;")
 
 			if len(result.Rows) != tc.expectedN {
 				t.Errorf("Expected %d rows for %s, got %d", tc.expectedN, tc.expectDesc, len(result.Rows))

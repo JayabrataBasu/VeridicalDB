@@ -95,7 +95,7 @@ func Open(arg interface{}) (*WAL, error) {
 	// Determine current LSN from file size
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("stat wal file: %w", err)
 	}
 	w.currentLSN = LSN(info.Size())
@@ -104,11 +104,11 @@ func Open(arg interface{}) (*WAL, error) {
 	if w.currentLSN == 0 {
 		magic := []byte("VDBWAL01") // 8 bytes
 		if _, err := file.Write(magic); err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("write wal magic: %w", err)
 		}
 		if err := file.Sync(); err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("sync wal magic: %w", err)
 		}
 		w.currentLSN = LSN(len(magic))
@@ -118,7 +118,7 @@ func Open(arg interface{}) (*WAL, error) {
 
 	// Seek to end for appending
 	if _, err := file.Seek(0, io.SeekEnd); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("seek wal file: %w", err)
 	}
 
@@ -248,11 +248,11 @@ func (w *WAL) Close() error {
 	// Flush any remaining buffer
 	if len(w.buffer) > 0 {
 		if _, err := w.file.Write(w.buffer); err != nil {
-			w.file.Close()
+			_ = w.file.Close()
 			return fmt.Errorf("final write: %w", err)
 		}
 		if err := w.file.Sync(); err != nil {
-			w.file.Close()
+			_ = w.file.Close()
 			return fmt.Errorf("final sync: %w", err)
 		}
 	}
@@ -281,7 +281,7 @@ func (w *WAL) NewIterator() (*Iterator, error) {
 
 	info, err := file.Stat()
 	if err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, fmt.Errorf("stat wal: %w", err)
 	}
 
@@ -305,7 +305,7 @@ func (w *WAL) NewIterator() (*Iterator, error) {
 	// Seek to offset
 	if offset > 0 {
 		if _, err := file.Seek(offset, 0); err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("seek past header: %w", err)
 		}
 	}
@@ -328,7 +328,7 @@ func (w *WAL) NewIteratorFrom(startLSN LSN) (*Iterator, error) {
 	// Otherwise, keep the offset determined by NewIterator (which skips header).
 	if startLSN > 0 {
 		if _, err := it.file.Seek(int64(startLSN), io.SeekStart); err != nil {
-			it.Close()
+			_ = it.Close()
 			return nil, fmt.Errorf("seek to LSN: %w", err)
 		}
 		it.offset = int64(startLSN)
@@ -421,7 +421,7 @@ func (w *WAL) Iterate(startLSN LSN, fn func(*Record) error) error {
 	if err != nil {
 		return err
 	}
-	defer it.Close()
+	defer func() { _ = it.Close() }()
 
 	for {
 		rec, err := it.Next()

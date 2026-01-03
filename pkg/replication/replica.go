@@ -53,7 +53,7 @@ func (m *Manager) connectToPrimary() error {
 	m.mu.Lock()
 	if m.primaryConn != nil {
 		m.primaryConn.cancel()
-		m.primaryConn.conn.Close()
+		_ = m.primaryConn.conn.Close()
 	}
 	m.mu.Unlock()
 
@@ -81,7 +81,7 @@ func (m *Manager) connectToPrimary() error {
 
 	// Perform handshake
 	if err := m.handshakeWithPrimary(pc); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return err
 	}
 
@@ -103,12 +103,12 @@ func (m *Manager) handshakeWithPrimary(pc *primaryConn) error {
 	}
 
 	// Wait for acknowledgment
-	pc.conn.SetReadDeadline(time.Now().Add(m.config.ConnectTimeout))
+	_ = pc.conn.SetReadDeadline(time.Now().Add(m.config.ConnectTimeout))
 	msgType, data, err := pc.reader.readMessage()
 	if err != nil {
 		return fmt.Errorf("read identify ack: %w", err)
 	}
-	pc.conn.SetReadDeadline(time.Time{}) // Clear deadline
+	_ = pc.conn.SetReadDeadline(time.Time{}) // Clear deadline
 
 	if msgType == MsgError {
 		return fmt.Errorf("primary error: %s", string(data))
@@ -167,7 +167,7 @@ func (m *Manager) streamFromPrimary(pc *primaryConn) error {
 		}
 
 		// Set read deadline
-		pc.conn.SetReadDeadline(time.Now().Add(m.config.HeartbeatInterval * 3))
+		_ = pc.conn.SetReadDeadline(time.Now().Add(m.config.HeartbeatInterval * 3))
 
 		msgType, data, err := pc.reader.readMessage()
 		if err != nil {
@@ -273,7 +273,7 @@ func (m *Manager) handlePromote() error {
 
 	// Close connection to old primary
 	if m.primaryConn != nil {
-		m.primaryConn.conn.Close()
+		_ = m.primaryConn.conn.Close()
 		m.primaryConn = nil
 	}
 

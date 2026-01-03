@@ -131,7 +131,7 @@ func TestServerConnection(t *testing.T) {
 	defer cleanup()
 
 	conn := connectToServer(t, port)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Read welcome message
 	reader := bufio.NewReader(conn)
@@ -153,11 +153,11 @@ func TestServerHelp(t *testing.T) {
 	defer cleanup()
 
 	conn := connectToServer(t, port)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Skip welcome
 	reader := bufio.NewReader(conn)
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 
 	response := sendAndReceive(t, conn, "HELP;")
 	if !strings.Contains(response, "Commands:") {
@@ -170,11 +170,11 @@ func TestServerCreateAndQuery(t *testing.T) {
 	defer cleanup()
 
 	conn := connectToServer(t, port)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Skip welcome
 	reader := bufio.NewReader(conn)
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 
 	// Create table
 	response := sendAndReceive(t, conn, "CREATE TABLE users (id INT, name TEXT);")
@@ -203,11 +203,11 @@ func TestServerTransaction(t *testing.T) {
 	defer cleanup()
 
 	conn := connectToServer(t, port)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Skip welcome
 	reader := bufio.NewReader(conn)
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 
 	// Create table
 	sendAndReceive(t, conn, "CREATE TABLE items (id INT);")
@@ -240,10 +240,10 @@ func TestServerMultipleConnections(t *testing.T) {
 
 	// Connect multiple clients
 	conn1 := connectToServer(t, port)
-	defer conn1.Close()
+	defer func() { _ = conn1.Close() }()
 
 	conn2 := connectToServer(t, port)
-	defer conn2.Close()
+	defer func() { _ = conn2.Close() }()
 
 	// Give server time to register connections
 	time.Sleep(100 * time.Millisecond)
@@ -254,9 +254,9 @@ func TestServerMultipleConnections(t *testing.T) {
 
 	// Skip welcome messages
 	reader1 := bufio.NewReader(conn1)
-	reader1.ReadString('\n')
+	_, _ = reader1.ReadString('\n')
 	reader2 := bufio.NewReader(conn2)
-	reader2.ReadString('\n')
+	_, _ = reader2.ReadString('\n')
 
 	// Create table from conn1
 	sendAndReceive(t, conn1, "CREATE TABLE shared (id INT);")

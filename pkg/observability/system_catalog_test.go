@@ -16,7 +16,7 @@ func TestNewSystemCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestGetActiveTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestGetActiveTransactions(t *testing.T) {
 	}
 
 	// Commit one transaction
-	txnMgr.Commit(tx1.ID)
+	_ = txnMgr.Commit(tx1.ID)
 
 	rows = sc.GetActiveTransactions()
 	if len(rows) != 1 {
@@ -177,7 +177,7 @@ func TestGetLocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestGetLocks(t *testing.T) {
 	// Acquire some locks
 	tx := txnMgr.Begin()
 	resource := lock.ResourceID{Type: lock.ResourceRow, TableName: "test", RID: storage.RID{Table: "test", Page: 1, Slot: 100}}
-	lockMgr.Acquire(tx.ID, resource, lock.ModeExclusive)
+	_ = lockMgr.Acquire(tx.ID, resource, lock.ModeExclusive)
 
 	rows := sc.GetLocks()
 	if len(rows) != 1 {
@@ -199,7 +199,7 @@ func TestGetLocks(t *testing.T) {
 	}
 
 	// Release lock
-	lockMgr.Release(tx.ID, resource)
+	_ = lockMgr.Release(tx.ID, resource)
 
 	rows = sc.GetLocks()
 	if len(rows) != 0 {
@@ -212,7 +212,7 @@ func TestGetTables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -224,7 +224,7 @@ func TestGetTables(t *testing.T) {
 		{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 		{Name: "name", Type: catalog.TypeText},
 	}
-	cat.CreateTable("users", cols, nil, "row")
+	_, _ = cat.CreateTable("users", cols, nil, "row")
 
 	txnMgr := txn.NewManager()
 	lockMgr := lock.NewManager()
@@ -255,7 +255,7 @@ func TestGetColumns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -266,7 +266,7 @@ func TestGetColumns(t *testing.T) {
 		{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 		{Name: "email", Type: catalog.TypeText, NotNull: false},
 	}
-	cat.CreateTable("accounts", cols, nil, "row")
+	_, _ = cat.CreateTable("accounts", cols, nil, "row")
 
 	txnMgr := txn.NewManager()
 	lockMgr := lock.NewManager()
@@ -290,7 +290,7 @@ func TestGetStatistics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {
@@ -343,7 +343,7 @@ func TestPrometheusMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cat, err := catalog.NewCatalog(tmpDir)
 	if err != nil {

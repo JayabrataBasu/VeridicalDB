@@ -241,5 +241,5 @@ func setupConcurrencyTestServer(t *testing.T) (*Server, int, func()) {
 
 func skipWelcome(conn net.Conn) {
 	reader := bufio.NewReader(conn)
-	reader.ReadString('\n')
+	_, _ = reader.ReadString('\n')
 }

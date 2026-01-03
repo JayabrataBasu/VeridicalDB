@@ -101,7 +101,7 @@ func (n *ShardNode) acceptLoop() {
 // handleConnection handles a single client connection.
 func (n *ShardNode) handleConnection(conn net.Conn) {
 	defer n.wg.Done()
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	sessionID := fmt.Sprintf("%s-%d", conn.RemoteAddr().String(), n.info.ID)
 	session := n.getOrCreateSession(sessionID)
@@ -134,13 +134,13 @@ func (n *ShardNode) handleConnection(conn net.Conn) {
 		result, err := session.ExecuteSQL(query)
 		if err != nil {
 			response := fmt.Sprintf("ERROR: %v\n", err)
-			conn.Write([]byte(response))
+			_, _ = conn.Write([]byte(response))
 			continue
 		}
 
 		// Format response
 		response := formatResult(result)
-		conn.Write([]byte(response))
+		_, _ = conn.Write([]byte(response))
 	}
 }
 
@@ -239,7 +239,7 @@ func (n *ShardNode) Stop() error {
 	n.cancel()
 
 	if n.listener != nil {
-		n.listener.Close()
+		_ = n.listener.Close()
 	}
 
 	n.wg.Wait()

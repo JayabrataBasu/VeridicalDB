@@ -9,7 +9,7 @@ import (
 
 func TestIndexManagerPersistenceDebug(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	// Create and populate
 	im1, err := NewIndexManager(dir, 4096)

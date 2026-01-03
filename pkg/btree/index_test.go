@@ -9,7 +9,7 @@ import (
 
 func TestIndexManagerCreate(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestIndexManagerCreate(t *testing.T) {
 
 func TestIndexManagerDuplicate(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -77,7 +77,7 @@ func TestIndexManagerDuplicate(t *testing.T) {
 
 func TestIndexManagerDrop(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -106,7 +106,7 @@ func TestIndexManagerDrop(t *testing.T) {
 
 func TestIndexManagerInsertSearch(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -147,7 +147,7 @@ func TestIndexManagerInsertSearch(t *testing.T) {
 
 func TestIndexManagerRangeSearch(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -181,7 +181,7 @@ func TestIndexManagerRangeSearch(t *testing.T) {
 
 func TestIndexManagerListIndexes(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	im, err := NewIndexManager(dir, 4096)
 	if err != nil {
@@ -214,7 +214,7 @@ func TestIndexManagerListIndexes(t *testing.T) {
 
 func TestIndexManagerPersistence(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	// Create and populate
 	im1, err := NewIndexManager(dir, 4096)

@@ -15,7 +15,7 @@ func TestPreparedStatements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	walLog, err := wal.Open(tmpDir)
 	if err != nil {
@@ -97,7 +97,7 @@ func TestPreparedInsert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	walLog, err := wal.Open(tmpDir)
 	if err != nil {

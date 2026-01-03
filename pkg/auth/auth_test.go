@@ -14,7 +14,7 @@ func TestUserCatalog_CreateUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -51,7 +51,7 @@ func TestUserCatalog_DropUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -94,7 +94,7 @@ func TestUserCatalog_Authenticate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -134,7 +134,7 @@ func TestUserCatalog_AlterPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -171,7 +171,7 @@ func TestUserCatalog_SetSuperuser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -219,7 +219,7 @@ func TestUserCatalog_GrantRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestUserCatalog_GrantAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -326,7 +326,7 @@ func TestUserCatalog_SuperuserHasAllPrivileges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -359,7 +359,7 @@ func TestUserCatalog_Persistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a catalog and add users
 	catalog, err := NewUserCatalog(tmpDir)
@@ -430,7 +430,7 @@ func TestUserCatalog_ListUsers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -495,7 +495,7 @@ func TestUserCatalog_CheckAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	catalog, err := NewUserCatalog(tmpDir)
 	if err != nil {
@@ -532,7 +532,7 @@ func TestUserCatalog_DefaultAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a fresh catalog - should create default admin
 	catalog, err := NewUserCatalog(tmpDir)
@@ -569,7 +569,7 @@ func TestUserCatalog_LegacyPasswordMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a legacy user JSON file (SHA256 hex with salt)
 	salt := "deadbeefcafebabe"
@@ -612,7 +612,7 @@ func TestUserCatalog_FilePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	_, err = NewUserCatalog(tmpDir)
 	if err != nil {

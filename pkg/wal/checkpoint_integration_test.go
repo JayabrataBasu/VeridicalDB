@@ -24,7 +24,7 @@ func TestCheckpointIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open WAL: %v", err)
 	}
-	defer walLog.Close()
+	defer func() { _ = walLog.Close() }()
 
 	// Initialize TxnManager
 	txnMgr := txn.NewManager()
@@ -112,7 +112,7 @@ func TestCheckpointIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reopen WAL: %v", err)
 	}
-	defer walLog2.Close()
+	defer func() { _ = walLog2.Close() }()
 
 	// Find last checkpoint
 	ckptLSN, _, err := wal.FindLastCheckpoint(walLog2)
@@ -141,7 +141,7 @@ func TestAutomaticCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open WAL: %v", err)
 	}
-	defer walLog.Close()
+	defer func() { _ = walLog.Close() }()
 
 	txnMgr := txn.NewManager()
 	txnLogger := wal.NewTxnLogger(walLog, txnMgr)

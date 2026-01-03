@@ -11,7 +11,7 @@ func TestTriggerCatalog_CreateTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create trigger catalog
 	tc, err := NewTriggerCatalog(tmpDir)
@@ -57,7 +57,7 @@ func TestTriggerCatalog_DuplicateTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestTriggerCatalog_DropTrigger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -126,7 +126,7 @@ func TestTriggerCatalog_DropNonexistent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestTriggerCatalog_GetTriggersForTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestTriggerCatalog_GetTriggersForTableEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -236,7 +236,7 @@ func TestTriggerCatalog_EnableDisable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -293,7 +293,7 @@ func TestTriggerCatalog_Persistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create catalog and add triggers
 	tc1, err := NewTriggerCatalog(tmpDir)
@@ -344,7 +344,7 @@ func TestTriggerCatalog_ListAllTriggers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {
@@ -376,7 +376,7 @@ func TestTriggerCatalog_DropTriggersForTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tc, err := NewTriggerCatalog(tmpDir)
 	if err != nil {

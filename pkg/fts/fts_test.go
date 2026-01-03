@@ -359,7 +359,7 @@ func TestManagerCreateIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr, err := NewManager(tmpDir)
 	if err != nil {
@@ -383,7 +383,7 @@ func TestManagerDropIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr, err := NewManager(tmpDir)
 	if err != nil {
@@ -412,7 +412,7 @@ func TestManagerIndexDocument(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr, err := NewManager(tmpDir)
 	if err != nil {
@@ -516,7 +516,7 @@ func TestFullTextSearchWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	mgr, err := NewManager(tmpDir)
 	if err != nil {
@@ -675,7 +675,7 @@ func TestIndexPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create and populate index
 	idx := NewInvertedIndex("persist_test", "test_table", []string{"content"})

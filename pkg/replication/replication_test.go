@@ -32,7 +32,7 @@ func TestNewManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "node1",
@@ -62,7 +62,7 @@ func TestManagerPrimaryRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -80,7 +80,7 @@ func TestManagerPrimaryRole(t *testing.T) {
 	if err := mgr.Start(); err != nil {
 		t.Fatalf("start as primary: %v", err)
 	}
-	defer mgr.Stop()
+	defer func() { _ = mgr.Stop() }()
 
 	if !mgr.IsPrimary() {
 		t.Error("expected to be primary after Start")
@@ -101,7 +101,7 @@ func TestManagerPrimaryRole(t *testing.T) {
 func TestManagerReplicaRole(t *testing.T) {
 	// First create a primary
 	primaryWAL, _ := createTestWAL(t, "primary")
-	defer primaryWAL.Close()
+	defer func() { _ = primaryWAL.Close() }()
 
 	primaryConfig := Config{
 		NodeID:     "primary",
@@ -116,7 +116,7 @@ func TestManagerReplicaRole(t *testing.T) {
 	if err := primary.Start(); err != nil {
 		t.Fatalf("start primary: %v", err)
 	}
-	defer primary.Stop()
+	defer func() { _ = primary.Stop() }()
 
 	// Get the actual listen address
 	primary.mu.RLock()
@@ -125,7 +125,7 @@ func TestManagerReplicaRole(t *testing.T) {
 
 	// Create a replica
 	replicaWAL, _ := createTestWAL(t, "replica")
-	defer replicaWAL.Close()
+	defer func() { _ = replicaWAL.Close() }()
 
 	replicaConfig := Config{
 		NodeID:      "replica",
@@ -144,7 +144,7 @@ func TestManagerReplicaRole(t *testing.T) {
 	if err := replica.Start(); err != nil {
 		t.Fatalf("start as replica: %v", err)
 	}
-	defer replica.Stop()
+	defer func() { _ = replica.Stop() }()
 
 	if !replica.IsReplica() {
 		t.Error("expected to be replica after Start")
@@ -167,7 +167,7 @@ func TestManagerReplicaRole(t *testing.T) {
 func TestWALStreaming(t *testing.T) {
 	// Create primary
 	primaryWAL, _ := createTestWAL(t, "primary")
-	defer primaryWAL.Close()
+	defer func() { _ = primaryWAL.Close() }()
 
 	primaryConfig := Config{
 		NodeID:     "primary",
@@ -182,7 +182,7 @@ func TestWALStreaming(t *testing.T) {
 	if err := primary.Start(); err != nil {
 		t.Fatalf("start primary: %v", err)
 	}
-	defer primary.Stop()
+	defer func() { _ = primary.Stop() }()
 
 	primary.mu.RLock()
 	primaryAddr := primary.listener.Addr().String()
@@ -190,7 +190,7 @@ func TestWALStreaming(t *testing.T) {
 
 	// Create replica
 	replicaWAL, _ := createTestWAL(t, "replica")
-	defer replicaWAL.Close()
+	defer func() { _ = replicaWAL.Close() }()
 
 	// Track applied records (guarded by mutex to avoid races)
 	var appliedMu sync.Mutex
@@ -215,7 +215,7 @@ func TestWALStreaming(t *testing.T) {
 	if err := replica.Start(); err != nil {
 		t.Fatalf("start replica: %v", err)
 	}
-	defer replica.Stop()
+	defer func() { _ = replica.Stop() }()
 
 	// Wait for replica to connect
 	time.Sleep(200 * time.Millisecond)
@@ -233,7 +233,7 @@ func TestWALStreaming(t *testing.T) {
 		}
 
 		// Notify replicas
-		primary.BroadcastWAL(rec)
+		_ = primary.BroadcastWAL(rec)
 	}
 
 	// Wait for replication
@@ -322,7 +322,7 @@ func TestFailoverManagerHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -426,7 +426,7 @@ func TestManagerStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "node1",
@@ -482,7 +482,7 @@ func TestFailoverManagerStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -510,7 +510,7 @@ func TestFailoverManagerClusterInfo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -525,7 +525,7 @@ func TestFailoverManagerClusterInfo(t *testing.T) {
 	if err := mgr.Start(); err != nil {
 		t.Fatalf("start as primary: %v", err)
 	}
-	defer mgr.Stop()
+	defer func() { _ = mgr.Stop() }()
 
 	fm := NewFailoverManager(mgr, DefaultFailoverConfig())
 
@@ -548,7 +548,7 @@ func TestFailoverCallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "node1",
@@ -637,7 +637,7 @@ func TestPromote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:      "replica",
@@ -682,7 +682,7 @@ func TestDemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -697,7 +697,7 @@ func TestDemote(t *testing.T) {
 	if err := mgr.Start(); err != nil {
 		t.Fatalf("start as primary: %v", err)
 	}
-	defer mgr.Stop()
+	defer func() { _ = mgr.Stop() }()
 
 	fm := NewFailoverManager(mgr, DefaultFailoverConfig())
 
@@ -733,7 +733,7 @@ func TestHealthyReplicas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:     "primary",
@@ -768,7 +768,7 @@ func TestFailoverNotPrimary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:      "replica",
@@ -798,7 +798,7 @@ func TestLSNTracking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open WAL: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	config := Config{
 		NodeID:      "replica",

@@ -73,7 +73,7 @@ func TestSnapshot(t *testing.T) {
 	}
 
 	// Commit tx1
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2's snapshot should still see tx1 as in-progress (snapshot is immutable)
 	if !tx2.Snapshot.IsInProgress(tx1.ID) {
@@ -113,7 +113,7 @@ func TestVisibilityCommittedTransaction(t *testing.T) {
 	// tx1 creates a tuple and commits
 	tx1 := mgr.Begin()
 	header := &MVCCHeader{XMin: tx1.ID, XMax: InvalidTxID}
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2 starts after tx1 commits - should see the tuple
 	tx2 := mgr.Begin()
@@ -136,7 +136,7 @@ func TestVisibilityUncommittedTransaction(t *testing.T) {
 	}
 
 	// Now tx1 commits
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2 still shouldn't see it (snapshot was taken before commit)
 	if IsVisible(header, tx2.Snapshot, mgr, tx2.ID) {
@@ -156,7 +156,7 @@ func TestVisibilityAbortedTransaction(t *testing.T) {
 	// tx1 creates a tuple and aborts
 	tx1 := mgr.Begin()
 	header := &MVCCHeader{XMin: tx1.ID, XMax: InvalidTxID}
-	mgr.Abort(tx1.ID)
+	_ = mgr.Abort(tx1.ID)
 
 	// tx2 should NOT see the tuple (tx1 aborted)
 	tx2 := mgr.Begin()
@@ -171,7 +171,7 @@ func TestVisibilityDeletedTuple(t *testing.T) {
 	// tx1 creates a tuple
 	tx1 := mgr.Begin()
 	header := &MVCCHeader{XMin: tx1.ID, XMax: InvalidTxID}
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2 sees the tuple
 	tx2 := mgr.Begin()
@@ -189,7 +189,7 @@ func TestVisibilityDeletedTuple(t *testing.T) {
 	}
 
 	// tx3 commits the deletion
-	mgr.Commit(tx3.ID)
+	_ = mgr.Commit(tx3.ID)
 
 	// tx2's snapshot still shows it (tx3 was in-progress when snapshot taken)
 	if !IsVisible(header, tx2.Snapshot, mgr, tx2.ID) {
@@ -209,12 +209,12 @@ func TestVisibilityDeleteAborted(t *testing.T) {
 	// tx1 creates and commits a tuple
 	tx1 := mgr.Begin()
 	header := &MVCCHeader{XMin: tx1.ID, XMax: InvalidTxID}
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2 tries to delete but aborts
 	tx2 := mgr.Begin()
 	header.XMax = tx2.ID
-	mgr.Abort(tx2.ID)
+	_ = mgr.Abort(tx2.ID)
 
 	// tx3 should still see the tuple (deletion was aborted)
 	tx3 := mgr.Begin()
@@ -241,7 +241,7 @@ func TestCanModify(t *testing.T) {
 	// Create a committed tuple
 	tx1 := mgr.Begin()
 	header := &MVCCHeader{XMin: tx1.ID, XMax: InvalidTxID}
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 
 	// tx2 should be able to modify it
 	tx2 := mgr.Begin()
@@ -271,7 +271,7 @@ func TestCanModify(t *testing.T) {
 	}
 
 	// If tx2 aborts, tx3 can modify
-	mgr.Abort(tx2.ID)
+	_ = mgr.Abort(tx2.ID)
 	canMod, err = CanModify(header, tx3.ID, mgr)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -298,12 +298,12 @@ func TestActiveCount(t *testing.T) {
 		t.Errorf("expected 2 active, got %d", mgr.ActiveCount())
 	}
 
-	mgr.Commit(tx1.ID)
+	_ = mgr.Commit(tx1.ID)
 	if mgr.ActiveCount() != 1 {
 		t.Errorf("expected 1 active after commit, got %d", mgr.ActiveCount())
 	}
 
-	mgr.Abort(tx2.ID)
+	_ = mgr.Abort(tx2.ID)
 	if mgr.ActiveCount() != 0 {
 		t.Errorf("expected 0 active after abort, got %d", mgr.ActiveCount())
 	}

@@ -141,14 +141,8 @@ func legacyHashPassword(password, salt string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// generateSalt creates a random salt for legacy accounts (kept for migration support).
-func generateSalt() (string, error) {
-	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(bytes), nil
-}
+// Note: legacy salt generator removed; legacy accounts are migrated on first login and
+// new accounts use bcrypt without salts.
 
 // bcrypt cost to use for new password hashes.
 const bcryptCost = 12

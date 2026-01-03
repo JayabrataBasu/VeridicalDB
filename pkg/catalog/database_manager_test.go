@@ -11,7 +11,7 @@ func TestDatabaseManager_CreateDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -65,7 +65,7 @@ func TestDatabaseManager_CreateDatabaseIfNotExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestDatabaseManager_DropDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -139,7 +139,7 @@ func TestDatabaseManager_DropDatabase_IfExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestDatabaseManager_DropDatabase_Default(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -198,7 +198,7 @@ func TestDatabaseManager_GetDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -234,7 +234,7 @@ func TestDatabaseManager_ListDatabases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -266,7 +266,7 @@ func TestDatabaseManager_GetCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {
@@ -303,7 +303,7 @@ func TestDatabaseManager_Persistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create manager and databases
 	dm1, err := NewDatabaseManager(tmpDir)
@@ -352,7 +352,7 @@ func TestDatabaseManager_GetDatabasePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	dm, err := NewDatabaseManager(tmpDir)
 	if err != nil {

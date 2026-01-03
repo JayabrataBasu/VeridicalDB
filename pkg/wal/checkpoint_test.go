@@ -14,7 +14,7 @@ func TestCheckpointBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -27,8 +27,8 @@ func TestCheckpointBasic(t *testing.T) {
 
 	// Do some work first so the WAL has content
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
-	logger.Commit(tx.ID)
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
+	_ = logger.Commit(tx.ID)
 
 	// Perform a checkpoint
 	if err := checkpointer.Checkpoint(); err != nil {
@@ -73,7 +73,7 @@ func TestCheckpointWithActiveTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -84,8 +84,8 @@ func TestCheckpointWithActiveTransactions(t *testing.T) {
 	tx2, _ := logger.Begin()
 
 	// Do some work
-	logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
+	_, _ = logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
 
 	// Checkpoint while transactions are active
 	if err := checkpointer.Checkpoint(); err != nil {
@@ -120,8 +120,8 @@ func TestCheckpointWithActiveTransactions(t *testing.T) {
 	}
 
 	// Now commit transactions
-	logger.Commit(tx1.ID)
-	logger.Commit(tx2.ID)
+	_ = logger.Commit(tx1.ID)
+	_ = logger.Commit(tx2.ID)
 
 	// Another checkpoint
 	if err := checkpointer.Checkpoint(); err != nil {
@@ -146,7 +146,7 @@ func TestCheckpointWithPageFlusher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -176,15 +176,15 @@ func TestFindLastCheckpointNoCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Write some records but no checkpoint
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
-	logger.Commit(tx.ID)
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
+	_ = logger.Commit(tx.ID)
 
 	// Should find no checkpoint
 	cpLSN, activeTxns, err := FindLastCheckpoint(w)
@@ -207,23 +207,23 @@ func TestFindLastCheckpointMultiple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 	checkpointer := NewCheckpointer(w, logger)
 
 	// First checkpoint
-	checkpointer.Checkpoint()
+	_ = checkpointer.Checkpoint()
 	firstCPLSN := checkpointer.LastCheckpointLSN()
 
 	// Some more work
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
-	logger.Commit(tx.ID)
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row"))
+	_ = logger.Commit(tx.ID)
 
 	// Second checkpoint
-	checkpointer.Checkpoint()
+	_ = checkpointer.Checkpoint()
 	secondCPLSN := checkpointer.LastCheckpointLSN()
 
 	if secondCPLSN <= firstCPLSN {
@@ -248,7 +248,7 @@ func TestCheckpointBackground(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)

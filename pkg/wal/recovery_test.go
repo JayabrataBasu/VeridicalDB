@@ -13,7 +13,7 @@ func TestRecoveryNoTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	recovery := NewRecovery(w)
 	stats, err := recovery.Recover()
@@ -33,17 +33,17 @@ func TestRecoveryAnalysisCommittedTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Committed transaction
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
-	logger.Commit(tx.ID)
-	w.Flush()
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
+	_ = logger.Commit(tx.ID)
+	_ = w.Flush()
 
 	// Analyze
 	recovery := NewRecovery(w)
@@ -70,17 +70,17 @@ func TestRecoveryAnalysisUncommittedTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Uncommitted transaction (simulates crash before commit)
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
 	// No commit!
-	w.Flush()
+	_ = w.Flush()
 
 	// Analyze
 	recovery := NewRecovery(w)
@@ -107,31 +107,31 @@ func TestRecoveryAnalysisMixedTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// tx1: committed
 	tx1, _ := logger.Begin()
-	logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
-	logger.Commit(tx1.ID)
+	_, _ = logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
+	_ = logger.Commit(tx1.ID)
 
 	// tx2: uncommitted (loser)
 	tx2, _ := logger.Begin()
-	logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
+	_, _ = logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
 
 	// tx3: committed
 	tx3, _ := logger.Begin()
-	logger.LogInsert(tx3.ID, "t1", 1, 2, []byte("row3"))
-	logger.Commit(tx3.ID)
+	_, _ = logger.LogInsert(tx3.ID, "t1", 1, 2, []byte("row3"))
+	_ = logger.Commit(tx3.ID)
 
 	// tx4: aborted
 	tx4, _ := logger.Begin()
-	logger.LogInsert(tx4.ID, "t1", 1, 3, []byte("row4"))
-	logger.Abort(tx4.ID)
+	_, _ = logger.LogInsert(tx4.ID, "t1", 1, 3, []byte("row4"))
+	_ = logger.Abort(tx4.ID)
 
-	w.Flush()
+	_ = w.Flush()
 
 	// Analyze
 	recovery := NewRecovery(w)
@@ -162,17 +162,17 @@ func TestRecoveryRedo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Committed transaction
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
-	logger.Commit(tx.ID)
-	w.Flush()
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
+	_ = logger.Commit(tx.ID)
+	_ = w.Flush()
 
 	// Track redo operations
 	var redoRecords []*Record
@@ -210,18 +210,18 @@ func TestRecoveryUndo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Uncommitted transaction
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
-	logger.LogInsert(tx.ID, "t1", 1, 2, []byte("row3"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 2, []byte("row3"))
 	// No commit!
-	w.Flush()
+	_ = w.Flush()
 
 	// Track undo operations
 	var undoRecords []*Record
@@ -267,7 +267,7 @@ func TestRecoveryWithCheckpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -275,23 +275,23 @@ func TestRecoveryWithCheckpoint(t *testing.T) {
 
 	// tx1: committed before checkpoint
 	tx1, _ := logger.Begin()
-	logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
-	logger.Commit(tx1.ID)
+	_, _ = logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("row1"))
+	_ = logger.Commit(tx1.ID)
 
 	// Checkpoint
-	checkpointer.Checkpoint()
+	_ = checkpointer.Checkpoint()
 
 	// tx2: committed after checkpoint
 	tx2, _ := logger.Begin()
-	logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
-	logger.Commit(tx2.ID)
+	_, _ = logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("row2"))
+	_ = logger.Commit(tx2.ID)
 
 	// tx3: uncommitted after checkpoint
 	tx3, _ := logger.Begin()
-	logger.LogInsert(tx3.ID, "t1", 1, 2, []byte("row3"))
+	_, _ = logger.LogInsert(tx3.ID, "t1", 1, 2, []byte("row3"))
 	// No commit!
 
-	w.Flush()
+	_ = w.Flush()
 
 	// Recovery should:
 	// - Start from checkpoint
@@ -339,7 +339,7 @@ func TestRecoveryFromCheckpointWithActiveTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -347,16 +347,16 @@ func TestRecoveryFromCheckpointWithActiveTransaction(t *testing.T) {
 
 	// Start a transaction
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("before-checkpoint"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("before-checkpoint"))
 
 	// Checkpoint while transaction is active
-	checkpointer.Checkpoint()
+	_ = checkpointer.Checkpoint()
 
 	// More work after checkpoint
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("after-checkpoint"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("after-checkpoint"))
 
 	// Crash without commit!
-	w.Flush()
+	_ = w.Flush()
 
 	// Recovery should undo both inserts
 	var undoRecords []*Record
@@ -389,16 +389,16 @@ func TestRecoverWithHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
 
 	// Committed transaction
 	tx, _ := logger.Begin()
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.Commit(tx.ID)
-	w.Flush()
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_ = logger.Commit(tx.ID)
+	_ = w.Flush()
 
 	// Use convenience function
 	var redoCount int

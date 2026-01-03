@@ -71,7 +71,7 @@ func TestCrashRecoveryIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Reopen WAL failed: %v", err)
 		}
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 
 		// Reopen TableManager - this triggers StartRecovery
 		tm, err := NewTableManager(dataDir, 4096, w)

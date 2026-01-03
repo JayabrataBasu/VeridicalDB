@@ -19,7 +19,7 @@ func setupMVCCTest(t *testing.T) (*Session, func()) {
 
 	tm, err := catalog.NewTableManager(dir, 8192, nil)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("failed to create table manager: %v", err)
 	}
 
@@ -28,7 +28,7 @@ func setupMVCCTest(t *testing.T) (*Session, func()) {
 	session := NewSession(mtm)
 
 	cleanup := func() {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 
 	return session, cleanup

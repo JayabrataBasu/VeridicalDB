@@ -101,7 +101,7 @@ func (c *Coordinator) Connect(ctx context.Context) error {
 		if err != nil {
 			// Close any already-opened connections
 			for _, cl := range c.clients {
-				cl.Close()
+				_ = cl.Close()
 			}
 			c.clients = make(map[ShardID]*ShardClient)
 			return fmt.Errorf("connect to shard %d: %w", shard.ID, err)

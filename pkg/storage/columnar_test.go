@@ -13,7 +13,7 @@ func TestColumnarEngine_BasicOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -66,7 +66,7 @@ func TestColumnarEngine_BasicOperations(t *testing.T) {
 	if err := iter.Err(); err != nil {
 		t.Fatalf("Iterator error: %v", err)
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != 3 {
 		t.Errorf("Scan count: got %d, want 3", count)
@@ -87,7 +87,7 @@ func TestColumnarEngine_BasicOperations(t *testing.T) {
 	for iter.Next() {
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != 2 {
 		t.Errorf("Scan after delete: got %d, want 2", count)
@@ -103,7 +103,7 @@ func TestColumnarEngine_ColumnProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -118,7 +118,7 @@ func TestColumnarEngine_ColumnProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert some rows
 	for i := 0; i < 10; i++ {
@@ -157,7 +157,7 @@ func TestColumnarEngine_ColumnProjection(t *testing.T) {
 		}
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != 10 {
 		t.Errorf("Scan with projection count: got %d, want 10", count)
@@ -169,7 +169,7 @@ func TestColumnarEngine_NullValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -182,7 +182,7 @@ func TestColumnarEngine_NullValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert rows with null values
 	rows := []*Row{
@@ -217,7 +217,7 @@ func TestColumnarEngine_NullValues(t *testing.T) {
 		}
 		rowIdx++
 	}
-	iter.Close()
+	_ = iter.Close()
 }
 
 func TestColumnarEngine_SegmentFlush(t *testing.T) {
@@ -225,7 +225,7 @@ func TestColumnarEngine_SegmentFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -285,7 +285,7 @@ func TestColumnarEngine_SegmentFlush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reopen engine: %v", err)
 	}
-	defer engine2.Close()
+	defer func() { _ = engine2.Close() }()
 
 	iter, err := engine2.Scan(nil, nil)
 	if err != nil {
@@ -301,7 +301,7 @@ func TestColumnarEngine_SegmentFlush(t *testing.T) {
 		}
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != 100 {
 		t.Errorf("Row count after reopen: got %d, want 100", count)
@@ -313,7 +313,7 @@ func TestColumnarEngine_Update(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -326,7 +326,7 @@ func TestColumnarEngine_Update(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert a row
 	row := &Row{Values: []Value{{Data: int32(1)}, {Data: "original"}}}
@@ -360,7 +360,7 @@ func TestColumnarEngine_Update(t *testing.T) {
 		}
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if !foundUpdated {
 		t.Error("Updated value not found")
@@ -375,7 +375,7 @@ func TestColumnarEngine_Fetch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -388,7 +388,7 @@ func TestColumnarEngine_Fetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert rows
 	rids := make([]RID, 5)
@@ -431,7 +431,7 @@ func TestColumnarEngine_AllDataTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -448,7 +448,7 @@ func TestColumnarEngine_AllDataTypes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert row with all types
 	testBytes := []byte{0x01, 0x02, 0x03, 0x04}
@@ -508,7 +508,7 @@ func TestColumnarEngine_WithTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -521,7 +521,7 @@ func TestColumnarEngine_WithTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Create a mock transaction
 	tx := &txn.Transaction{ID: 100}
@@ -543,7 +543,7 @@ func TestColumnarEngine_WithTransaction(t *testing.T) {
 	for iter.Next() {
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != 1 {
 		t.Errorf("Scan with tx count: got %d, want 1", count)
@@ -559,7 +559,7 @@ func TestColumnarEngine_LargeDataset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	schema := &Schema{
 		Columns: []ColumnInfo{
@@ -572,7 +572,7 @@ func TestColumnarEngine_LargeDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnarEngine: %v", err)
 	}
-	defer engine.Close()
+	defer func() { _ = engine.Close() }()
 
 	// Insert 10,000 rows
 	const numRows = 10000
@@ -601,7 +601,7 @@ func TestColumnarEngine_LargeDataset(t *testing.T) {
 	for iter.Next() {
 		count++
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if count != numRows {
 		t.Errorf("Row count: got %d, want %d", count, numRows)

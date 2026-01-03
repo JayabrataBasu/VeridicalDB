@@ -264,7 +264,7 @@ func (fm *FailoverManager) performFailover(target ReplicaInfo) error {
 		// Close listener to stop accepting replicas
 		fm.replicationMgr.mu.Lock()
 		if fm.replicationMgr.listener != nil {
-			fm.replicationMgr.listener.Close()
+			_ = fm.replicationMgr.listener.Close()
 			fm.replicationMgr.listener = nil
 		}
 		fm.replicationMgr.mu.Unlock()
@@ -277,7 +277,7 @@ func (fm *FailoverManager) performFailover(target ReplicaInfo) error {
 		fm.mu.RUnlock()
 
 		// Start replicating from new primary
-		fm.replicationMgr.startReplica()
+		_ = fm.replicationMgr.startReplica()
 	}
 
 	return nil
@@ -358,7 +358,7 @@ func (fm *FailoverManager) Promote() error {
 
 	// Close connection to old primary
 	if fm.replicationMgr.primaryConn != nil {
-		fm.replicationMgr.primaryConn.conn.Close()
+		_ = fm.replicationMgr.primaryConn.conn.Close()
 		fm.replicationMgr.primaryConn = nil
 	}
 
@@ -431,7 +431,7 @@ func (fm *FailoverManager) Demote(newPrimaryAddr string) error {
 	fm.mu.RUnlock()
 
 	// Start replicating from new primary (use the proper function that adds to WaitGroup)
-	fm.replicationMgr.startReplica()
+	_ = fm.replicationMgr.startReplica()
 
 	return nil
 }
@@ -543,7 +543,7 @@ func (fm *FailoverManager) UnregisterReplica(id string) error {
 
 	if rc, ok := mgr.replicas[id]; ok {
 		rc.cancel()
-		rc.conn.Close()
+		_ = rc.conn.Close()
 		delete(mgr.replicas, id)
 	}
 

@@ -405,9 +405,9 @@ func TestWALCheckpoint(t *testing.T) {
 	}
 
 	// Simulate some transactions
-	w.Append(&Record{TxID: 1, Type: RecordBegin})
-	w.Append(&Record{TxID: 1, Type: RecordInsert, TableName: "t", PageID: 1, Data: []byte("d")})
-	w.Append(&Record{TxID: 1, Type: RecordCommit})
+	_, _ = w.Append(&Record{TxID: 1, Type: RecordBegin})
+	_, _ = w.Append(&Record{TxID: 1, Type: RecordInsert, TableName: "t", PageID: 1, Data: []byte("d")})
+	_, _ = w.Append(&Record{TxID: 1, Type: RecordCommit})
 
 	// Write checkpoint
 	checkpointLSN, err := w.Append(&Record{

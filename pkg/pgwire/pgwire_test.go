@@ -21,7 +21,7 @@ func TestProtocolMessages(t *testing.T) {
 	buf := NewBuffer()
 	buf.WriteInt32(12345)
 	buf.WriteInt16(100)
-	buf.WriteByte('X')
+	_ = buf.WriteByte('X')
 	buf.WriteString("hello")
 	buf.WriteBytes([]byte{1, 2, 3})
 
@@ -87,7 +87,7 @@ func TestMessageReader(t *testing.T) {
 	var buf bytes.Buffer
 
 	// Type byte
-	buf.WriteByte('Q')
+	_ = buf.WriteByte('Q')
 
 	// Length (including self)
 	payload := []byte("SELECT 1")
@@ -157,7 +157,7 @@ func TestServerStartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	dataDir := filepath.Join(dir, "data")
 
@@ -199,7 +199,7 @@ func TestSimpleConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	dataDir := filepath.Join(dir, "data")
 
@@ -222,7 +222,7 @@ func TestSimpleConnection(t *testing.T) {
 	if err := server.Start(0); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer server.Stop()
+	defer func() { _ = server.Stop() }()
 
 	addr := server.listener.Addr().(*net.TCPAddr)
 
@@ -231,7 +231,7 @@ func TestSimpleConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Send startup message
 	var startupBuf bytes.Buffer
@@ -240,7 +240,7 @@ func TestSimpleConnection(t *testing.T) {
 	startupBuf.Write([]byte{0, 0, 0, 0})
 
 	// Protocol version 3.0
-	binary.Write(&startupBuf, binary.BigEndian, int32(ProtocolVersionNumber))
+	_ = binary.Write(&startupBuf, binary.BigEndian, int32(ProtocolVersionNumber))
 
 	// Parameters
 	startupBuf.WriteString("user")
@@ -263,7 +263,7 @@ func TestSimpleConnection(t *testing.T) {
 
 	// Read response (should get AuthenticationOK, ParameterStatus messages, BackendKeyData, ReadyForQuery)
 	response := make([]byte, 4096)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := conn.Read(response)
 	if err != nil {
 		t.Fatalf("Failed to read response: %v", err)
@@ -312,7 +312,7 @@ func TestSimpleConnection(t *testing.T) {
 	}
 
 	// Read response
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err = conn.Read(response)
 	if err != nil {
 		t.Fatalf("Failed to read query response: %v", err)
@@ -340,7 +340,7 @@ func TestSimpleConnection(t *testing.T) {
 
 	// Send Terminate
 	terminate := []byte{MsgTerminate, 0, 0, 0, 4}
-	conn.Write(terminate)
+	_, _ = conn.Write(terminate)
 }
 
 // TestSSLRequest tests that the server correctly rejects SSL requests.
@@ -349,7 +349,7 @@ func TestSSLRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	dataDir := filepath.Join(dir, "data")
 
@@ -371,7 +371,7 @@ func TestSSLRequest(t *testing.T) {
 	if err := server.Start(0); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	defer server.Stop()
+	defer func() { _ = server.Stop() }()
 
 	addr := server.listener.Addr().(*net.TCPAddr)
 
@@ -379,7 +379,7 @@ func TestSSLRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to connect: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Send SSL request
 	sslRequest := make([]byte, 8)
@@ -392,7 +392,7 @@ func TestSSLRequest(t *testing.T) {
 
 	// Should receive 'N' (SSL not supported)
 	response := make([]byte, 1)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Read(response); err != nil {
 		t.Fatalf("Failed to read SSL response: %v", err)
 	}

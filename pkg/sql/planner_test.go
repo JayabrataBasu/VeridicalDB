@@ -14,13 +14,13 @@ func TestPlannerTableScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() { _ = idxMgr.Close() }()
 
 	planner := NewPlanner(idxMgr)
 
@@ -61,13 +61,13 @@ func TestPlannerIndexScan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() { _ = idxMgr.Close() }()
 
 	// Create an index
 	err = idxMgr.CreateIndex(btree.IndexMeta{
@@ -119,13 +119,13 @@ func TestPlannerNonIndexedColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() { _ = idxMgr.Close() }()
 
 	// Create an index on 'id'
 	err = idxMgr.CreateIndex(btree.IndexMeta{
@@ -175,13 +175,13 @@ func TestPlannerNoWhere(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	idxMgr, err := btree.NewIndexManager(dir, 4096)
 	if err != nil {
 		t.Fatalf("Failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() { _ = idxMgr.Close() }()
 
 	planner := NewPlanner(idxMgr)
 

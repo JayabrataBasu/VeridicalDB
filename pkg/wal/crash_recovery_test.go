@@ -27,29 +27,29 @@ func TestCrashRecoverySimulation(t *testing.T) {
 
 		// tx1: fully committed - should survive
 		tx1, _ := logger.Begin()
-		logger.LogInsert(tx1.ID, "users", 1, 0, []byte("alice"))
-		logger.LogInsert(tx1.ID, "users", 1, 1, []byte("bob"))
-		logger.Commit(tx1.ID)
+		_, _ = logger.LogInsert(tx1.ID, "users", 1, 0, []byte("alice"))
+		_, _ = logger.LogInsert(tx1.ID, "users", 1, 1, []byte("bob"))
+		_ = logger.Commit(tx1.ID)
 
 		// Checkpoint
-		checkpointer.Checkpoint()
+		_ = checkpointer.Checkpoint()
 
 		// tx2: fully committed after checkpoint - should survive
 		tx2, _ := logger.Begin()
-		logger.LogInsert(tx2.ID, "users", 1, 2, []byte("charlie"))
-		logger.Commit(tx2.ID)
+		_, _ = logger.LogInsert(tx2.ID, "users", 1, 2, []byte("charlie"))
+		_ = logger.Commit(tx2.ID)
 
 		// tx3: in-progress at crash time - should be rolled back
 		tx3, _ := logger.Begin()
-		logger.LogInsert(tx3.ID, "users", 1, 3, []byte("dave"))
-		logger.LogUpdate(tx3.ID, "users", 1, 0, []byte("alice"), []byte("alice-updated"))
+		_, _ = logger.LogInsert(tx3.ID, "users", 1, 3, []byte("dave"))
+		_, _ = logger.LogUpdate(tx3.ID, "users", 1, 0, []byte("alice"), []byte("alice-updated"))
 		// No commit! Simulates crash
 
 		// Flush to ensure data is on disk
-		w.Flush()
+		_ = w.Flush()
 
 		// "Crash" - close without proper cleanup
-		w.Close()
+		_ = w.Close()
 	}()
 
 	// Phase 2: Recovery
@@ -58,7 +58,7 @@ func TestCrashRecoverySimulation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Reopen WAL failed: %v", err)
 		}
-		defer w.Close()
+		defer func() { _ = w.Close() }()
 
 		// Track redo and undo operations
 		var redoOps []string
@@ -137,7 +137,7 @@ func TestCrashRecoveryWALPersistence(t *testing.T) {
 		}
 
 		for i := 0; i < 100; i++ {
-			w.Append(&Record{
+			_, _ = w.Append(&Record{
 				TxID:      uint64(i % 10),
 				Type:      RecordInsert,
 				TableName: "test",
@@ -145,8 +145,8 @@ func TestCrashRecoveryWALPersistence(t *testing.T) {
 				Data:      []byte("data"),
 			})
 		}
-		w.Flush()
-		w.Close()
+		_ = w.Flush()
+		_ = w.Close()
 	}()
 
 	// Reopen and verify all records are there
@@ -154,7 +154,7 @@ func TestCrashRecoveryWALPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reopen WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	var count int
 	err = w.Iterate(0, func(rec *Record) error {
@@ -181,11 +181,11 @@ func TestCrashRecoveryIncompleteWrite(t *testing.T) {
 			t.Fatalf("Open WAL failed: %v", err)
 		}
 
-		w.Append(&Record{TxID: 1, Type: RecordBegin})
-		w.Append(&Record{TxID: 1, Type: RecordInsert, TableName: "t", PageID: 1, Data: []byte("data")})
-		w.Append(&Record{TxID: 1, Type: RecordCommit})
-		w.Flush()
-		w.Close()
+		_, _ = w.Append(&Record{TxID: 1, Type: RecordBegin})
+		_, _ = w.Append(&Record{TxID: 1, Type: RecordInsert, TableName: "t", PageID: 1, Data: []byte("data")})
+		_, _ = w.Append(&Record{TxID: 1, Type: RecordCommit})
+		_ = w.Flush()
+		_ = w.Close()
 	}()
 
 	// Corrupt the file by appending garbage (simulating incomplete write)
@@ -194,15 +194,15 @@ func TestCrashRecoveryIncompleteWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open for corruption failed: %v", err)
 	}
-	f.Write([]byte{0x00, 0x01, 0x02, 0x03}) // Incomplete record header
-	f.Close()
+	_, _ = f.Write([]byte{0x00, 0x01, 0x02, 0x03}) // Incomplete record header
+	_ = f.Close()
 
 	// Recovery should still work with the valid records
 	w, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	var count int
 	err = w.Iterate(0, func(rec *Record) error {
@@ -234,29 +234,29 @@ func TestCrashRecoveryMultipleCheckpoints(t *testing.T) {
 
 		// Checkpoint 1
 		tx1, _ := logger.Begin()
-		logger.LogInsert(tx1.ID, "t", 1, 0, []byte("c1-data"))
-		logger.Commit(tx1.ID)
-		checkpointer.Checkpoint()
+		_, _ = logger.LogInsert(tx1.ID, "t", 1, 0, []byte("c1-data"))
+		_ = logger.Commit(tx1.ID)
+		_ = checkpointer.Checkpoint()
 
 		// Checkpoint 2
 		tx2, _ := logger.Begin()
-		logger.LogInsert(tx2.ID, "t", 1, 1, []byte("c2-data"))
-		logger.Commit(tx2.ID)
-		checkpointer.Checkpoint()
+		_, _ = logger.LogInsert(tx2.ID, "t", 1, 1, []byte("c2-data"))
+		_ = logger.Commit(tx2.ID)
+		_ = checkpointer.Checkpoint()
 
 		// Checkpoint 3
 		tx3, _ := logger.Begin()
-		logger.LogInsert(tx3.ID, "t", 1, 2, []byte("c3-data"))
-		logger.Commit(tx3.ID)
-		checkpointer.Checkpoint()
+		_, _ = logger.LogInsert(tx3.ID, "t", 1, 2, []byte("c3-data"))
+		_ = logger.Commit(tx3.ID)
+		_ = checkpointer.Checkpoint()
 
 		// Uncommitted after last checkpoint
 		tx4, _ := logger.Begin()
-		logger.LogInsert(tx4.ID, "t", 1, 3, []byte("uncommitted"))
+		_, _ = logger.LogInsert(tx4.ID, "t", 1, 3, []byte("uncommitted"))
 		// No commit
 
-		w.Flush()
-		w.Close()
+		_ = w.Flush()
+		_ = w.Close()
 	}()
 
 	// Recovery should use the last checkpoint
@@ -264,7 +264,7 @@ func TestCrashRecoveryMultipleCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reopen WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	// Find checkpoint
 	cpLSN, _, err := FindLastCheckpoint(w)
@@ -317,18 +317,18 @@ func TestCrashRecoveryAbortedTransaction(t *testing.T) {
 
 		// Aborted transaction
 		tx, _ := logger.Begin()
-		logger.LogInsert(tx.ID, "t", 1, 0, []byte("aborted-data"))
-		logger.Abort(tx.ID)
+		_, _ = logger.LogInsert(tx.ID, "t", 1, 0, []byte("aborted-data"))
+		_ = logger.Abort(tx.ID)
 
-		w.Flush()
-		w.Close()
+		_ = w.Flush()
+		_ = w.Close()
 	}()
 
 	w, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Reopen WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	var undoCount int
 	recovery := NewRecovery(w)

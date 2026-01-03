@@ -108,7 +108,7 @@ func TestShardConfig_GetShardForHash(t *testing.T) {
 	config := NewShardConfig(2, "id")
 	hosts := []string{"localhost", "localhost"}
 	ports := []int{5432, 5433}
-	config.CreateUniformShards(hosts, ports)
+	_ = config.CreateUniformShards(hosts, ports)
 
 	// Test that different hashes route to different shards
 	lowHash := uint32(0)
@@ -133,7 +133,7 @@ func TestShardConfig_ComputeShardID(t *testing.T) {
 	config := NewShardConfig(2, "id")
 	hosts := []string{"localhost", "localhost"}
 	ports := []int{5432, 5433}
-	config.CreateUniformShards(hosts, ports)
+	_ = config.CreateUniformShards(hosts, ports)
 
 	// Different keys should consistently route to same shard
 	key1 := "user1"
@@ -191,9 +191,9 @@ func TestShardConfig_GetAllActiveShards(t *testing.T) {
 	config := NewShardConfig(3, "id")
 
 	// Add shards with different active states
-	config.AddShard(&ShardInfo{ID: 0, IsActive: true})
-	config.AddShard(&ShardInfo{ID: 1, IsActive: false})
-	config.AddShard(&ShardInfo{ID: 2, IsActive: true})
+	_ = config.AddShard(&ShardInfo{ID: 0, IsActive: true})
+	_ = config.AddShard(&ShardInfo{ID: 1, IsActive: false})
+	_ = config.AddShard(&ShardInfo{ID: 2, IsActive: true})
 
 	active := config.GetAllActiveShards()
 	if len(active) != 2 {
@@ -283,7 +283,7 @@ func TestCoordinator_Route_SelectWithShardKey(t *testing.T) {
 	config := NewShardConfig(2, "id")
 	hosts := []string{"localhost", "localhost"}
 	ports := []int{5432, 5433}
-	config.CreateUniformShards(hosts, ports)
+	_ = config.CreateUniformShards(hosts, ports)
 
 	coord := NewCoordinator(config)
 
@@ -307,7 +307,7 @@ func TestCoordinator_Route_Insert(t *testing.T) {
 	config := NewShardConfig(2, "id")
 	hosts := []string{"localhost", "localhost"}
 	ports := []int{5432, 5433}
-	config.CreateUniformShards(hosts, ports)
+	_ = config.CreateUniformShards(hosts, ports)
 
 	coord := NewCoordinator(config)
 
@@ -331,7 +331,7 @@ func TestCoordinator_Route_BoundTransaction(t *testing.T) {
 	config := NewShardConfig(2, "id")
 	hosts := []string{"localhost", "localhost"}
 	ports := []int{5432, 5433}
-	config.CreateUniformShards(hosts, ports)
+	_ = config.CreateUniformShards(hosts, ports)
 
 	coord := NewCoordinator(config)
 
@@ -366,7 +366,7 @@ func TestNewShardNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	info := &ShardInfo{
 		ID:       0,
@@ -394,7 +394,7 @@ func TestShardNode_StartStop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	info := &ShardInfo{
 		ID:       0,

@@ -13,7 +13,7 @@ func TestTxnLoggerBeginCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -69,7 +69,7 @@ func TestTxnLoggerBeginAbort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -114,7 +114,7 @@ func TestTxnLoggerInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -174,7 +174,7 @@ func TestTxnLoggerUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -237,7 +237,7 @@ func TestTxnLoggerDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -290,7 +290,7 @@ func TestTxnLoggerPrevLSNChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -301,10 +301,10 @@ func TestTxnLoggerPrevLSNChain(t *testing.T) {
 	}
 
 	// Multiple operations to build undo chain
-	logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
-	logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
-	logger.LogUpdate(tx.ID, "t1", 1, 0, []byte("row1"), []byte("row1-updated"))
-	logger.Commit(tx.ID)
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 0, []byte("row1"))
+	_, _ = logger.LogInsert(tx.ID, "t1", 1, 1, []byte("row2"))
+	_, _ = logger.LogUpdate(tx.ID, "t1", 1, 0, []byte("row1"), []byte("row1-updated"))
+	_ = logger.Commit(tx.ID)
 
 	// Verify prevLSN chain
 	var records []*Record
@@ -353,7 +353,7 @@ func TestTxnLoggerMultipleTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -370,9 +370,9 @@ func TestTxnLoggerMultipleTransactions(t *testing.T) {
 	}
 
 	// Interleave operations
-	logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("tx1-row1"))
-	logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("tx2-row1"))
-	logger.LogInsert(tx1.ID, "t1", 1, 2, []byte("tx1-row2"))
+	_, _ = logger.LogInsert(tx1.ID, "t1", 1, 0, []byte("tx1-row1"))
+	_, _ = logger.LogInsert(tx2.ID, "t1", 1, 1, []byte("tx2-row1"))
+	_, _ = logger.LogInsert(tx1.ID, "t1", 1, 2, []byte("tx1-row2"))
 
 	// Commit tx1, abort tx2
 	if err := logger.Commit(tx1.ID); err != nil {
@@ -422,7 +422,7 @@ func TestTxnLoggerGetActiveTransactions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open WAL failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	txnMgr := txn.NewManager()
 	logger := NewTxnLogger(w, txnMgr)
@@ -443,7 +443,7 @@ func TestTxnLoggerGetActiveTransactions(t *testing.T) {
 	}
 
 	// Commit one
-	logger.Commit(tx1.ID)
+	_ = logger.Commit(tx1.ID)
 
 	active = logger.GetActiveTransactions()
 	if len(active) != 1 {
@@ -451,7 +451,7 @@ func TestTxnLoggerGetActiveTransactions(t *testing.T) {
 	}
 
 	// Abort the other
-	logger.Abort(tx2.ID)
+	_ = logger.Abort(tx2.ID)
 
 	active = logger.GetActiveTransactions()
 	if len(active) != 0 {

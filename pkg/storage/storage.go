@@ -31,7 +31,7 @@ func (s *Storage) CreateTable(name string) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 	// ensure at least one page exists; write initialized page
 	buf := make([]byte, s.pageSize)
 	initPage(buf)
@@ -50,7 +50,7 @@ func (s *Storage) Insert(table string, data []byte) (RID, error) {
 	if err != nil {
 		return RID{}, err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	// scan pages for free space; naive linear scan
 	pageBuf := make([]byte, s.pageSize)
@@ -97,7 +97,7 @@ func (s *Storage) Fetch(rid RID) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
 		return nil, err
@@ -114,7 +114,7 @@ func (s *Storage) Delete(rid RID) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
 		return err
@@ -135,7 +135,7 @@ func (s *Storage) Update(rid RID, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
 		return err
@@ -160,7 +160,7 @@ func (s *Storage) ReplayInsert(rid RID, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
@@ -192,7 +192,7 @@ func (s *Storage) ReplayDelete(rid RID) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
@@ -222,7 +222,7 @@ func (s *Storage) ReplayUpdate(rid RID, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer pager.Close()
+	defer func() { _ = pager.Close() }()
 
 	pageBuf := make([]byte, s.pageSize)
 	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {

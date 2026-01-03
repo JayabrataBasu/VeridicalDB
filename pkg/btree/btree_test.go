@@ -67,7 +67,7 @@ func sameRID(a, b storage.RID) bool {
 
 func TestBTreeCreateNew(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -80,7 +80,7 @@ func TestBTreeCreateNew(t *testing.T) {
 
 func TestBTreeSingleInsertSearch(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -106,7 +106,7 @@ func TestBTreeSingleInsertSearch(t *testing.T) {
 
 func TestBTreeMultipleInserts(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -137,7 +137,7 @@ func TestBTreeMultipleInserts(t *testing.T) {
 
 func TestBTreeSearchNotFound(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -164,7 +164,7 @@ func TestBTreeSearchNotFound(t *testing.T) {
 
 func TestBTreeDuplicateKey(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true) // unique=true
 	defer pager.Close()
@@ -193,7 +193,7 @@ func TestBTreeDuplicateKey(t *testing.T) {
 
 func TestBTreeNonUniqueDuplicateKey(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", false) // unique=false
 	defer pager.Close()
@@ -215,7 +215,7 @@ func TestBTreeNonUniqueDuplicateKey(t *testing.T) {
 
 func TestBTreeEmptyKey(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -237,7 +237,7 @@ func TestBTreeEmptyKey(t *testing.T) {
 
 func TestBTreeRangeSearch(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -271,7 +271,7 @@ func TestBTreeRangeSearch(t *testing.T) {
 
 func TestBTreeRangeSearchOpenEnded(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -315,7 +315,7 @@ func TestBTreeRangeSearchOpenEnded(t *testing.T) {
 
 func TestBTreeDelete(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -352,7 +352,7 @@ func TestBTreeDelete(t *testing.T) {
 
 func TestBTreeDeleteNonExistent(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -371,7 +371,7 @@ func TestBTreeDeleteNonExistent(t *testing.T) {
 
 func TestBTreeDeleteAll(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -403,7 +403,7 @@ func TestBTreeDeleteAll(t *testing.T) {
 
 func TestBTreeRandomOperations(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -445,7 +445,7 @@ func TestBTreeLargeScale(t *testing.T) {
 	}
 
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -477,7 +477,7 @@ func TestBTreeLargeScale(t *testing.T) {
 
 func TestBTreePersistence(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	indexPath := filepath.Join(dir, "persist.idx")
 
@@ -545,7 +545,7 @@ func TestBTreePersistence(t *testing.T) {
 
 func TestBTreeLeafSplit(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -574,7 +574,7 @@ func TestBTreeLeafSplit(t *testing.T) {
 
 func TestBTreeReverseInsert(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -611,7 +611,7 @@ func TestBTreeReverseInsert(t *testing.T) {
 
 func TestBTreeConcurrentReads(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -650,7 +650,7 @@ func TestBTreeConcurrentReads(t *testing.T) {
 
 func TestBTreeLargeKey(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -677,7 +677,7 @@ func TestBTreeLargeKey(t *testing.T) {
 
 func TestBTreeSingleByteKey(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()
@@ -701,7 +701,7 @@ func TestBTreeSingleByteKey(t *testing.T) {
 
 func TestBTreeVariableLengthKeys(t *testing.T) {
 	dir := tempDir(t)
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	bt, pager := createTestBTree(t, dir, "test.idx", true)
 	defer pager.Close()

@@ -419,7 +419,7 @@ func (m *Manager) Stop() error {
 	// Close listener
 	m.mu.Lock()
 	if m.listener != nil {
-		m.listener.Close()
+		_ = m.listener.Close()
 	}
 	m.mu.Unlock()
 
@@ -427,7 +427,7 @@ func (m *Manager) Stop() error {
 	m.replicasMu.Lock()
 	for _, rc := range m.replicas {
 		rc.cancel()
-		rc.conn.Close()
+		_ = rc.conn.Close()
 	}
 	m.replicasMu.Unlock()
 
@@ -435,7 +435,7 @@ func (m *Manager) Stop() error {
 	m.mu.Lock()
 	if m.primaryConn != nil {
 		m.primaryConn.cancel()
-		m.primaryConn.conn.Close()
+		_ = m.primaryConn.conn.Close()
 	}
 	m.mu.Unlock()
 

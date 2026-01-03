@@ -94,7 +94,7 @@ func (s *Server) Stop() error {
 	s.cancel()
 
 	if s.listener != nil {
-		s.listener.Close()
+		_ = s.listener.Close()
 	}
 
 	s.connsMu.Lock()
@@ -221,7 +221,7 @@ func (c *Conn) Close() {
 	if c.closed.Swap(true) {
 		return
 	}
-	c.conn.Close()
+	_ = c.conn.Close()
 }
 
 // handleStartup processes the initial startup handshake.
@@ -412,6 +412,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 			c.server.logger.Error("sendReadyForQuery failed", "id", c.id, "error", err2)
 		}
 		return c.bufW.Flush()
+	}
 
 	// Send results
 	if _, err := c.sendResult(result, query, 0); err != nil {
@@ -425,7 +426,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, _ string, maxRows int32) (bool, error) {
+func (c *Conn) sendResult(result *sql.Result, _query string, maxRows int32) (bool, error) {
 	if result == nil {
 		return false, c.sendCommandComplete("", 0)
 	}
