@@ -1,6 +1,7 @@
 .PHONY: all release-local docker build build-cli build-server
 
 BIN=veridicaldb
+BINARY_NAME?=$(BIN)
 VERSION?=v1.0.0
 
 all: build
