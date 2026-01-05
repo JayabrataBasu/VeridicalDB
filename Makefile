@@ -146,6 +146,17 @@ pre-commit: fmt
 	fi
 	go test ./... -short -timeout 5m
 
+# Install / uninstall the git pre-commit hook
+.PHONY: install-hook uninstall-hook
+install-hook:
+	@echo "Installing git pre-commit hook..."
+	@./scripts/install-hook.sh
+
+uninstall-hook:
+	@echo "Removing git pre-commit hook..."
+	@rm -f .git/hooks/pre-commit || true
+
+
 # Quick development cycle
 dev: fmt test build
 
