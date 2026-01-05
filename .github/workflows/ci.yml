@@ -43,6 +43,7 @@ jobs:
         uses: golangci/golangci-lint-action@v4
         with:
           version: v2.7.2
+          install-mode: go
 
       - name: Run CI (make ci)
         run: make ci
@@ -89,6 +90,7 @@ jobs:
         uses: golangci/golangci-lint-action@v4
         with:
           version: v2.7.2
+          install-mode: go
 
       - name: Run CI (make ci)
         run: make ci
