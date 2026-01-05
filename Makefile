@@ -133,7 +133,18 @@ deps:
 # Development setup
 dev-setup: deps
 	@echo "Setting up development environment..."
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2
+
+# Run a fast pre-commit check locally (lint + quick tests)
+.PHONY: pre-commit
+pre-commit: fmt
+	@echo "Running pre-commit checks..."
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./... --deadline=3m || exit 1; \
+	else \
+		echo "golangci-lint not installed; run 'make dev-setup'"; exit 1; \
+	fi
+	go test ./... -short -timeout 5m
 
 # Quick development cycle
 dev: fmt test build
