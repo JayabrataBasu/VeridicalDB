@@ -28,23 +28,16 @@ jobs:
         with:
           path: |
             ~/.cache/go-build
-            ~/.pkg/mod
+            ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
-
-      - name: Show environment
-        run: |
-          go version
-          go env
 
       - name: Download Go modules
         run: go mod download
 
-      - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: v2.7.2
-          skip-cache: true
-          args: --help
+      - name: Install golangci-lint v2
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.7.2
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Run CI (make ci)
         run: make ci
@@ -53,7 +46,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
+          name: coverage-${{ matrix.go-version }}
           path: coverage.out
 
   race:
@@ -87,12 +80,17 @@ jobs:
       - name: Download Go modules
         run: go mod download
 
-      - name: Install golangci-lint (platform-specific)
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: v2.7.2
-          skip-cache: true
-          args: --help
+      - name: Install golangci-lint v2 (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.7.2
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: Install golangci-lint v2 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v2.7.2
 
       - name: Run CI (make ci)
         run: make ci
