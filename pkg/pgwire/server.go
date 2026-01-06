@@ -83,12 +83,21 @@ func (s *Server) Start(port int) error {
 	s.listener = listener
 	s.running.Store(true)
 
-	s.logger.Info("pgwire server started", "address", addr)
+	tlsStatus := "disabled"
+	if s.tlsConfig != nil {
+		tlsStatus = "enabled"
+	}
+	s.logger.Info("pgwire server started", "address", addr, "tls", tlsStatus)
 
 	s.wg.Add(1)
 	go s.acceptLoop()
 
 	return nil
+}
+
+// TLSEnabled returns whether TLS is enabled for this server.
+func (s *Server) TLSEnabled() bool {
+	return s.tlsConfig != nil
 }
 
 // Stop gracefully stops the server.
@@ -188,6 +197,9 @@ type Conn struct {
 	statements map[string]*PreparedStatement
 	portals    map[string]*Portal
 
+	// TLS state
+	tlsActive bool
+
 	closed atomic.Bool
 }
 
@@ -247,12 +259,8 @@ func (c *Conn) handleStartup() error {
 
 	switch code {
 	case SSLRequestCode:
-		// Client wants SSL - we don't support it, send 'N'
-		if _, err := c.conn.Write([]byte{'N'}); err != nil {
-			return err
-		}
-		// Client should send another startup message
-		return c.handleStartup()
+		// Client wants SSL
+		return c.handleSSLRequest()
 
 	case CancelRequestCode:
 		// Cancel request
@@ -271,6 +279,73 @@ func (c *Conn) handleStartup() error {
 
 	default:
 		return fmt.Errorf("unsupported protocol version: %d", code)
+	}
+}
+
+// handleSSLRequest handles the PostgreSQL SSLRequest handshake.
+// Per PostgreSQL protocol, server responds with 'S' if SSL is supported and will proceed
+// with TLS handshake, or 'N' if SSL is not supported and client should continue without TLS.
+func (c *Conn) handleSSLRequest() error {
+	if c.server.tlsConfig == nil {
+		// TLS not configured - send 'N' and continue without TLS
+		if _, err := c.conn.Write([]byte{'N'}); err != nil {
+			return fmt.Errorf("failed to send SSL rejection: %w", err)
+		}
+		c.server.logger.Debug("SSL not available, continuing plaintext", "id", c.id)
+		// Client should send another startup message
+		return c.handleStartup()
+	}
+
+	// TLS is configured - send 'S' to indicate we support SSL
+	if _, err := c.conn.Write([]byte{'S'}); err != nil {
+		return fmt.Errorf("failed to send SSL acceptance: %w", err)
+	}
+
+	// Perform TLS handshake
+	tlsConn := tls.Server(c.conn, c.server.tlsConfig)
+	if err := tlsConn.Handshake(); err != nil {
+		c.server.logger.Error("TLS handshake failed", "id", c.id, "error", err)
+		return fmt.Errorf("TLS handshake failed: %w", err)
+	}
+
+	// Log TLS connection details
+	state := tlsConn.ConnectionState()
+	c.server.logger.Debug("TLS handshake completed",
+		"id", c.id,
+		"version", tlsVersionString(state.Version),
+		"cipher", tls.CipherSuiteName(state.CipherSuite),
+		"client_cert", len(state.PeerCertificates) > 0,
+	)
+
+	// Replace the connection with the TLS connection
+	c.conn = tlsConn
+	c.reader = NewMessageReader(tlsConn)
+	c.bufW = bufio.NewWriter(tlsConn)
+	c.writer = NewMessageWriter(c.bufW)
+	c.tlsActive = true
+
+	// Client should send another startup message over the encrypted connection
+	return c.handleStartup()
+}
+
+// IsTLSActive returns whether the connection is using TLS.
+func (c *Conn) IsTLSActive() bool {
+	return c.tlsActive
+}
+
+// tlsVersionString returns a human-readable TLS version string.
+func tlsVersionString(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("unknown (0x%04x)", version)
 	}
 }
 

@@ -103,6 +103,8 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **User Management**: Create, alter, drop users with password authentication
 - **Role-Based Access Control**: GRANT/REVOKE permissions on databases, tables, views
 - **Authentication**: Password-based authentication
+- **TLS/SSL Encryption**: Secure client connections with TLS 1.2/1.3 support
+- **Mutual TLS (mTLS)**: Optional client certificate authentication
 - **Authorization**: Table-level and column-level permissions (planned)
 
 ### 📈 Observability & Monitoring
