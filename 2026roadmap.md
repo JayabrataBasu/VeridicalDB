@@ -56,14 +56,24 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 - First steps:
   - Add `.github/workflows/ci.yml` with matrix Go versions (1.21–1.23), cache `GOMODCACHE`.
 
-### 3) TLS for `pgwire` (Rank 3 — High / Medium)
+### 3) TLS for `pgwire` (Rank 3 — High / Medium) ✅ (Completed)
 - Why: Required for secure client connections in production.
-- Acceptance criteria:
+- Status: **Completed** — server-side TLS for `pgwire` implemented with optional mTLS support, tests and docs added.
+- Acceptance criteria (met):
   - `pgwire` server accepts TLS connections when configured (cert and key paths in config).
-  - Tests include an end-to-end TLS connect (self-signed cert) and a TLS-disabled path.
-- First steps:
-  - Add TLS config options to `veridicaldb.yaml` and `pkg/pgwire.NewServer` options.
-  - Update `pkg/pgwire/server.go` to wrap `net.Listener` with `tls.NewListener` when configured.
+  - Optional client certificate authentication (mTLS) is supported and validated against a CA when configured.
+  - Unit and integration tests include end-to-end TLS connect (self-signed cert), SSLRequest behavior, and mTLS negative/positive cases.
+  - Documentation updated with examples (psql usage, certificate generation) and `config.example.yaml` and `veridicaldb.yaml` updated.
+- First steps taken / Implementation notes:
+  - Added TLS config options to `veridicaldb.yaml` and `pkg/config` (`PgWire.TLS`), including `enabled`, `cert_file`, `key_file`, `ca_file`, `client_auth`, and TLS version settings.
+  - Implemented TLS handling in `pkg/pgwire/server.go`: responds to `SSLRequest` with `S`/`N`, performs a per-connection TLS handshake, and wraps the connection for encrypted communication (preserving plaintext fallback).
+  - Added unit tests for TLS config and integration tests in `pkg/pgwire` that exercise TLS handshake, query flow over TLS, and mTLS requirements.
+  - Updated docs (`USAGE.md`, `Readme.md`) with TLS usage, psql examples, and security guidance.
+- Next steps / follow-ups:
+  - Add an automated e2e smoke test to CI (optional) that runs a short TLS client connect (psql or Go client) in the integration suite.
+  - Consider certificate hot-reload and ACME/Let's Encrypt support in future iterations.
+
+
 
 ### 4) Backup & PITR (Rank 4 — High / Large)
 - Why: Operational safety — backups + point-in-time recovery are essential.
