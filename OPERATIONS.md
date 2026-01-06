@@ -172,10 +172,101 @@ veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored \
   --target-lsn 12345
 ```
 
+Restoring from remote archives:
+```bash
+# Use a restore command to fetch missing WAL from remote storage (placeholders: %f filename, %p destination)
+veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored \
+  --restore-command "aws s3 cp s3://my-bucket/wal/%f %p"
+```
+- You can also set `backup.restore_command` in `veridicaldb.yaml` to avoid passing the flag.
+- Pair this with `backup.archive_command` (e.g., `aws s3 cp %p s3://bucket/wal/%f`) to enable remote WAL archiving.
+
 Operational tips:
 - Verify backups after creation: `veridicaldb backup verify /path/to/backup`
 - Ensure WAL archives are continuous and verified (missing segments block PITR beyond missing point)
 - Use retention policies to prune old backups and archived WAL segments to control storage costs
+
+### Retention and Pruning
+
+VeridicalDB provides automated retention management for backups and WAL archives.
+
+**Manual pruning:**
+```bash
+# Dry run to see what would be deleted
+veridicaldb backup prune --dry-run
+
+# Delete old backups keeping 7 most recent and 30 days of history
+veridicaldb backup prune --keep-backups 7 --keep-days 30
+
+# More aggressive: keep only 3 backups
+veridicaldb backup prune --keep-backups 3 --keep-days 7
+```
+
+**Configuration-based retention:**
+```yaml
+backup:
+  retention_days: 30          # days to keep backups
+```
+
+**Scheduling automated pruning:**
+- Use cron or systemd timers to run `veridicaldb backup prune` daily/weekly
+- Example cron entry: `0 3 * * * /usr/local/bin/veridicaldb backup prune --keep-backups 7 --keep-days 30`
+
+### S3/Remote Archiving
+
+For production deployments, archive WAL segments and backups to remote storage.
+
+**Configure in `veridicaldb.yaml`:**
+```yaml
+backup:
+  archive_command: "aws s3 cp %p s3://my-bucket/wal/%f"
+  restore_command: "aws s3 cp s3://my-bucket/wal/%f %p"
+```
+
+**Using MinIO or S3-compatible storage:**
+```yaml
+backup:
+  archive_command: "aws s3 cp %p s3://my-bucket/wal/%f --endpoint-url http://minio:9000"
+  restore_command: "aws s3 cp s3://my-bucket/wal/%f %p --endpoint-url http://minio:9000"
+```
+
+**Built-in S3 archiver (programmatic use):**
+```go
+import "github.com/JayabrataBasu/VeridicalDB/pkg/backup"
+
+archiver, _ := backup.NewS3Archiver(&backup.S3Config{
+    Bucket:   "my-bucket",
+    Prefix:   "wal/",
+    Region:   "us-west-2",
+    Endpoint: "http://minio:9000", // optional for S3-compatible
+})
+
+// Upload WAL segment
+archiver.ArchiveWALSegment(ctx, "/path/to/wal.log")
+
+// Generate commands for config
+fmt.Println(archiver.GenerateArchiveCommand())
+fmt.Println(archiver.GenerateRestoreCommand())
+```
+
+### Monitoring and Metrics
+
+VeridicalDB exposes backup metrics in Prometheus format for monitoring.
+
+**Key metrics:**
+- `veridicaldb_backup_last_timestamp_seconds` - Unix timestamp of last backup
+- `veridicaldb_backup_duration_seconds` - Duration of last backup
+- `veridicaldb_backup_size_bytes` - Size of last backup
+- `veridicaldb_archive_lsn` - LSN of last archived WAL
+- `veridicaldb_archive_lag_seconds` - Estimated archive lag
+- `veridicaldb_backup_errors_total` - Total backup errors
+- `veridicaldb_verify_success` - Last verification success (1=success, 0=failure)
+
+**Recommended alerts:**
+- Alert if `veridicaldb_backup_last_timestamp_seconds` is older than 25 hours (missed daily backup)
+- Alert if `veridicaldb_archive_lag_seconds` > 300 (archive falling behind)
+- Alert if `veridicaldb_backup_errors_total` increases
+- Alert if `veridicaldb_verify_success` == 0
 
 ---
 

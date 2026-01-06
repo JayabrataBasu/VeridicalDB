@@ -265,7 +265,15 @@ log:
   level: info            # debug, info, warn, error
   format: text           # text or json
   output: stderr         # stderr, stdout, or file path
-`, dataDir)
+
+backup:
+  backup_dir: %s/backups      # default backup location
+  archive_dir: %s/wal_archive # WAL archive location
+  compress: true              # gzip base backups
+  retention_days: 30          # days to keep backups
+  # archive_command: ""        # optional: e.g. aws s3 cp %%p s3://bucket/wal/%%f
+  # restore_command: ""        # optional: e.g. aws s3 cp s3://bucket/wal/%%f %%p
+`, dataDir, dataDir, dataDir)
 
 	return os.WriteFile(path, []byte(content), 0644)
 }

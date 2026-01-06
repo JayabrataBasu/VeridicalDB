@@ -98,11 +98,35 @@ Examples:
 		Run:   verifyBackup,
 	})
 
+	// Prune command
+	var pruneDryRun bool
+	var pruneKeepBackups, pruneKeepDays int
+	pruneCmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune old backups and WAL archives",
+		Long: `Remove old backups and WAL archives according to retention policy.
+
+Examples:
+  # Dry run to see what would be deleted
+  veridicaldb backup prune --dry-run
+
+  # Keep 7 backups and 30 days of history
+  veridicaldb backup prune --keep-backups 7 --keep-days 30`,
+		Run: func(cmd *cobra.Command, args []string) {
+			runPrune(pruneDryRun, pruneKeepBackups, pruneKeepDays)
+		},
+	}
+	pruneCmd.Flags().BoolVar(&pruneDryRun, "dry-run", false, "Show what would be deleted without actually deleting")
+	pruneCmd.Flags().IntVar(&pruneKeepBackups, "keep-backups", 7, "Number of backups to keep")
+	pruneCmd.Flags().IntVar(&pruneKeepDays, "keep-days", 30, "Days of backups to keep")
+	backupCmd.AddCommand(pruneCmd)
+
 	rootCmd.AddCommand(backupCmd)
 
 	// Restore command
 	var restoreTargetTime, restoreTargetLSN string
 	var restoreArchiveDir string
+	var restoreCommand string
 	restoreCmd := &cobra.Command{
 		Use:   "restore [base-backup-path] [target-dir]",
 		Short: "Restore database from backup",
@@ -121,12 +145,13 @@ Examples:
     --target-lsn 1234567890`,
 		Args: cobra.ExactArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
-			runRestore(cmd, args, restoreTargetTime, restoreTargetLSN, restoreArchiveDir)
+			runRestore(cmd, args, restoreTargetTime, restoreTargetLSN, restoreArchiveDir, restoreCommand)
 		},
 	}
 	restoreCmd.Flags().StringVar(&restoreTargetTime, "target-time", "", "Target time for PITR (RFC3339 format)")
 	restoreCmd.Flags().StringVar(&restoreTargetLSN, "target-lsn", "", "Target LSN for PITR")
-	restoreCmd.Flags().StringVar(&restoreArchiveDir, "archive-dir", "", "WAL archive directory")
+	restoreCmd.Flags().StringVar(&restoreArchiveDir, "archive-dir", "", "WAL archive directory (defaults to backup.archive_dir)")
+	restoreCmd.Flags().StringVar(&restoreCommand, "restore-command", "", "Command to fetch archived WAL (use %f for filename and %p for destination path)")
 	rootCmd.AddCommand(restoreCmd)
 
 	// WAL archive command
@@ -240,9 +265,12 @@ func runBaseBackup(cmd *cobra.Command, args []string, output string) {
 
 	// Create backup manager
 	backupCfg := &backup.Config{
-		BackupDir:  cfg.Storage.DataDir + "/backups",
-		ArchiveDir: cfg.Storage.DataDir + "/wal_archive",
-		Compress:   true,
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
 	}
 	mgr, err := backup.NewManager(backupCfg, cfg.Storage.DataDir, walMgr)
 	if err != nil {
@@ -275,7 +303,12 @@ func listBackups(cmd *cobra.Command, args []string) {
 	}
 
 	backupCfg := &backup.Config{
-		BackupDir: cfg.Storage.DataDir + "/backups",
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
 	}
 	mgr, err := backup.NewManager(backupCfg, cfg.Storage.DataDir, nil)
 	if err != nil {
@@ -316,7 +349,12 @@ func verifyBackup(cmd *cobra.Command, args []string) {
 	}
 
 	backupCfg := &backup.Config{
-		BackupDir: cfg.Storage.DataDir + "/backups",
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
 	}
 	mgr, err := backup.NewManager(backupCfg, cfg.Storage.DataDir, nil)
 	if err != nil {
@@ -334,7 +372,7 @@ func verifyBackup(cmd *cobra.Command, args []string) {
 }
 
 // runRestore restores from a backup.
-func runRestore(cmd *cobra.Command, args []string, targetTime, targetLSN, archiveDir string) {
+func runRestore(cmd *cobra.Command, args []string, targetTime, targetLSN, archiveDir, restoreCmd string) {
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
@@ -344,14 +382,30 @@ func runRestore(cmd *cobra.Command, args []string, targetTime, targetLSN, archiv
 	backupPath := args[0]
 	targetDir := args[1]
 
+	backupCfg := &backup.Config{
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
+	}
+
 	opts := backup.RestoreOptions{
 		BaseBackupPath: backupPath,
 		TargetDir:      targetDir,
-		ArchiveDir:     archiveDir,
 	}
 
-	if archiveDir == "" {
-		opts.ArchiveDir = cfg.Storage.DataDir + "/wal_archive"
+	if archiveDir != "" {
+		opts.ArchiveDir = archiveDir
+	} else {
+		opts.ArchiveDir = backupCfg.ArchiveDir
+	}
+
+	if restoreCmd != "" {
+		opts.RestoreCommand = restoreCmd
+	} else {
+		opts.RestoreCommand = backupCfg.RestoreCommand
 	}
 
 	// Parse target time if provided
@@ -374,10 +428,6 @@ func runRestore(cmd *cobra.Command, args []string, targetTime, targetLSN, archiv
 		opts.TargetLSN = &lsn
 	}
 
-	backupCfg := &backup.Config{
-		BackupDir:  cfg.Storage.DataDir + "/backups",
-		ArchiveDir: opts.ArchiveDir,
-	}
 	mgr, err := backup.NewManager(backupCfg, cfg.Storage.DataDir, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -428,7 +478,12 @@ func archiveWAL(cmd *cobra.Command, args []string) {
 	defer func() { _ = walMgr.Close() }()
 
 	archiveCfg := &backup.Config{
-		ArchiveDir: cfg.Storage.DataDir + "/wal_archive",
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
 	}
 	archiver, err := backup.NewArchiver(archiveCfg, walDir, walMgr)
 	if err != nil {
@@ -454,7 +509,12 @@ func listArchivedWAL(cmd *cobra.Command, args []string) {
 	}
 
 	archiveCfg := &backup.Config{
-		ArchiveDir: cfg.Storage.DataDir + "/wal_archive",
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
 	}
 	archiver, err := backup.NewArchiver(archiveCfg, "", nil)
 	if err != nil {
@@ -482,6 +542,84 @@ func listArchivedWAL(cmd *cobra.Command, args []string) {
 			seg.Size,
 			seg.LSN,
 		)
+	}
+}
+
+// runPrune removes old backups and WAL archives.
+func runPrune(dryRun bool, keepBackups, keepDays int) {
+	cfg, err := config.Load(cfgFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
+	backupCfg := &backup.Config{
+		BackupDir:      cfg.Backup.BackupDir,
+		ArchiveDir:     cfg.Backup.ArchiveDir,
+		Compress:       cfg.Backup.Compress,
+		RetentionDays:  cfg.Backup.RetentionDays,
+		ArchiveCommand: cfg.Backup.ArchiveCommand,
+		RestoreCommand: cfg.Backup.RestoreCommand,
+	}
+
+	mgr, err := backup.NewManager(backupCfg, cfg.Storage.DataDir, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	archiver, err := backup.NewArchiver(backupCfg, "", nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	policy := &backup.RetentionPolicy{
+		KeepBackups:       keepBackups,
+		KeepDays:          keepDays,
+		KeepWALForBackups: true,
+		MinWALSegments:    10,
+	}
+
+	pruneCmd := &backup.PruneCommand{
+		BackupMgr: mgr,
+		Archiver:  archiver,
+		Policy:    policy,
+		DryRun:    dryRun,
+	}
+
+	result, err := pruneCmd.Execute()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Prune failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if dryRun {
+		fmt.Println("Dry run - no changes made")
+		fmt.Println()
+	}
+
+	if len(result.BackupsToDelete) > 0 {
+		fmt.Printf("Backups to delete: %d\n", len(result.BackupsToDelete))
+		for _, id := range result.BackupsToDelete {
+			fmt.Printf("  - %s\n", id)
+		}
+	} else {
+		fmt.Println("No backups to delete")
+	}
+
+	if len(result.WALSegmentsToDelete) > 0 {
+		fmt.Printf("WAL segments to delete: %d\n", len(result.WALSegmentsToDelete))
+	} else {
+		fmt.Println("No WAL segments to delete")
+	}
+
+	if result.BytesToFree > 0 {
+		fmt.Printf("Space to free: %d bytes (%.2f MB)\n", result.BytesToFree, float64(result.BytesToFree)/(1024*1024))
+	}
+
+	if !dryRun {
+		fmt.Printf("\nDeleted %d backups and %d WAL segments\n", result.BackupsDeleted, result.WALSegmentsDeleted)
 	}
 }
 
