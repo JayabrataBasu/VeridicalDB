@@ -236,7 +236,7 @@ func runBaseBackup(cmd *cobra.Command, args []string, output string) {
 		fmt.Fprintf(os.Stderr, "Error opening WAL: %v\n", err)
 		os.Exit(1)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	// Create backup manager
 	backupCfg := &backup.Config{
@@ -425,7 +425,7 @@ func archiveWAL(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error opening WAL: %v\n", err)
 		os.Exit(1)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	archiveCfg := &backup.Config{
 		ArchiveDir: cfg.Storage.DataDir + "/wal_archive",

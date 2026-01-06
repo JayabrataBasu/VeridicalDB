@@ -35,7 +35,7 @@ func TestBackupManager_CreateBaseBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	// Write some WAL records
 	rec := &wal.Record{
@@ -110,7 +110,7 @@ func TestBackupManager_CreateUncompressedBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	// Create backup manager with compression disabled
 	cfg := &Config{
@@ -155,7 +155,7 @@ func TestBackupManager_VerifyBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	cfg := &Config{
 		BackupDir:  backupDir,
@@ -197,7 +197,7 @@ func TestBackupManager_DeleteBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	cfg := &Config{
 		BackupDir:  backupDir,
@@ -248,7 +248,7 @@ func TestBackupManager_PruneOldBackups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	cfg := &Config{
 		BackupDir:     backupDir,
@@ -304,7 +304,7 @@ func TestArchiver_ArchiveAndList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	// Write some WAL records
 	for i := 0; i < 5; i++ {
@@ -361,7 +361,7 @@ func TestArchiver_FindSegmentsForPITR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	cfg := &Config{ArchiveDir: archiveDir}
 	archiver, err := NewArchiver(cfg, walDir, walMgr)
@@ -409,7 +409,7 @@ func TestArchiver_PruneSegments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer walMgr.Close()
+	defer func() { _ = walMgr.Close() }()
 
 	cfg := &Config{ArchiveDir: archiveDir}
 	archiver, err := NewArchiver(cfg, walDir, walMgr)
@@ -483,7 +483,7 @@ func TestRestore_BasicRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	walMgr.Close()
+	_ = walMgr.Close()
 
 	// Perform restore
 	backupPath := filepath.Join(backupDir, meta.ID+".tar.gz")
@@ -526,7 +526,7 @@ func TestRestore_PITRWithTargetLSN(t *testing.T) {
 	backupDir := t.TempDir()
 	restoreDir := t.TempDir()
 	archiveDir := t.TempDir()
-	os.RemoveAll(restoreDir)
+	_ = os.RemoveAll(restoreDir)
 
 	// Create test data
 	if err := os.WriteFile(filepath.Join(dataDir, "test.dat"), []byte("initial"), 0644); err != nil {
@@ -558,7 +558,7 @@ func TestRestore_PITRWithTargetLSN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	walMgr.Close()
+	_ = walMgr.Close()
 
 	// Restore with target LSN
 	targetLSN := meta.EndLSN
