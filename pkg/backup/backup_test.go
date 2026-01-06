@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -673,5 +674,35 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.RetentionDays != 30 {
 		t.Errorf("Expected 30 day retention, got %d", cfg.RetentionDays)
+	}
+}
+
+func TestRetrieveArchivedSegmentRunsRestoreCommand(t *testing.T) {
+	mgr := &Manager{}
+	segName := "wal_segment.log"
+
+	path, err := mgr.retrieveArchivedSegment(segName, "echo %f > %p")
+	if err != nil {
+		t.Fatalf("restore command failed: %v", err)
+	}
+	defer func() { _ = os.Remove(path) }()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read restored segment: %v", err)
+	}
+
+	if strings.TrimSpace(string(data)) != segName {
+		t.Fatalf("restore command did not substitute segment name, got %q", strings.TrimSpace(string(data)))
+	}
+}
+
+func TestRunCommandErrorPropagation(t *testing.T) {
+	err := runCommand("exit 1")
+	if err == nil {
+		t.Fatal("expected restore command to fail")
+	}
+	if !strings.Contains(err.Error(), "exit status") {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }

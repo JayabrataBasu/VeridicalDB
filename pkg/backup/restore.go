@@ -3,10 +3,12 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -343,7 +345,23 @@ func (m *Manager) retrieveArchivedSegment(segName, restoreCmd string) (string, e
 }
 
 func runCommand(cmd string) error {
-	return fmt.Errorf("restore command execution not implemented: %s", cmd)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	c := exec.CommandContext(ctx, "sh", "-c", cmd)
+	output, err := c.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("restore command timed out: %s", cmd)
+	}
+	if err != nil {
+		trimmed := strings.TrimSpace(string(output))
+		if trimmed != "" {
+			return fmt.Errorf("restore command failed: %w: %s", err, trimmed)
+		}
+		return fmt.Errorf("restore command failed: %w", err)
+	}
+
+	return nil
 }
 
 func (m *Manager) writeRecoveryMarker(targetDir string, result *RestoreResult) error {
