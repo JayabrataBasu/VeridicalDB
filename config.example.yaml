@@ -20,3 +20,38 @@ logging:
   format: "text"
   # Output: stdout, stderr, or file path
   output: "stdout"
+
+# PostgreSQL wire protocol settings
+pgwire:
+  # TLS/SSL configuration for secure connections
+  tls:
+    # Enable TLS for pgwire connections
+    enabled: false
+    
+    # Path to server certificate file (PEM format)
+    # Required when TLS is enabled
+    # cert_file: "/path/to/server.crt"
+    
+    # Path to server private key file (PEM format)
+    # Required when TLS is enabled
+    # key_file: "/path/to/server.key"
+    
+    # Path to CA certificate file for client certificate validation (optional)
+    # Required when client_auth is "verify" or "require_and_verify"
+    # ca_file: "/path/to/ca.crt"
+    
+    # Client authentication policy:
+    # - none: Don't request client certificate (default)
+    # - request: Request client cert but don't require it
+    # - require: Require client cert but don't verify it against CA
+    # - verify: Request and verify client cert if provided
+    # - require_and_verify: Require and verify client cert (mTLS)
+    client_auth: "none"
+    
+    # Minimum TLS version (default: 1.2)
+    # Valid values: "1.0", "1.1", "1.2", "1.3"
+    min_version: "1.2"
+    
+    # Maximum TLS version (optional, defaults to latest supported)
+    # Valid values: "1.0", "1.1", "1.2", "1.3"
+    # max_version: "1.3"

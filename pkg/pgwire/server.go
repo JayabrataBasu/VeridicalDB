@@ -3,6 +3,7 @@ package pgwire
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -36,6 +37,9 @@ type Server struct {
 
 	// Server identification
 	serverVersion string
+
+	// TLS configuration
+	tlsConfig *tls.Config
 }
 
 // ServerConfig holds configuration for the pgwire server.
@@ -45,6 +49,7 @@ type ServerConfig struct {
 	MTM           *catalog.MVCCTableManager
 	TxnMgr        *txn.Manager
 	ServerVersion string
+	TLSConfig     *tls.Config // TLS configuration (nil = TLS disabled)
 }
 
 // NewServer creates a new PostgreSQL wire protocol server.
@@ -64,6 +69,7 @@ func NewServer(cfg ServerConfig) *Server {
 		ctx:           ctx,
 		cancel:        cancel,
 		serverVersion: serverVersion,
+		tlsConfig:     cfg.TLSConfig,
 	}
 }
 
