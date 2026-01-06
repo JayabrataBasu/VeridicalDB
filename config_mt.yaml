@@ -1,0 +1,18 @@
+server:
+  host: localhost
+  port: 15433
+storage:
+  data_dir: ./data
+  page_size: 8192
+logging:
+  level: info
+  format: text
+  output: stdout
+pgwire:
+  tls:
+    enabled: true
+    cert_file: "./server.crt"
+    key_file: "./server.key"
+    ca_file: "./ca.crt"
+    client_auth: "require_and_verify"
+    min_version: "1.2"

@@ -119,12 +119,20 @@ func main() {
 		// Run as a PostgreSQL wire protocol server
 		logger.Info("Starting PostgreSQL wire protocol server", "port", cfg.Server.Port)
 
+		// Build TLS configuration for pgwire if enabled
+		tlsCfg, err := cfg.PgWire.TLS.BuildTLSConfig()
+		if err != nil {
+			logger.Error("invalid TLS configuration", "error", err)
+			os.Exit(1)
+		}
+
 		pgServer := pgwire.NewServer(pgwire.ServerConfig{
 			Port:          cfg.Server.Port,
 			Logger:        logger,
 			MTM:           mtm,
 			TxnMgr:        txnMgr,
 			ServerVersion: cli.Version,
+			TLSConfig:     tlsCfg,
 		})
 
 		if err := pgServer.Start(cfg.Server.Port); err != nil {
