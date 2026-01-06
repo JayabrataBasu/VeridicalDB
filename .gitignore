@@ -41,13 +41,18 @@ veridicaldb.toml
 # Local documentation and notes (personal/working files)
 Roadmap.md
 roadmap.md
-
+Leftovers.md
 # Local config overrides and secrets
 config.yaml
 config.json
 .env
 *.key
 *.pem
+# Certificate artifacts (generated during demos or by users)
+*.crt
+*.csr
+*.srl
+certs/
 
 # Database files
 *.db
