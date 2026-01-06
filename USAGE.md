@@ -280,6 +280,199 @@ openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key \
 
 ---
 
+## 💾 Backup and Point-in-Time Recovery (PITR)
+
+VeridicalDB provides built-in backup and point-in-time recovery capabilities for disaster recovery and data protection.
+
+### Quick Start
+
+```bash
+# Create a base backup
+veridicaldb backup basebackup
+
+# List all backups
+veridicaldb backup list
+
+# Verify a backup
+veridicaldb backup verify /path/to/backup.tar.gz
+
+# Archive current WAL
+veridicaldb wal archive
+
+# List archived WAL segments
+veridicaldb wal list
+```
+
+### Creating Base Backups
+
+A base backup is a complete copy of your database at a specific point in time.
+
+```bash
+# Create backup with default settings (compressed, stored in data/backups/)
+veridicaldb backup basebackup
+
+# Create backup to a specific location
+veridicaldb backup basebackup --output /backups/mydb_backup
+
+# Output:
+# Creating base backup...
+# Backup completed successfully!
+#   ID:        backup_20260106_153000
+#   Size:      1048576 bytes
+#   Start LSN: 1234
+#   End LSN:   5678
+#   Duration:  2.5s
+```
+
+### Configuring Backups
+
+Add to your `config.yaml`:
+
+```yaml
+backup:
+  # Directory for storing backups
+  backup_dir: "./data/backups"
+  
+  # Directory for archived WAL segments
+  archive_dir: "./data/wal_archive"
+  
+  # Enable compression (default: true)
+  compress: true
+  
+  # Keep backups for 30 days (default)
+  retention_days: 30
+  
+  # Optional: custom archive command (for remote storage)
+  # archive_command: "aws s3 cp %p s3://my-bucket/wal/%f"
+  
+  # Optional: custom restore command
+  # restore_command: "aws s3 cp s3://my-bucket/wal/%f %p"
+```
+
+### WAL Archiving
+
+WAL (Write-Ahead Log) archiving enables point-in-time recovery by preserving transaction logs.
+
+```bash
+# Archive current WAL segment manually
+veridicaldb wal archive
+
+# List archived segments
+veridicaldb wal list
+# Output:
+# Name                                          Timestamp            Size         LSN
+# wal_20260106_150000_000000000001234.log      2026-01-06 15:00:00  16384        4660
+# wal_20260106_160000_000000000005678.log      2026-01-06 16:00:00  32768        22136
+```
+
+### Restoring from Backup
+
+#### Basic Restore (Latest State)
+
+```bash
+# Restore to a new data directory
+veridicaldb restore /backups/backup_20260106_153000.tar.gz /data/restored
+
+# Output:
+# Restoring from: /backups/backup_20260106_153000.tar.gz
+# Target directory: /data/restored
+# Restore completed successfully!
+#   Base Backup: backup_20260106_153000
+#   Files Restored: 42
+#   WAL Segments Applied: 0
+#   Restored LSN: 5678
+#   Duration: 1.2s
+```
+
+#### Point-in-Time Recovery (PITR)
+
+Restore to a specific point in time:
+
+```bash
+# Restore to a specific time
+veridicaldb restore /backups/backup_20260106_120000.tar.gz /data/restored \
+  --target-time "2026-01-06T15:30:00Z"
+
+# Restore to a specific WAL position (LSN)
+veridicaldb restore /backups/backup_20260106_120000.tar.gz /data/restored \
+  --target-lsn 12345
+
+# Specify custom archive directory
+veridicaldb restore /backups/backup_20260106_120000.tar.gz /data/restored \
+  --target-time "2026-01-06T15:30:00Z" \
+  --archive-dir /wal_archive
+```
+
+### Backup Strategy Recommendations
+
+#### Daily Full Backup with Continuous WAL Archiving
+
+```bash
+# Cron job for daily backup at 2 AM
+0 2 * * * /usr/local/bin/veridicaldb backup basebackup --output /backups/daily_$(date +\%Y\%m\%d)
+
+# Archive WAL every 15 minutes
+*/15 * * * * /usr/local/bin/veridicaldb wal archive
+```
+
+#### Backup Verification
+
+Always verify backups after creation:
+
+```bash
+# Verify backup integrity
+veridicaldb backup verify /backups/backup_20260106_153000.tar.gz
+
+# Output: Backup verification successful!
+```
+
+### Disaster Recovery Workflow
+
+1. **Identify the recovery target** - Determine the point in time or LSN to recover to
+2. **Locate the appropriate base backup** - Find the latest backup before your target time
+3. **Verify backup integrity** - Run `veridicaldb backup verify`
+4. **Perform restore** - Use `veridicaldb restore` with appropriate options
+5. **Verify restored data** - Start the database and verify data integrity
+6. **Update configuration** - Point your application to the restored database
+
+### Backup Metadata
+
+Each backup includes a metadata file (`*.meta.json`) containing:
+
+```json
+{
+  "id": "backup_20260106_153000",
+  "start_time": "2026-01-06T15:30:00Z",
+  "end_time": "2026-01-06T15:30:02Z",
+  "start_lsn": 1234,
+  "end_lsn": 5678,
+  "data_dir": "./data",
+  "size": 1048576,
+  "checksum": "abc123...",
+  "compressed": true,
+  "files": {
+    "tables/users.dat": "file_checksum..."
+  },
+  "version": 1
+}
+```
+
+### Troubleshooting
+
+**"Target directory is not empty"**
+- The restore target must be empty or non-existent
+- Remove existing files or choose a different directory
+
+**"No archived WAL segments found"**
+- Ensure WAL archiving is enabled and running
+- Check the archive directory path in configuration
+
+**"Checksum mismatch"**
+- Backup may be corrupted during transfer
+- Re-download or re-copy the backup file
+
+---
+
 ## ❓ Getting Help
 
 - Type `\help` in the VeridicalDB prompt for available commands

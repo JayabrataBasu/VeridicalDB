@@ -1,8 +1,11 @@
 # VeridicalDB: Remaining Features Implementation Plan
 
 **Created:** December 13, 2025  
-**Updated:** December 16, 2025
+**Updated:** January 6, 2026
 **Purpose:** Track and complete all remaining SQL features in priority order
+
+**Recent updates (Jan 6, 2026):**
+- Backup & PITR: Full implementation with base backups, WAL archiving, and point-in-time recovery.
 
 **Recent updates (Dec 16, 2025):**
 - Replication: some components implemented; full streaming and failover work remains.
@@ -455,6 +458,64 @@ Advanced features for future enhancement.
 - **Tests:** `TestIndexRangeScan` in `pkg/sql/index_test.go`
 - **Completed Date:** Dec 16, 2025
 
+### 4.9 Backup & Point-in-Time Recovery (PITR) ✅ COMPLETED
+- **Status:** ✅ Fully implemented
+- **Completed:**
+  - Full base backup creation with consistent LSN markers
+  - Compressed (tar.gz) and uncompressed backup formats
+  - Backup metadata with checksums for verification
+  - WAL archiver for continuous recovery points
+  - Point-in-time recovery to specific time or LSN
+  - CLI commands for backup/restore operations
+  - Backup retention and pruning policies
+  - Configuration options for backup directories and archiving
+- **Package:** `pkg/backup/`
+  - `backup.go` - BackupManager, BackupMetadata, base backup creation
+  - `archiver.go` - WAL archiver for continuous archiving
+  - `restore.go` - Restore and PITR functionality
+  - `backup_test.go` - Comprehensive test suite (15+ tests)
+- **CLI Commands:**
+  ```bash
+  # Create base backup
+  veridicaldb backup basebackup [--output /path]
+  
+  # List backups
+  veridicaldb backup list
+  
+  # Verify backup integrity
+  veridicaldb backup verify /path/to/backup.tar.gz
+  
+  # Archive WAL
+  veridicaldb wal archive
+  
+  # List archived WAL
+  veridicaldb wal list
+  
+  # Restore with PITR
+  veridicaldb restore /backup/path /target/dir \
+    --target-time "2026-01-06T15:30:00Z"
+  ```
+- **Configuration:**
+  ```yaml
+  backup:
+    backup_dir: "./data/backups"
+    archive_dir: "./data/wal_archive"
+    compress: true
+    retention_days: 30
+    archive_command: ""  # Optional custom archive command
+    restore_command: ""  # Optional custom restore command
+  ```
+- **Files Modified/Added:**
+  - `pkg/backup/backup.go` - New file for backup management
+  - `pkg/backup/archiver.go` - New file for WAL archiving
+  - `pkg/backup/restore.go` - New file for restore operations
+  - `pkg/backup/backup_test.go` - New file with tests
+  - `cmd/veridicaldb/main.go` - Added backup/restore CLI commands
+  - `internal/config/config.go` - Added BackupConfig struct
+  - `USAGE.md` - Added backup documentation
+- **Tests:** 15+ tests in `pkg/backup/backup_test.go`
+- **Completed Date:** Jan 6, 2026
+
 ---
 
 ## 5. Progress Tracker
@@ -497,6 +558,7 @@ Advanced features for future enhancement.
 | Multi-Database | ✅ Complete | Dec 15, 2025 |
 | Replication | ✅ Complete | Dec 16, 2025 |
 | Index Range Scans | ✅ Complete | Dec 16, 2025 |
+| Backup & PITR | ✅ Complete | Jan 6, 2026 |
 
 ---
 

@@ -15,6 +15,7 @@ type Config struct {
 	Server  ServerConfig  `mapstructure:"server"`
 	Storage StorageConfig `mapstructure:"storage"`
 	Log     LogConfig     `mapstructure:"log"`
+	Backup  BackupConfig  `mapstructure:"backup"`
 }
 
 // ServerConfig holds server-related configuration
@@ -43,6 +44,29 @@ type LogConfig struct {
 	Output string `mapstructure:"output"`
 }
 
+// BackupConfig holds backup and recovery configuration
+type BackupConfig struct {
+	// BackupDir is the directory where backups are stored
+	BackupDir string `mapstructure:"backup_dir"`
+
+	// ArchiveDir is the directory for archived WAL segments
+	ArchiveDir string `mapstructure:"archive_dir"`
+
+	// Compress enables compression for backups
+	Compress bool `mapstructure:"compress"`
+
+	// RetentionDays is how long to keep backups (0 = forever)
+	RetentionDays int `mapstructure:"retention_days"`
+
+	// ArchiveCommand is executed when WAL segments are archived
+	// Use %f for filename and %p for full path
+	ArchiveCommand string `mapstructure:"archive_command"`
+
+	// RestoreCommand is executed to restore archived WAL
+	// Use %f for filename and %p for destination path
+	RestoreCommand string `mapstructure:"restore_command"`
+}
+
 // Default configuration values
 func defaultConfig() *Config {
 	return &Config{
@@ -66,6 +90,12 @@ func defaultConfig() *Config {
 			Format: "text",
 			Output: "stderr",
 		},
+		Backup: BackupConfig{
+			BackupDir:     "", // defaults to DataDir/backups
+			ArchiveDir:    "", // defaults to DataDir/wal_archive
+			Compress:      true,
+			RetentionDays: 30,
+		},
 	}
 }
 
@@ -88,6 +118,8 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("log.level", cfg.Log.Level)
 	v.SetDefault("log.format", cfg.Log.Format)
 	v.SetDefault("log.output", cfg.Log.Output)
+	v.SetDefault("backup.compress", cfg.Backup.Compress)
+	v.SetDefault("backup.retention_days", cfg.Backup.RetentionDays)
 
 	// Environment variable support
 	v.SetEnvPrefix("VERIDICAL")
@@ -120,6 +152,12 @@ func Load(configPath string) (*Config, error) {
 	// Set derived defaults
 	if cfg.Storage.WalDir == "" {
 		cfg.Storage.WalDir = filepath.Join(cfg.Storage.DataDir, "wal")
+	}
+	if cfg.Backup.BackupDir == "" {
+		cfg.Backup.BackupDir = filepath.Join(cfg.Storage.DataDir, "backups")
+	}
+	if cfg.Backup.ArchiveDir == "" {
+		cfg.Backup.ArchiveDir = filepath.Join(cfg.Storage.DataDir, "wal_archive")
 	}
 
 	// Validate configuration
