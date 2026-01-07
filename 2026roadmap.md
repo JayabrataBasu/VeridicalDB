@@ -75,16 +75,27 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 
 
 
-### 4) Backup & PITR (Rank 4 — High / Large)
+### 4) Backup & PITR (Rank 4 — High / Large) ✅ (Completed)
 - Why: Operational safety — backups + point-in-time recovery are essential.
-- Acceptance criteria:
-  - `veridicaldb backup --basebackup` that produces a consistent snapshot and WAL starting point.
-  - `veridicaldb restore --pitr --target-time` to restore to a point-in-time with automated WAL replay.
-  - Docs with step-by-step examples.
-- First steps:
-  - Implement basebackup that copies data files and records WAL start LSN.
-  - Ensure WAL retention and archiving hooks exist (configurable `archive_command`).
-- Suggested files: `cmd/veridicaldb/*`, `pkg/wal/*`.
+- Status: **Completed** — core features implemented, tested, and documented:
+  - `veridicaldb backup --basebackup` produces consistent snapshot with LSN markers
+  - WAL archiving via configurable `archive_command` and built-in S3 Archiver (AWS CLI-based)
+  - `veridicaldb restore --pitr` supports PITR with automated WAL replay to target time/LSN
+  - End-to-end tests covering backup → archive → PITR (4 E2E tests)
+  - Prometheus-style metrics for backups/archiving and verification (exposition + tests)
+  - Automated retention/pruning (daemon + `veridicaldb backup prune` CLI) and docs
+  - CI: added `backup-e2e` job and unit tests for backup package
+  - Operations docs updated (`OPERATIONS.md`) with S3 examples, pruning, metrics, and alerting recommendations
+- Acceptance criteria (met):
+  - `veridicaldb backup --basebackup` and `veridicaldb restore --pitr` work end-to-end
+  - Tests include base backup, PITR to LSN/time, multiple archives restore, verification
+  - Documentation and examples present in `OPERATIONS.md` and `USAGE.md`
+- Remaining follow-ups (non-blocking):
+  - S3 integration tests are skipped by default unless `AWS_TEST_BUCKET` and credentials are provided — consider enabling an integration runner with secrets for full S3 verification in CI if desired.
+  - (Optional) Configure production alerting using the suggested Prometheus rules in `OPERATIONS.md` and add a short monitoring playbook.
+  - (Optional) Add a minimal containerized e2e smoke job in CI for fast regression checks.
+- Next steps: Close outstanding tickets referencing "Backup & PITR caveats" and mark this item as done in project tracking.
+- Suggested files: `cmd/veridicaldb/*`, `pkg/wal/*`, `pkg/backup/*`
 
 ### 5) pgwire extended protocol completion (Rank 5 — High / Medium)
 - Why: Compatibility with `psql` and client drivers depends on correct extended flow.
