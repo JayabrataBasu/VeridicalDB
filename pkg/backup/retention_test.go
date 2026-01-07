@@ -147,4 +147,7 @@ func TestPruneResult(t *testing.T) {
 	if result.BytesToFree != 1024*1024 {
 		t.Errorf("Expected 1MB to free, got %d", result.BytesToFree)
 	}
+	if !result.DryRun {
+		t.Error("Expected DryRun true")
+	}
 }

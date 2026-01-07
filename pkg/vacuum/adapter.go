@@ -67,7 +67,7 @@ func (a *StorageAdapter) FetchPage(table string, pageID uint32) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	buf := make([]byte, a.pageSize)
 	offset := int64(pageID) * int64(a.pageSize)
@@ -86,7 +86,7 @@ func (a *StorageAdapter) WritePage(table string, pageID uint32, data []byte) err
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	offset := int64(pageID) * int64(a.pageSize)
 	_, err = f.WriteAt(data, offset)
@@ -192,11 +192,7 @@ func (a *CatalogAdapter) GetTableStats(table string) (*TableStats, error) {
 
 // SimpleCatalogAdapter is a simple implementation that scans storage for stats.
 type SimpleCatalogAdapter struct {
-	storage *StorageAdapter
-	txnMgr  interface {
-		OldestActiveTxID() uint64
-		GetState(txID uint64) int
-	}
+	storage   *StorageAdapter
 	tableList []string
 }
 

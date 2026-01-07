@@ -63,6 +63,13 @@ func (w *Worker) Run(ctx context.Context, result *VacuumResult) error {
 
 // processPage scans a single page and removes dead tuples.
 func (w *Worker) processPage(ctx context.Context, pageID uint32, oldestActive txn.TxID) (compacted bool, tuplesRemoved int64, bytesReclaimed int64, err error) {
+	// Respect cancellation early
+	select {
+	case <-ctx.Done():
+		return false, 0, 0, ctx.Err()
+	default:
+	}
+
 	// Read the page
 	pageData, err := w.storage.FetchPage(w.table, pageID)
 	if err != nil {
