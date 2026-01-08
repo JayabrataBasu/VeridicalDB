@@ -1,0 +1,13 @@
+:root{--bg:#f7f9fc;--card:#fff;--muted:#6b7280;--accent:#2563eb}
+*{box-sizing:border-box}body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;padding:24px;background:var(--bg);color:#111}
+.container{max-width:900px;margin:0 auto}
+header h1{margin:0;font-size:20px}
+.muted{color:var(--muted)}
+.editor{margin-top:16px;background:var(--card);padding:12px;border-radius:8px;box-shadow:0 1px 2px rgba(16,24,40,0.03)}
+.editor label{display:block;margin-bottom:6px;font-weight:600}
+textarea#sql{width:100%;height:80px;padding:8px;border-radius:6px;border:1px solid #e6e9ef;font-family:monospace}
+.controls{display:flex;align-items:center;gap:12px;margin-top:8px}
+button#run{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer}
+.results{margin-top:16px}
+#results{background:var(--card);padding:12px;border-radius:8px;min-height:60px}
+footer{margin-top:18px;color:var(--muted)}

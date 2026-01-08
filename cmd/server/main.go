@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"encoding/json"
+	"net/http"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
@@ -24,6 +26,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "Show version and exit")
 	showHelp := flag.Bool("help", false, "Show help and exit")
 	interactive := flag.Bool("interactive", true, "Start in interactive REPL mode")
+	enableUI := flag.Bool("ui", false, "Enable web UI server")
+	uiPort := flag.Int("ui-port", 8080, "Port to serve web UI on")
 
 	flag.Parse()
 
@@ -59,6 +63,43 @@ func main() {
 		"data_dir", cfg.Storage.DataDir,
 		"port", cfg.Server.Port,
 	)
+
+	// If enabled, start a tiny web UI server to serve files under ./web and simple prototype APIs.
+	if *enableUI {
+		uiDir := "./web"
+		fs := http.FileServer(http.Dir(uiDir))
+		http.Handle("/ui/", http.StripPrefix("/ui/", fs))
+		// Simple status and prototype query endpoints
+		http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		})
+		http.HandleFunc("/api/query", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			type Req struct{ SQL string `json:"sql"` }
+			var req Req
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			resp := map[string]interface{}{
+				"columns": []string{"result"},
+				"rows":    [][]interface{}{{1}},
+				"sql":     req.SQL,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		})
+		go func() {
+			logger.Info("Starting UI server", "port", *uiPort, "dir", uiDir)
+			if err := http.ListenAndServe(fmt.Sprintf(":%d", *uiPort), nil); err != nil {
+				logger.Error("UI server failed", "error", err)
+			}
+		}()
+	}
 
 	// Ensure data directory exists
 	if err := os.MkdirAll(cfg.Storage.DataDir, 0755); err != nil {

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VeridicalDB - UI Prototype</title>
+  <link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>VeridicalDB (Prototype)</h1>
+      <p class="muted">A tiny, clean prototype UI — run a query and see results.</p>
+    </header>
+
+    <section class="editor">
+      <label for="sql">SQL</label>
+      <textarea id="sql">SELECT 1;</textarea>
+      <div class="controls">
+        <button id="run">Run</button>
+        <span id="status" class="muted">Status: idle</span>
+      </div>
+    </section>
+
+    <section class="results">
+      <h2>Results</h2>
+      <div id="results">No results yet.</div>
+    </section>
+
+    <footer>
+      <small class="muted">Prototype UI — served from <code>/ui/</code></small>
+    </footer>
+  </div>
+
+  <script src="/ui/app.js"></script>
+</body>
+</html>
