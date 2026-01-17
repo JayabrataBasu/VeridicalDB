@@ -4,7 +4,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -12,8 +11,16 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/cli"
 	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/backup"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +28,7 @@ var (
 	version   = "1.0.0"
 	buildDate = "dev"
 	cfgFile   string
+	useTUI    bool
 )
 
 func main() {
@@ -33,6 +41,9 @@ row-based and columnar storage, MVCC transactions, and SQL queries.
 Start the interactive shell:
   veridicaldb
 
+Start with TUI instead of REPL:
+  veridicaldb --tui
+
 Start with a specific config file:
   veridicaldb --config /path/to/config.yaml`,
 		Run: runServer,
@@ -40,6 +51,7 @@ Start with a specific config file:
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file path")
+	rootCmd.Flags().BoolVarP(&useTUI, "tui", "t", false, "use Terminal User Interface instead of REPL")
 
 	// Version command
 	rootCmd.AddCommand(&cobra.Command{
@@ -238,6 +250,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		"version", version,
 		"data_dir", cfg.Storage.DataDir,
 		"port", cfg.Server.Port,
+		"interface", func() string { if useTUI { return "TUI" } else { return "REPL" } }(),
 	)
 
 	// Validate data directory exists
@@ -246,6 +259,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		fmt.Fprintf(os.Stderr, "Run 'veridicaldb init' to create a new database\n")
 		os.Exit(1)
+	}
+
+	// If TUI mode is requested, start the TUI instead of REPL
+	if useTUI {
+		runTUI(cfg, log)
+		return
 	}
 
 	// Start the CLI REPL
@@ -727,5 +746,58 @@ func vacuumStatus(cmd *cobra.Command, args []string) {
 	fmt.Println("  veridicaldb vacuum run --full")
 }
 
-// Ensure unused imports are satisfied
-var _ = json.Marshal
+// runTUI starts the Terminal User Interface
+func runTUI(cfg *config.Config, log *logger.Logger) {
+	// Initialize database components similar to REPL
+	pageSize := cfg.Storage.PageSize
+	if pageSize == 0 {
+		pageSize = 4096 // default
+	}
+
+	// Create table manager
+	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, pageSize, nil)
+	if err != nil {
+		log.Error("Failed to initialize table manager", "error", err)
+		fmt.Fprintf(os.Stderr, "Error: could not initialize database: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create MVCC layer and session
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	session := sql.NewSession(mtm)
+
+	// Wire optional components
+	if dbMgr, err := catalog.NewDatabaseManager(cfg.Storage.DataDir); err == nil {
+		session.SetDatabaseManager(dbMgr)
+	}
+	if uc, err := auth.NewUserCatalog(cfg.Storage.DataDir); err == nil {
+		session.SetUserCatalog(uc)
+	}
+	if idxMgr, err := btree.NewIndexManager(cfg.Storage.DataDir, pageSize); err == nil {
+		session.SetIndexManager(idxMgr)
+	}
+	if tc, err := catalog.NewTriggerCatalog(cfg.Storage.DataDir); err == nil {
+		session.SetTriggerCatalog(tc)
+	}
+	if pc, err := catalog.NewProcedureCatalog(cfg.Storage.DataDir); err == nil {
+		session.SetProcedureCatalog(pc)
+	}
+	if ftsMgr, err := fts.NewManager(cfg.Storage.DataDir); err == nil {
+		session.SetFTSManager(ftsMgr)
+	}
+
+	// Create TUI model
+	model := tui.New(session)
+
+	// Run the TUI application
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		log.Error("TUI error", "error", err)
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	log.Info("TUI shutdown gracefully")
+}
+
