@@ -57,7 +57,7 @@ func New(session *sql.Session) *Model {
 	m.screens["home"] = homeScreen
 	m.screens["editor"] = editorScreen
 	m.screens["results"] = resultsScreen
-	
+
 	// Register placeholder screens for menu items
 	m.screens["browser"] = NewPlaceholderScreen(m, "Database Browser")
 	m.screens["monitoring"] = NewPlaceholderScreen(m, "Monitoring")
@@ -65,7 +65,7 @@ func New(session *sql.Session) *Model {
 	m.screens["backup"] = NewPlaceholderScreen(m, "Backup & Restore")
 	m.screens["settings"] = NewPlaceholderScreen(m, "Settings")
 	m.screens["about"] = NewPlaceholderScreen(m, "About")
-	
+
 	m.screen = homeScreen
 
 	return m

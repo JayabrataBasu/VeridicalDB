@@ -181,6 +181,6 @@ func (t *Theme) Palette() *types.StylePalette {
 		Help:          lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)),
 		SidebarHeader: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.AccentColor)),
 		SidebarSub:    lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)).Faint(true),
-		Footer:        lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color(t.PrimaryColor)).Padding(0,1),
+		Footer:        lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color(t.PrimaryColor)).Padding(0, 1),
 	}
 }
