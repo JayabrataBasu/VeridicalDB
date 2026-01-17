@@ -6,8 +6,8 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Model represents the main TUI application state.
@@ -57,6 +57,15 @@ func New(session *sql.Session) *Model {
 	m.screens["home"] = homeScreen
 	m.screens["editor"] = editorScreen
 	m.screens["results"] = resultsScreen
+	
+	// Register placeholder screens for menu items
+	m.screens["browser"] = NewPlaceholderScreen(m, "Database Browser")
+	m.screens["monitoring"] = NewPlaceholderScreen(m, "Monitoring")
+	m.screens["users"] = NewPlaceholderScreen(m, "User Management")
+	m.screens["backup"] = NewPlaceholderScreen(m, "Backup & Restore")
+	m.screens["settings"] = NewPlaceholderScreen(m, "Settings")
+	m.screens["about"] = NewPlaceholderScreen(m, "About")
+	
 	m.screen = homeScreen
 
 	return m
@@ -155,14 +164,14 @@ func (m *Model) View() string {
 
 	// Status bar at bottom
 	status := ""
-	if m.statusMessage != "" {
-		status = m.statusMessage
-	} else if m.lastError != "" {
-		status = "Error: " + m.lastError
+	if m.lastError != "" {
+		status = m.theme.ErrorStyle.Render("✗ Error: " + m.lastError)
+	} else if m.statusMessage != "" {
+		status = m.theme.PrimaryStyle.Render("✓ " + m.statusMessage)
 	} else {
-		status = "Ready"
+		status = m.theme.SecondaryStyle.Render("Ready")
 	}
-	footer := m.theme.Palette().Footer.Render(status)
+	footer := m.theme.Palette().Footer.Render(" " + status + " ")
 
 	return lipgloss.JoinVertical(lipgloss.Left, layout, footer)
 }

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
@@ -32,35 +31,40 @@ func (s *Sidebar) View(width int) string {
 
 	var b strings.Builder
 
-	// Logo / header
-	logoText := `  ____  _   _
- / ___|| |_| |__   ___ 
- \___ \\ __| '_ \\ / _ \
-  ___) | |_| | | |  __/
- |____/ \\__|_| |_|\\___|`
-	logo := strings.Split(logoText, "\n")
-	for _, l := range logo {
-		b.WriteString(palette.SidebarHeader.Render(fmt.Sprintf("%s\n", l)))
+	// Logo / header - Simple clean logo
+	logoLines := []string{
+		"  ╦  ╦╔═╗╦═╗╦╔╦╗╦╔═╗╔═╗╦  ",
+		"  ╚╗╔╝║╣ ╠╦╝║ ║║║║  ╠═╣║  ",
+		"   ╚╝ ╚═╝╩╚═╩═╩╝╩╚═╝╩ ╩╩═╝",
+		"        ── Database ──",
+	}
+	for _, l := range logoLines {
+		b.WriteString(palette.SidebarHeader.Render(l))
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 
 	// Section: Run info
-	b.WriteString(palette.SidebarSub.Render("Sidebar LSP MCP Section\n"))
-	b.WriteString("\n")
+	b.WriteString(palette.SidebarSub.Render("━━ Context ━━"))
+	b.WriteString("\n\n")
 
 	// Placeholder items
-	b.WriteString(palette.SidebarSub.Render("Modified Files\n"))
-	b.WriteString("  None\n\n")
+	b.WriteString(palette.Subtle.Render(" Modified Files: "))
+	b.WriteString("None\n\n")
 
-	b.WriteString(palette.SidebarSub.Render("LSPs\n"))
-	b.WriteString("  • Go gopls\n  • Nix nil\n\n")
+	b.WriteString(palette.SidebarSub.Render("━━ LSPs ━━"))
+	b.WriteString("\n")
+	b.WriteString(" • Go (gopls)\n")
+	b.WriteString(" • Nix (nil)\n\n")
 
-	b.WriteString(palette.SidebarSub.Render("MCPs\n"))
-	b.WriteString("  None\n\n")
+	b.WriteString(palette.SidebarSub.Render("━━ MCPs ━━"))
+	b.WriteString("\n")
+	b.WriteString(" None\n\n")
 
 	// Footer
-	b.WriteString(strings.Repeat("-", w) + "\n")
-	b.WriteString(palette.Footer.Render(" Press ? for help "))
+	b.WriteString(palette.Subtle.Render(strings.Repeat("─", w)))
+	b.WriteString("\n")
+	b.WriteString(palette.Help.Render("? help"))
 
 	return lipgloss.NewStyle().Width(w).Render(b.String())
 }
