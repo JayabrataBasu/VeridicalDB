@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
@@ -64,43 +66,13 @@ func main() {
 		"port", cfg.Server.Port,
 	)
 
-	// If enabled, start a tiny web UI server to serve files under ./web and simple prototype APIs.
+	// If enabled, serve static files under ./web at /ui/.
 	if *enableUI {
 		uiDir := "./web"
 		fs := http.FileServer(http.Dir(uiDir))
 		http.Handle("/ui/", http.StripPrefix("/ui/", fs))
-		// Simple status and prototype query endpoints
-		http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-		})
-		http.HandleFunc("/api/query", func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != http.MethodPost {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			type Req struct {
-				SQL string `json:"sql"`
-			}
-			var req Req
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				http.Error(w, "bad request", http.StatusBadRequest)
-				return
-			}
-			resp := map[string]interface{}{
-				"columns": []string{"result"},
-				"rows":    [][]interface{}{{1}},
-				"sql":     req.SQL,
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-		})
-		go func() {
-			logger.Info("Starting UI server", "port", *uiPort, "dir", uiDir)
-			if err := http.ListenAndServe(fmt.Sprintf(":%d", *uiPort), nil); err != nil {
-				logger.Error("UI server failed", "error", err)
-			}
-		}()
+		// Note: API endpoints are registered after the database (MTM) is initialized so
+		// handlers can access the table manager and execute SQL.
 	}
 
 	// Ensure data directory exists
@@ -146,6 +118,105 @@ func main() {
 
 	// Initialize MVCCTableManager
 	mtm := catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
+
+	// If UI is enabled, register API endpoints that can use the MTM to run read-only queries.
+	if *enableUI {
+		http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"status": "ok",
+				"tables": len(tm.ListTables()),
+			})
+		})
+
+		http.HandleFunc("/api/query", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			type Req struct {
+				SQL string `json:"sql"`
+			}
+			var req Req
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+
+			// Very small safety check: only allow SELECT statements from the UI for now.
+			parser := sql.NewParser(req.SQL)
+			stmt, err := parser.Parse()
+			if err != nil {
+				http.Error(w, "syntax error: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			switch stmt.(type) {
+			case *sql.SelectStmt:
+				// allowed
+			default:
+				http.Error(w, "only SELECT statements are allowed via the UI", http.StatusForbidden)
+				return
+			}
+
+			// Create a temporary session and execute the query (read-only)
+			sess := sql.NewSession(mtm)
+			res, err := sess.ExecuteSQL(req.SQL)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			// Convert rows to JSON-friendly values
+			rows := make([][]interface{}, 0, len(res.Rows))
+			for _, row := range res.Rows {
+				rvals := make([]interface{}, len(row))
+				for i, v := range row {
+					if v.IsNull {
+						rvals[i] = nil
+						continue
+					}
+					switch v.Type {
+					case catalog.TypeInt32:
+						rvals[i] = int64(v.Int32)
+					case catalog.TypeInt64:
+						rvals[i] = v.Int64
+					case catalog.TypeFloat64:
+						rvals[i] = v.Float64
+					case catalog.TypeBool:
+						rvals[i] = v.Bool
+					case catalog.TypeText:
+						rvals[i] = v.Text
+					case catalog.TypeTimestamp:
+						rvals[i] = v.Timestamp.Format(time.RFC3339)
+					case catalog.TypeJSON:
+						rvals[i] = v.JSON
+					default:
+						rvals[i] = v.String()
+					}
+				}
+				rows = append(rows, rvals)
+			}
+
+			resp := map[string]interface{}{
+				"columns": res.Columns,
+				"rows":    rows,
+				"message": res.Message,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		})
+	}
+
+	// If UI enabled, start the UI server. (Handlers are registered above.)
+	if *enableUI {
+		uiDir := "./web"
+		go func() {
+			logger.Info("Starting UI server", "port", *uiPort, "dir", uiDir)
+			if err := http.ListenAndServe(fmt.Sprintf(":%d", *uiPort), nil); err != nil {
+				logger.Error("UI server failed", "error", err)
+			}
+		}()
+	}
 
 	// Set up checkpointer
 	checkpointer.SetPageFlusher(tm.Checkpoint)

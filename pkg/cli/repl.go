@@ -13,6 +13,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/display"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
@@ -45,6 +46,11 @@ type REPL struct {
 	mtm     *catalog.MVCCTableManager
 	session *sql.Session
 
+	// Formatters for output
+	tableFormatter *display.TableFormatter
+	promptBuilder  *display.PromptBuilder
+	errorFormatter *display.ErrorFormatter
+
 	// running tracks if the REPL is currently active
 	running bool
 }
@@ -66,14 +72,19 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 		session = sql.NewSession(mtm)
 	}
 
+	promptBuilder := display.NewPromptBuilder()
+
 	return &REPL{
-		in:       in,
-		out:      out,
-		logger:   logger,
-		tm:       tm,
-		executor: executor,
-		mtm:      mtm,
-		session:  session,
+		in:             in,
+		out:            out,
+		logger:         logger,
+		tm:             tm,
+		executor:       executor,
+		mtm:            mtm,
+		session:        session,
+		tableFormatter: display.NewTableFormatter(),
+		promptBuilder:  promptBuilder,
+		errorFormatter: display.NewErrorFormatter(),
 	}
 }
 
@@ -188,17 +199,10 @@ func (r *REPL) getPrompt() string {
 
 	inTx := r.session != nil && r.session.InTransaction()
 
-	if db != "" {
-		if inTx {
-			return fmt.Sprintf("veridical[%s] [tx]> ", db)
-		}
-		return fmt.Sprintf("veridical[%s]> ", db)
-	}
-
-	if inTx {
-		return "veridical [tx]> "
-	}
-	return Prompt
+	// Update prompt builder and get prompt
+	r.promptBuilder.SetDatabase(db)
+	r.promptBuilder.SetTransaction(inTx)
+	return r.promptBuilder.Build()
 }
 
 // printWelcome displays the welcome banner.
@@ -453,107 +457,8 @@ func (r *REPL) executeSQL(input string) {
 
 // displayResult formats and prints a query result.
 func (r *REPL) displayResult(result *sql.Result) {
-	// If it's a message-only result (CREATE, INSERT, UPDATE, DELETE)
-	if result.Message != "" && result.Columns == nil {
-		_, _ = fmt.Fprintln(r.out, result.Message)
-		return
-	}
-
-	// It's a SELECT query result
-	if len(result.Columns) == 0 {
-		_, _ = fmt.Fprintln(r.out, "(no columns)")
-		return
-	}
-
-	// Calculate column widths
-	widths := make([]int, len(result.Columns))
-	for i, col := range result.Columns {
-		widths[i] = len(col)
-	}
-	for _, row := range result.Rows {
-		for i, val := range row {
-			str := formatValue(val)
-			if len(str) > widths[i] {
-				widths[i] = len(str)
-			}
-		}
-	}
-
-	// Cap max column width at 40 characters
-	for i := range widths {
-		if widths[i] > 40 {
-			widths[i] = 40
-		}
-	}
-
-	// Print header
-	_, _ = fmt.Fprint(r.out, "\n")
-	for i, col := range result.Columns {
-		_, _ = fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(col, widths[i]))
-		if i < len(result.Columns)-1 {
-			_, _ = fmt.Fprint(r.out, "│")
-		}
-	}
-	_, _ = fmt.Fprintln(r.out)
-
-	// Print separator
-	for i := range result.Columns {
-		_, _ = fmt.Fprint(r.out, strings.Repeat("─", widths[i]+2))
-		if i < len(result.Columns)-1 {
-			_, _ = fmt.Fprint(r.out, "┼")
-		}
-	}
-	_, _ = fmt.Fprintln(r.out)
-
-	// Print rows
-	for _, row := range result.Rows {
-		for i, val := range row {
-			str := formatValue(val)
-			_, _ = fmt.Fprintf(r.out, " %-*s ", widths[i], truncate(str, widths[i]))
-			if i < len(row)-1 {
-				_, _ = fmt.Fprint(r.out, "│")
-			}
-		}
-		_, _ = fmt.Fprintln(r.out)
-	}
-
-	// Print row count
-	_, _ = fmt.Fprintf(r.out, "\n(%d row(s))\n", len(result.Rows))
-}
-
-// formatValue converts a catalog.Value to a string for display.
-func formatValue(v catalog.Value) string {
-	if v.IsNull {
-		return "NULL"
-	}
-	switch v.Type {
-	case catalog.TypeInt32:
-		return fmt.Sprintf("%d", v.Int32)
-	case catalog.TypeInt64:
-		return fmt.Sprintf("%d", v.Int64)
-	case catalog.TypeText:
-		return v.Text
-	case catalog.TypeBool:
-		if v.Bool {
-			return "true"
-		}
-		return "false"
-	case catalog.TypeTimestamp:
-		return v.Timestamp.Format("2006-01-02 15:04:05")
-	default:
-		return "?"
-	}
-}
-
-// truncate limits a string to maxLen characters.
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen < 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
+	output := r.tableFormatter.FormatResult(result)
+	_, _ = fmt.Fprint(r.out, output)
 }
 
 // listIndexes prints all indexes in the database.
