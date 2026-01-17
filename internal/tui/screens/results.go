@@ -206,7 +206,7 @@ func (r *ResultsScreen) renderTable() string {
 	var b strings.Builder
 
 	// Header row
-	headerStyle := palette.Title.Copy().Foreground(lipgloss.Color("#00FF00"))
+	headerStyle := palette.Title.Foreground(lipgloss.Color("#00FF00"))
 	for i, col := range visibleCols {
 		b.WriteString(headerStyle.Render(padRight(col, colWidths[i])))
 		b.WriteString("  ")
