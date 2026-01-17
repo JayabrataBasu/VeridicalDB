@@ -75,16 +75,16 @@ func NewREPL(in io.Reader, out io.Writer, logger *log.Logger, tm *catalog.TableM
 	promptBuilder := display.NewPromptBuilder()
 
 	return &REPL{
-		in:              in,
-		out:             out,
-		logger:          logger,
-		tm:              tm,
-		executor:        executor,
-		mtm:             mtm,
-		session:         session,
-		tableFormatter:  display.NewTableFormatter(),
-		promptBuilder:   promptBuilder,
-		errorFormatter:  display.NewErrorFormatter(),
+		in:             in,
+		out:            out,
+		logger:         logger,
+		tm:             tm,
+		executor:       executor,
+		mtm:            mtm,
+		session:        session,
+		tableFormatter: display.NewTableFormatter(),
+		promptBuilder:  promptBuilder,
+		errorFormatter: display.NewErrorFormatter(),
 	}
 }
 

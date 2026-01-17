@@ -54,7 +54,7 @@ func (ef *ErrorFormatter) GetSuggestion(err error) string {
 	}
 
 	errMsg := err.Error()
-	
+
 	// Syntax errors
 	if contains(errMsg, "syntax", "parse", "unexpected") {
 		return "Check your SQL syntax and try again."

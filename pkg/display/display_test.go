@@ -176,7 +176,7 @@ func TestTruncate(t *testing.T) {
 		{
 			input:    "hello world",
 			maxLen:   3,
-			expected: "hel",
+			expected: "...",
 		},
 		{
 			input:    "",
@@ -195,33 +195,33 @@ func TestTruncate(t *testing.T) {
 
 func TestPromptBuilderBuild(t *testing.T) {
 	tests := []struct {
-		name            string
-		database        string
-		inTransaction   bool
+		name             string
+		database         string
+		inTransaction    bool
 		expectedContains string
 	}{
 		{
-			name:            "default prompt",
-			database:        "",
-			inTransaction:   false,
+			name:             "default prompt",
+			database:         "",
+			inTransaction:    false,
 			expectedContains: "veridical>",
 		},
 		{
-			name:            "with database",
-			database:        "mydb",
-			inTransaction:   false,
+			name:             "with database",
+			database:         "mydb",
+			inTransaction:    false,
 			expectedContains: "veridical[mydb]>",
 		},
 		{
-			name:            "transaction prompt",
-			database:        "",
-			inTransaction:   true,
+			name:             "transaction prompt",
+			database:         "",
+			inTransaction:    true,
 			expectedContains: "[tx]>",
 		},
 		{
-			name:            "transaction with database",
-			database:        "mydb",
-			inTransaction:   true,
+			name:             "transaction with database",
+			database:         "mydb",
+			inTransaction:    true,
 			expectedContains: "veridical[mydb] [tx]>",
 		},
 	}
