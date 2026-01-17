@@ -250,7 +250,13 @@ func runServer(cmd *cobra.Command, args []string) {
 		"version", version,
 		"data_dir", cfg.Storage.DataDir,
 		"port", cfg.Server.Port,
-		"interface", func() string { if useTUI { return "TUI" } else { return "REPL" } }(),
+		"interface", func() string {
+			if useTUI {
+				return "TUI"
+			} else {
+				return "REPL"
+			}
+		}(),
 	)
 
 	// Validate data directory exists
@@ -302,6 +308,9 @@ func initDatabase(cmd *cobra.Command, args []string) {
 
 // runBaseBackup creates a base backup of the database.
 func runBaseBackup(cmd *cobra.Command, args []string, output string) {
+	// Some cobra command handlers don't use the cmd/args directly; explicitly ignore to satisfy linters.
+	_ = cmd
+	_ = args
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
@@ -430,6 +439,9 @@ func verifyBackup(cmd *cobra.Command, args []string) {
 
 // runRestore restores from a backup.
 func runRestore(cmd *cobra.Command, args []string, targetTime, targetLSN, archiveDir, restoreCmd string) {
+	// Some cobra handlers accept cmd/args but don't need them; explicitly ignore to satisfy linters.
+	_ = cmd
+	_ = args
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
@@ -800,4 +812,3 @@ func runTUI(cfg *config.Config, log *logger.Logger) {
 
 	log.Info("TUI shutdown gracefully")
 }
-
