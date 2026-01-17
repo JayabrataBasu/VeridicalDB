@@ -2,6 +2,9 @@
 package tui
 
 import (
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/screens"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -45,9 +48,14 @@ func New(session *sql.Session) *Model {
 		quitting: false,
 	}
 
-	// Initialize screens (will be populated by screen constructors)
+	// Initialize screens
 	homeScreen := NewHomeScreen(m)
+	editorScreen := screens.NewEditorScreen(m)
+	resultsScreen := screens.NewResultsScreen(m)
+
 	m.screens["home"] = homeScreen
+	m.screens["editor"] = editorScreen
+	m.screens["results"] = resultsScreen
 	m.screen = homeScreen
 
 	return m
@@ -81,9 +89,32 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Switch to new screen
 		if screen, ok := m.screens[msg.ScreenID]; ok {
 			m.screen = screen
-			return m, nil
+			return m, screen.Init()
 		}
 		m.lastError = "Screen not found: " + msg.ScreenID
+		return m, nil
+
+	case screens.ExecuteQueryMsg:
+		// Execute query asynchronously
+		return m, m.executeQuery(msg.SQL)
+
+	case screens.QueryCompletedMsg:
+		// Update results screen with query result
+		if resultsScreen, ok := m.screens["results"].(*screens.ResultsScreen); ok {
+			if msg.Error != nil {
+				m.lastError = msg.Error.Error()
+				m.statusMessage = "Query failed"
+			} else {
+				resultsScreen.SetResult(msg.Result)
+				m.statusMessage = "Query executed successfully"
+			}
+		}
+		// Forward to current screen
+		if m.screen != nil {
+			newScreen, cmd := m.screen.Update(msg)
+			m.screen = newScreen
+			return m, cmd
+		}
 		return m, nil
 
 	case ErrorMsg:
@@ -133,6 +164,14 @@ func (m *Model) GetTheme() *Theme {
 	return m.theme
 }
 
+// GetStyles returns the shared style palette for screens.
+func (m *Model) GetStyles() *types.StylePalette {
+	if m.theme == nil {
+		return nil
+	}
+	return m.theme.Palette()
+}
+
 // SetTheme updates the theme.
 func (m *Model) SetTheme(theme *Theme) {
 	m.theme = theme
@@ -161,4 +200,73 @@ func (m *Model) SetStatus(msg string) {
 // GetStatus returns the current status message.
 func (m *Model) GetStatus() string {
 	return m.statusMessage
+}
+
+// executeQuery executes a SQL query asynchronously.
+func (m *Model) executeQuery(sqlQuery string) tea.Cmd {
+	return func() tea.Msg {
+		// Execute query using session
+		result, err := m.session.ExecuteSQL(sqlQuery)
+
+		if err != nil {
+			return screens.QueryCompletedMsg{
+				Result: nil,
+				Error:  err,
+			}
+		}
+
+		// Convert result to QueryResult format
+		queryResult := &screens.QueryResult{
+			Columns: result.Columns,
+			Rows:    convertRows(result.Rows),
+			Message: result.Message,
+		}
+
+		return screens.QueryCompletedMsg{
+			Result: queryResult,
+			Error:  nil,
+		}
+	}
+}
+
+// convertRows converts catalog.Value rows to interface{} rows for display.
+func convertRows(catalogRows [][]catalog.Value) [][]interface{} {
+	if catalogRows == nil {
+		return nil
+	}
+
+	rows := make([][]interface{}, len(catalogRows))
+	for i, catalogRow := range catalogRows {
+		rows[i] = make([]interface{}, len(catalogRow))
+		for j, val := range catalogRow {
+			rows[i][j] = convertValue(val)
+		}
+	}
+	return rows
+}
+
+// convertValue converts a catalog.Value to interface{} for display.
+func convertValue(v catalog.Value) interface{} {
+	if v.IsNull {
+		return nil
+	}
+
+	switch v.Type {
+	case catalog.TypeInt32:
+		return v.Int32
+	case catalog.TypeInt64:
+		return v.Int64
+	case catalog.TypeFloat64:
+		return v.Float64
+	case catalog.TypeText:
+		return v.Text
+	case catalog.TypeBool:
+		return v.Bool
+	case catalog.TypeTimestamp:
+		return v.Timestamp
+	case catalog.TypeJSON:
+		return v.JSON
+	default:
+		return nil
+	}
 }

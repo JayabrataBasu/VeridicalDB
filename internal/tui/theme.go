@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -168,4 +169,15 @@ func (t *Theme) setupHighContrastTheme() {
 	t.EditorStyle = lipgloss.NewStyle().
 		Background(lipgloss.Color("#000000")).
 		Foreground(lipgloss.Color(t.ForegroundColor))
+}
+
+// Palette converts the theme into a screen-friendly style palette.
+func (t *Theme) Palette() *types.StylePalette {
+	return &types.StylePalette{
+		Title:     t.HeaderStyle,
+		Subtle:    lipgloss.NewStyle().Foreground(lipgloss.Color(t.ForegroundColor)).Faint(true),
+		Highlight: t.PrimaryStyle,
+		Error:     t.ErrorStyle,
+		Help:      lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)),
+	}
 }
