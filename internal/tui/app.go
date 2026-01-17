@@ -6,6 +6,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -146,7 +147,24 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	return m.screen.View()
+	// Compose main screen and sidebar
+	mainContent := m.screen.View()
+	side := NewSidebar(m)
+	// Try to place sidebar to the right with fixed width (32)
+	layout := lipgloss.JoinHorizontal(lipgloss.Top, mainContent, side.View(32))
+
+	// Status bar at bottom
+	status := ""
+	if m.statusMessage != "" {
+		status = m.statusMessage
+	} else if m.lastError != "" {
+		status = "Error: " + m.lastError
+	} else {
+		status = "Ready"
+	}
+	footer := m.theme.Palette().Footer.Render(status)
+
+	return lipgloss.JoinVertical(lipgloss.Left, layout, footer)
 }
 
 // RegisterScreen registers a screen in the TUI.

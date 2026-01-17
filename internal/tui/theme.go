@@ -174,10 +174,13 @@ func (t *Theme) setupHighContrastTheme() {
 // Palette converts the theme into a screen-friendly style palette.
 func (t *Theme) Palette() *types.StylePalette {
 	return &types.StylePalette{
-		Title:     t.HeaderStyle,
-		Subtle:    lipgloss.NewStyle().Foreground(lipgloss.Color(t.ForegroundColor)).Faint(true),
-		Highlight: t.PrimaryStyle,
-		Error:     t.ErrorStyle,
-		Help:      lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)),
+		Title:         t.HeaderStyle,
+		Subtle:        lipgloss.NewStyle().Foreground(lipgloss.Color(t.ForegroundColor)).Faint(true),
+		Highlight:     t.PrimaryStyle,
+		Error:         t.ErrorStyle,
+		Help:          lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)),
+		SidebarHeader: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(t.AccentColor)),
+		SidebarSub:    lipgloss.NewStyle().Foreground(lipgloss.Color(t.SecondaryColor)).Faint(true),
+		Footer:        lipgloss.NewStyle().Background(lipgloss.Color("#101010")).Foreground(lipgloss.Color(t.PrimaryColor)).Padding(0,1),
 	}
 }

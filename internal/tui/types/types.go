@@ -53,11 +53,14 @@ type QueryResult struct {
 
 // StylePalette captures the shared styles used across screens.
 type StylePalette struct {
-	Title     lipgloss.Style
-	Subtle    lipgloss.Style
-	Highlight lipgloss.Style
-	Error     lipgloss.Style
-	Help      lipgloss.Style
+	Title         lipgloss.Style
+	Subtle        lipgloss.Style
+	Highlight     lipgloss.Style
+	Error         lipgloss.Style
+	Help          lipgloss.Style
+	SidebarHeader lipgloss.Style
+	SidebarSub    lipgloss.Style
+	Footer        lipgloss.Style
 }
 
 // StyleProvider exposes a palette for screens.
