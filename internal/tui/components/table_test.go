@@ -12,13 +12,6 @@ func TestNewTableData(t *testing.T) {
 	}
 
 	table := NewTableData(columns, rows)
-
-	if table == nil {
-		t.Fatal("NewTableData returned nil")
-	}
-	if table == nil {
-		return // Make staticcheck happy
-	}
 	if len(table.Columns) != 3 {
 		t.Errorf("Expected 3 columns, got %d", len(table.Columns))
 	}
@@ -335,7 +328,7 @@ func TestSelectionPreservedAfterSort(t *testing.T) {
 	)
 
 	table.SelectRow(1) // Select Bob
-	_ = table.Sort(1)      // Sort by Name
+	_ = table.Sort(1)  // Sort by Name
 
 	// Bob should still be selected even though his row position changed
 	if table.GetSelectedCount() != 1 {

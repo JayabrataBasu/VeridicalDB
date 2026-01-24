@@ -9,13 +9,6 @@ func TestNewRowDetail(t *testing.T) {
 	values := []interface{}{1, "Alice", "alice@example.com"}
 
 	detail := NewRowDetail(0, columns, values)
-
-	if detail == nil {
-		t.Fatal("NewRowDetail returned nil")
-	}
-	if detail == nil {
-		return // Make staticcheck happy
-	}
 	if len(detail.Columns) != 3 {
 		t.Errorf("Expected 3 columns, got %d", len(detail.Columns))
 	}
