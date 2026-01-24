@@ -29,6 +29,7 @@ func TestNewSystemCatalog(t *testing.T) {
 	sc := NewSystemCatalog(txnMgr, lockMgr, cat)
 	if sc == nil {
 		t.Fatal("NewSystemCatalog returned nil")
+		return
 	}
 
 	if sc.txnMgr != txnMgr {

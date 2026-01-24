@@ -57,7 +57,7 @@ func TestSplitViewAdjustRatio(t *testing.T) {
 
 	split.SetRatio(0.5)
 	split.AdjustRatio(0.1)
-	
+
 	// Use tolerance for floating-point comparison
 	ratio := split.GetRatio()
 	if ratio < 0.59 || ratio > 0.61 {

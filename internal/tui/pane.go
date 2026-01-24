@@ -87,8 +87,8 @@ func (p *Pane) View() string {
 
 	// Create the bordered container with rounded corners
 	container := borderStyle.
-		Width(p.Width - 2). // Account for border width
-		Height(p.Height - 2).
+		Width(p.Width-2). // Account for border width
+		Height(p.Height-2).
 		Padding(0, 1)
 
 	// Render title if present

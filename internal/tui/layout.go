@@ -275,8 +275,8 @@ func (l *Layout) renderPane(title, content string, width, height int, active boo
 
 	// Build the bordered container
 	container := borderStyle.
-		Width(width - 2).
-		Height(height - 3). // Account for border and title
+		Width(width-2).
+		Height(height-3). // Account for border and title
 		Padding(0, 1)
 
 	// Render title

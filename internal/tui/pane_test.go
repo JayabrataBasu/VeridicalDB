@@ -17,6 +17,7 @@ func TestPaneStyles(t *testing.T) {
 
 			if styles == nil {
 				t.Fatalf("NewPaneStylesFromPalette(%q) returned nil", themeName)
+				return
 			}
 
 			// Verify all style fields are set (non-zero) using GetBorder() multi-value return
@@ -125,6 +126,7 @@ func TestNewPaneStylesFromTheme(t *testing.T) {
 
 	if styles == nil {
 		t.Fatal("NewPaneStyles returned nil")
+		return
 	}
 
 	// Verify border is set - GetBorder returns (Border, top, right, bottom, left)

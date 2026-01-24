@@ -207,6 +207,7 @@ func TestNewCoordinator(t *testing.T) {
 
 	if coord == nil {
 		t.Fatal("NewCoordinator returned nil")
+		return
 	}
 
 	if coord.config != config {
