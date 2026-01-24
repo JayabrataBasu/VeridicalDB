@@ -9,9 +9,6 @@ import (
 func TestNewAutocompleteManager(t *testing.T) {
 	am := NewAutocompleteManager()
 
-	if am == nil {
-		t.Fatal("expected non-nil manager")
-	}
 	if len(am.keywords) == 0 {
 		t.Errorf("expected keywords to be loaded")
 	}

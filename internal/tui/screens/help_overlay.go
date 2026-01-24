@@ -13,7 +13,6 @@ type HelpOverlay struct {
 	width      int
 	height     int
 	scrollPos  int
-	content    string
 	pageIndex  int
 	totalPages int
 }
