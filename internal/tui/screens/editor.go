@@ -3,26 +3,28 @@ package screens
 import (
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/syntax"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // EditorScreen is the primary SQL editor interface
 type EditorScreen struct {
-	app        types.StyleProvider
-	textarea   textarea.Model
-	status     string
-	executing  bool
-	history    []string // Query history
-	historyIdx int
+	app         types.StyleProvider
+	textarea    textarea.Model
+	status      string
+	executing   bool
+	history     []string // Query history
+	historyIdx  int
+	highlighter *syntax.Highlighter    // Syntax highlighter for full coverage
+	lineOps     *syntax.LineOperations // Line operations handler
 }
 
 // NewEditorScreen creates a new SQL editor screen
 func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 	ta := textarea.New()
-	ta.Placeholder = "Enter SQL query here... (Ctrl+Enter or F5 to execute)"
+	ta.Placeholder = "Enter SQL query here... (F5 or Ctrl+Enter to execute)"
 	ta.Focus()
 	ta.CharLimit = 0 // No limit
 	ta.SetWidth(100)
@@ -31,11 +33,13 @@ func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 	ta.KeyMap.InsertNewline.SetEnabled(true)
 
 	return &EditorScreen{
-		app:        app,
-		textarea:   ta,
-		status:     "Ready",
-		history:    make([]string, 0),
-		historyIdx: -1,
+		app:         app,
+		textarea:    ta,
+		status:      "Ready",
+		history:     make([]string, 0),
+		historyIdx:  -1,
+		highlighter: syntax.NewHighlighter(),
+		lineOps:     syntax.NewLineOperations(""),
 	}
 }
 
@@ -64,22 +68,84 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 				return ScreenChangeMsg{ScreenID: "home"}
 			}
 
-		case "f5", "ctrl+enter":
-			// Execute query
+		// Both F5 and Ctrl+Enter execute queries (fixed execution modes - Task 9)
+		case "f5":
 			sql := strings.TrimSpace(e.textarea.Value())
 			if sql != "" && !e.executing {
 				e.executing = true
 				e.status = "Executing query..."
-
-				// Add to history
 				e.history = append(e.history, sql)
 				e.historyIdx = len(e.history)
-
-				// Send execute message
 				return e, func() tea.Msg {
 					return ExecuteQueryMsg{SQL: sql}
 				}
 			}
+
+		case "ctrl+enter":
+			// Alternative execution trigger (fixed - was not working properly)
+			sql := strings.TrimSpace(e.textarea.Value())
+			if sql != "" && !e.executing {
+				e.executing = true
+				e.status = "Executing query..."
+				e.history = append(e.history, sql)
+				e.historyIdx = len(e.history)
+				return e, func() tea.Msg {
+					return ExecuteQueryMsg{SQL: sql}
+				}
+			}
+
+		// Line operations (Task 10)
+		case "ctrl+shift+k":
+			// Delete current line
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.DeleteLine()
+			e.textarea.SetValue(e.lineOps.GetContent())
+			e.status = "Line deleted"
+			return e, nil
+
+		case "alt+shift+down":
+			// Move line down
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.MoveLine(1)
+			e.textarea.SetValue(e.lineOps.GetContent())
+			e.status = "Line moved down"
+			return e, nil
+
+		case "alt+shift+up":
+			// Move line up
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.MoveLine(-1)
+			e.textarea.SetValue(e.lineOps.GetContent())
+			e.status = "Line moved up"
+			return e, nil
+
+		case "ctrl+d":
+			// Duplicate line
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.DuplicateLine()
+			e.textarea.SetValue(e.lineOps.GetContent())
+			e.status = "Line duplicated"
+			return e, nil
+
+		case "tab":
+			// Indent line
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.IndentLine(4)
+			e.textarea.SetValue(e.lineOps.GetContent())
+			return e, nil
+
+		case "shift+tab":
+			// Dedent line
+			content := e.textarea.Value()
+			e.lineOps.SetContent(content)
+			e.lineOps.DedentLine(4)
+			e.textarea.SetValue(e.lineOps.GetContent())
+			return e, nil
 
 		case "ctrl+k":
 			// Clear editor
@@ -172,53 +238,19 @@ func (e *EditorScreen) View() string {
 	b.WriteString(statusBar)
 	b.WriteString("\n\n")
 
-	// Help text
+	// Help text with Sprint-2 keybindings
 	helpText := palette.Help.Render(
-		"F5/Ctrl+Enter: Execute | Ctrl+K: Clear | Ctrl+↑/↓: History | Esc: Back to Menu",
+		"F5/Ctrl+Enter: Execute | Ctrl+D: Duplicate Line | Ctrl+Shift+K: Delete Line | Alt+Shift+↑↓: Move Line | Tab/Shift+Tab: Indent | Esc: Back",
 	)
 	b.WriteString(helpText)
 
 	return b.String()
 }
 
-// renderWithSyntaxHighlight applies basic SQL syntax highlighting
+// renderWithSyntaxHighlight applies full SQL syntax highlighting (Task 7)
 func (e *EditorScreen) renderWithSyntaxHighlight(text string) string {
-	// SQL keywords to highlight
-	keywords := []string{
-		"SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE",
-		"CREATE", "DROP", "ALTER", "TABLE", "DATABASE", "INDEX",
-		"JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "ON",
-		"GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
-		"AND", "OR", "NOT", "IN", "EXISTS", "LIKE",
-		"BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION",
-		"PRIMARY KEY", "FOREIGN KEY", "REFERENCES",
-		"INT", "INTEGER", "TEXT", "VARCHAR", "BOOLEAN", "TIMESTAMP",
-		"NULL", "NOT NULL", "DEFAULT", "UNIQUE", "CHECK",
-	}
-
-	keywordStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#569CD6")).Bold(true)
-
-	result := text
-	lines := strings.Split(result, "\n")
-
-	for i, line := range lines {
-		for _, keyword := range keywords {
-			// Case-insensitive replacement
-			upperLine := strings.ToUpper(line)
-			if strings.Contains(upperLine, keyword) {
-				// Find and highlight the keyword
-				words := strings.Fields(line)
-				for j, word := range words {
-					if strings.ToUpper(strings.Trim(word, "(),;")) == keyword {
-						words[j] = keywordStyle.Render(word)
-					}
-				}
-				lines[i] = strings.Join(words, " ")
-			}
-		}
-	}
-
-	return strings.Join(lines, "\n")
+	// Use the comprehensive highlighter for full coverage
+	return e.highlighter.Highlight(text)
 }
 
 // getStyles retrieves the shared style palette from the app.
