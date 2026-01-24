@@ -15,11 +15,13 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 ## Features
 
 ### 🗄️ Storage Engines
+
 - **Row-based Storage**: Traditional heap storage with page-based organization
 - **Columnar Storage**: Efficient analytical queries with column-oriented data layout
 - **Hybrid Storage**: Automatic storage selection based on workload patterns
 
 ### 🔄 Transactions & Concurrency
+
 - **MVCC (Multi-Version Concurrency Control)**: Non-blocking reads, snapshot isolation
 - **ACID Compliance**: Atomicity, Consistency, Isolation, Durability
 - **Lock Manager**: Row-level locking with deadlock detection
@@ -27,7 +29,8 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 
 ### 📊 SQL Support
 
-#### Data Definition Language (DDL)
+#### Data Definition Language (DDL) Commands
+
 - `CREATE DATABASE`, `DROP DATABASE`
 - `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`
 - `CREATE INDEX`, `DROP INDEX`
@@ -35,13 +38,15 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - `CREATE USER`, `ALTER USER`, `DROP USER`
 - `GRANT`, `REVOKE` permissions
 
-#### Data Manipulation Language (DML)
+#### Data Manipulation Language (DML) Commands
+
 - `INSERT`, `UPDATE`, `DELETE`
 - `UPSERT` (ON CONFLICT DO UPDATE)
 - `MERGE` statements
 - `TRUNCATE TABLE`
 
-#### Data Query Language (DQL)
+#### Data Query Language (DQL) Commands
+
 - `SELECT` with complex expressions
 - `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
 - `GROUP BY`, `HAVING`
@@ -50,6 +55,7 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - Common Table Expressions (CTEs) with `WITH` clause
 
 #### Advanced SQL Features
+
 - **JOINs**: `INNER JOIN`, `LEFT JOIN`, `RIGHT JOIN`, `FULL JOIN`
 - **Set Operations**: `UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`
 - **Window Functions**: `ROW_NUMBER()`, `RANK()`, `DENSE_RANK()`, aggregate functions over windows
@@ -58,6 +64,7 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **Triggers**: `CREATE TRIGGER`, `DROP TRIGGER` with BEFORE/AFTER timing
 
 ### 📋 Data Types
+
 - **Numeric**: `INT`, `BIGINT`, `FLOAT`, `DOUBLE`
 - **Text**: `TEXT`, `VARCHAR`
 - **Boolean**: `BOOL`
@@ -68,31 +75,38 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 ### 🔧 Functions & Operators
 
 #### Aggregate Functions
+
 - `COUNT()`, `SUM()`, `AVG()`, `MIN()`, `MAX()`
 - Statistical functions (planned)
 
 #### String Functions
+
 - `UPPER()`, `LOWER()`, `LENGTH()`, `CONCAT()`
 - `SUBSTRING()`, `TRIM()`, `REPLACE()` (planned)
 
 #### Mathematical Functions
+
 - `ABS()`, `ROUND()`, `FLOOR()`, `CEIL()`
 - `SQRT()`, `POWER()`, `LOG()` (planned)
 
 #### Date/Time Functions
+
 - `NOW()`, `CURRENT_TIMESTAMP`, `CURRENT_DATE`
 - `EXTRACT()`, `DATE_ADD()`, `DATE_SUB()`
 - `YEAR()`, `MONTH()`, `DAY()`, `HOUR()`, `MINUTE()`, `SECOND()`
 
 #### Type Conversion
+
 - `CAST(expression AS type)`
 - Implicit type coercion
 
 #### JSON Operators
+
 - JSON column storage and querying
 - JSON path operators (planned)
 
 ### 🏗️ Indexing & Performance
+
 - **B+ Tree Indexes**: Primary keys, unique constraints, secondary indexes
 - **Full-Text Search (FTS)**: `CREATE FULLTEXT INDEX`, `@@` operator
 - **Index Types**: B-Tree, Hash (planned), Bitmap (planned)
@@ -100,6 +114,7 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **Statistics**: Automatic statistics collection for query planning
 
 ### 🔒 Security & Access Control
+
 - **User Management**: Create, alter, drop users with password authentication
 - **Role-Based Access Control**: GRANT/REVOKE permissions on databases, tables, views
 - **Authentication**: Password-based authentication
@@ -108,17 +123,20 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **Authorization**: Table-level and column-level permissions (planned)
 
 ### 📈 Observability & Monitoring
+
 - **System Catalog**: `information_schema` tables for metadata queries
 - **Performance Metrics**: Query execution statistics, buffer pool metrics
 - **Logging**: Structured logging with configurable levels
 - **Health Checks**: Database connectivity and performance monitoring
 
 ### 🔄 Replication & High Availability
+
 - **Primary-Replica Replication**: Asynchronous replication with failover
 - **WAL (Write-Ahead Logging)**: Crash recovery and point-in-time recovery
 - **Backup & Restore**: Logical backups with `pg_dump` compatibility (planned)
 
 ### 🛠️ Developer Experience
+
 - **Interactive CLI**: Rich command-line interface with auto-completion
 - **SQL Shell**: Interactive SQL execution with history
 - **Configuration**: YAML/JSON/TOML configuration files
@@ -127,6 +145,7 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **Docker Support**: Containerized deployment
 
 ### 📚 Advanced Features
+
 - **Partitioning**: Table partitioning by range, hash, list
 - **Foreign Keys**: Referential integrity with CASCADE/RESTRICT actions
 - **Check Constraints**: Column and table-level constraints
@@ -134,8 +153,6 @@ VeridicalDB has evolved significantly beyond the initial roadmap. The database n
 - **Views**: Virtual tables with updatable views (planned)
 - **Materialized Views** (planned)
 - **Extensions**: Pluggable extensions system (planned)
-
-## Quick Start
 
 ## Quick Start
 
@@ -185,7 +202,7 @@ go build -o build/veridicaldb ./cmd/veridicaldb
 
 You'll see:
 
-```
+```cool
  __      __        _     _ _           _ ____  ____  
  \ \    / /       (_)   | (_)         | |  _ \|  _ \ 
   \ \  / /__ _ __  _  __| |_  ___ __ _| | | | | |_) |
@@ -264,6 +281,7 @@ SELECT * FROM user_stats WHERE age_rank <= 3;
 VeridicalDB supports a comprehensive set of SQL commands across all major categories:
 
 ### Data Definition Language (DDL)
+
 - **CREATE DATABASE** - Create new databases
 - **DROP DATABASE** - Remove databases
 - **USE** - Switch between databases
@@ -276,12 +294,14 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **DROP VIEW** - Remove views
 
 ### Data Manipulation Language (DML)
+
 - **INSERT** - Add single or multiple rows
 - **UPDATE** - Modify existing data with WHERE conditions
 - **DELETE** - Remove data with WHERE conditions
 - **TRUNCATE** - Quickly empty tables
 
 ### Data Query Language (DQL)
+
 - **SELECT** - Query data with complex expressions
   - Column selection and aliases
   - WHERE clauses with complex conditions
@@ -294,6 +314,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **Window Functions** - ROW_NUMBER, RANK, DENSE_RANK, etc.
 
 ### Views & Virtual Tables
+
 - **CREATE VIEW** - Define virtual tables based on SELECT queries
   - `CREATE VIEW view_name AS SELECT ...`
   - `CREATE VIEW view_name (col1, col2) AS SELECT ...`
@@ -307,6 +328,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **Information Schema** - Views appear in `information_schema.tables` with type "VIEW"
 
 ### Data Control Language (DCL)
+
 - **CREATE USER** - Create database users
 - **ALTER USER** - Modify user properties
 - **DROP USER** - Remove users
@@ -314,6 +336,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **REVOKE** - Remove permissions
 
 ### Transaction Control Language (TCL)
+
 - **BEGIN** - Start transactions
 - **COMMIT** - Save transaction changes
 - **ROLLBACK** - Undo transaction changes
@@ -321,6 +344,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **RELEASE SAVEPOINT** - Remove checkpoints
 
 ### Procedural Language (PL/SQL)
+
 - **CREATE PROCEDURE** - Define stored procedures
 - **DROP PROCEDURE** - Remove procedures
 - **CREATE FUNCTION** - Define user-defined functions
@@ -328,7 +352,8 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **CREATE TRIGGER** - Define automatic triggers
 - **DROP TRIGGER** - Remove triggers
 
-### Advanced SQL Features
+### Advanced SQL Features List
+
 - **Set Operations**: UNION, INTERSECT, EXCEPT with ALL/DISTINCT
 - **Aggregate Functions**: COUNT, SUM, AVG, MIN, MAX
 - **Grouping**: GROUP BY with HAVING clauses
@@ -344,6 +369,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 - **Full-Text Search**: MATCH AGAINST with analyzers
 
 ### System Commands
+
 - **SHOW DATABASES** - List all databases
 - **SHOW TABLES** - List tables in current database
 - **SHOW CREATE TABLE** - Display table DDL
@@ -356,6 +382,7 @@ VeridicalDB supports a comprehensive set of SQL commands across all major catego
 VeridicalDB can be configured via:
 
 1. **Config file** (YAML, JSON, or TOML):
+
    ```yaml
    server:
      host: localhost
@@ -370,6 +397,7 @@ VeridicalDB can be configured via:
    ```
 
 2. **Environment variables** (prefix: `VERIDICAL_`):
+
    ```bash
    export VERIDICAL_SERVER_PORT=5433
    export VERIDICAL_STORAGE_DATA_DIR=/var/lib/veridicaldb
@@ -381,12 +409,14 @@ VeridicalDB can be configured via:
 VeridicalDB includes comprehensive testing suites:
 
 ### Smoke Tests
+
 ```bash
 # Run the full smoke test suite (130+ tests)
 ./scripts/smoke_test.sh
 ```
 
 The smoke test covers:
+
 - All SQL DDL/DML/DQL operations
 - Advanced features like JOINs, CTEs, window functions
 - Transactions, indexes, and constraints
@@ -394,6 +424,7 @@ The smoke test covers:
 - JSON support and full-text search
 
 ### Stress Tests
+
 ```bash
 # Quick stress test (~500 rows, ~50 queries)
 ./scripts/stress_test.sh --quick
@@ -406,6 +437,7 @@ The smoke test covers:
 ```
 
 The stress test measures:
+
 - Bulk insert performance (rows/sec)
 - Query throughput (operations/sec)
 - Transaction handling
@@ -413,6 +445,7 @@ The stress test measures:
 - Data integrity under load
 
 ### Unit Tests
+
 ```bash
 # Run all unit tests
 make test
@@ -423,7 +456,7 @@ make test-coverage
 
 ## Project Structure
 
-```
+```go
 VeridicalDB/
 ├── cmd/
 │   ├── server/           # Server binary
@@ -463,7 +496,7 @@ VeridicalDB/
 ## Roadmap
 
 | Stage | Description | Status |
-|-------|-------------|--------|
+| ------- | ------------- | -------- |
 | 0 | Foundation (CLI, Config, Logging) | ✅ Complete |
 | 1 | Heap Storage Engine | ✅ Complete |
 | 2 | Catalog & Schema | ✅ Complete |
@@ -483,11 +516,12 @@ VeridicalDB/
 
 **Note**: The project has exceeded the original roadmap scope. All major database features are now implemented and tested.
 
-
 ## License
 
-MIT License - see LICENSE file for details.
+All Rights Reserved - see LICENSE file for details.
 
 ## Contributing
 
 Contributions are welcome! Please read the roadmap first to understand the project direction.
+
+**Important:** All contributions require a signed Contributor License Agreement (CLA). See `CLA.md` for the terms; by submitting a pull request you agree to the CLA (please include "I agree to the CLA" in your PR description or attach a signed CLA file).
