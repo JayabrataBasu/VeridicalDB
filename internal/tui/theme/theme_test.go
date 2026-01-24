@@ -1,8 +1,9 @@
 package theme
 
 import (
-		"github.com/charmbracelet/lipgloss"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestNewManager(t *testing.T) {

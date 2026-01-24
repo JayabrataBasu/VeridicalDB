@@ -27,24 +27,24 @@ type Theme struct {
 	Info    string
 
 	// UI Component colors
-	Border         string
-	BorderFocused  string
-	Selection      string
-	Highlight      string
-	LineNumber     string
-	Cursor         string
-	CurrentLine    string
-	Comment        string
+	Border        string
+	BorderFocused string
+	Selection     string
+	Highlight     string
+	LineNumber    string
+	Cursor        string
+	CurrentLine   string
+	Comment       string
 
 	// Syntax highlighting colors
-	Keyword   string
-	String    string
-	Number    string
-	Function  string
-	Operator  string
-	Variable  string
-	Type      string
-	Constant  string
+	Keyword  string
+	String   string
+	Number   string
+	Function string
+	Operator string
+	Variable string
+	Type     string
+	Constant string
 
 	// Table colors
 	TableHeader    string
