@@ -3,9 +3,11 @@ package screens
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -21,6 +23,9 @@ type Dashboard struct {
 	// Update interval
 	updateInterval time.Duration
 	lastUpdate     time.Time
+
+	// System catalog for real metrics
+	sysCatalog *observability.SystemCatalog
 }
 
 // SystemMetrics holds database system metrics.
@@ -65,7 +70,13 @@ func NewDashboard() *Dashboard {
 		metrics:        &SystemMetrics{},
 		updateInterval: 2 * time.Second,
 		lastUpdate:     time.Now(),
+		sysCatalog:     nil,
 	}
+}
+
+// SetSystemCatalog sets the system catalog for real metrics.
+func (d *Dashboard) SetSystemCatalog(sc *observability.SystemCatalog) {
+	d.sysCatalog = sc
 }
 
 // Init initializes the dashboard.
@@ -174,7 +185,10 @@ func (d *Dashboard) renderConnectionMetrics() string {
 		Foreground(lipgloss.Color("#FFB86C")).
 		Render("🔌 Connections")
 
-	usage := float64(d.metrics.ActiveConnections) / float64(d.metrics.MaxConnections)
+	usage := float64(0)
+	if d.metrics.MaxConnections > 0 {
+		usage = float64(d.metrics.ActiveConnections) / float64(d.metrics.MaxConnections)
+	}
 	bar := renderProgressBar(usage, 30)
 
 	content := fmt.Sprintf(`%s
@@ -235,7 +249,10 @@ func (d *Dashboard) renderMemoryMetrics() string {
 		Foreground(lipgloss.Color("#BD93F9")).
 		Render("💾 Memory")
 
-	usage := float64(d.metrics.MemoryUsed) / float64(d.metrics.MemoryLimit)
+	usage := float64(0)
+	if d.metrics.MemoryLimit > 0 {
+		usage = float64(d.metrics.MemoryUsed) / float64(d.metrics.MemoryLimit)
+	}
 	bar := renderProgressBar(usage, 30)
 
 	content := fmt.Sprintf(`%s
@@ -435,35 +452,63 @@ func (d *Dashboard) tickCmd() tea.Cmd {
 
 func (d *Dashboard) fetchMetrics() tea.Cmd {
 	return func() tea.Msg {
-		// Simulate fetching metrics
-		// In production, this would query the database
+		if d.sysCatalog == nil {
+			// No catalog available; return zeroed metrics
+			return metricsMsg(SystemMetrics{})
+		}
+
+		stats := d.sysCatalog.Stats().Snapshot()
+		uptime := time.Since(stats.StartTime)
+
+		// Memory stats from runtime
+		var m runtime.MemStats
+		runtime.ReadMemStats(&m)
+
+		avgQueryTimeMs := float64(0)
+		if stats.QueriesExecuted > 0 {
+			avgQueryTimeMs = float64(stats.TotalQueryTimeNs) / float64(stats.QueriesExecuted) / 1e6
+		}
+
+		queriesPerSecond := float64(0)
+		if uptime.Seconds() > 0 {
+			queriesPerSecond = float64(stats.QueriesExecuted) / uptime.Seconds()
+		}
+
+		cacheHitRatio := float64(0)
+		if stats.IndexScans > 0 {
+			cacheHitRatio = float64(stats.IndexHits) / float64(stats.IndexScans)
+		}
+
+		activeTxns := d.sysCatalog.GetActiveTransactions()
+		tables := d.sysCatalog.GetTables()
+
 		metrics := SystemMetrics{
-			ActiveConnections: 15,
-			TotalConnections:  1523,
+			ActiveConnections: 0,
+			TotalConnections:  0,
 			MaxConnections:    100,
 
-			TotalQueries:     45231,
-			QueriesPerSecond: 127.5,
-			AverageQueryTime: 12.3,
-			SlowQueries:      8,
+			TotalQueries:     stats.QueriesExecuted,
+			QueriesPerSecond: queriesPerSecond,
+			AverageQueryTime: avgQueryTimeMs,
+			SlowQueries:      stats.QueriesFailed,
 
-			MemoryUsed:      3221225472, // 3GB
-			MemoryAllocated: 4294967296, // 4GB
-			MemoryLimit:     8589934592, // 8GB
+			MemoryUsed:      int64(m.HeapAlloc),
+			MemoryAllocated: int64(m.HeapAlloc),
+			MemoryLimit:     int64(m.HeapSys),
 
-			ActiveTransactions: 5,
-			CommittedTxns:      12453,
-			RolledBackTxns:     142,
+			ActiveTransactions: len(activeTxns),
+			CommittedTxns:      stats.TransactionsCommitted,
+			RolledBackTxns:     stats.TransactionsAborted,
 
-			TotalDatabases: 8,
-			TotalTables:    127,
-			TotalRows:      1845231,
-			DataSize:       524288000, // 500MB
+			TotalDatabases: 1, // TODO: pull real count from catalog/manager
+			TotalTables:    len(tables),
+			TotalRows:      stats.RowsInserted, // proxy until row stats wired
+			DataSize:       0,                  // TODO: disk usage tracking
 
-			Uptime:        245 * time.Hour,
-			CPUUsage:      23.5,
-			DiskUsage:     67.2,
-			CacheHitRatio: 0.95,
+			Uptime:        uptime,
+			CPUUsage:      0, // TODO: CPU tracking
+			DiskUsage:     0, // TODO: disk tracking
+			CacheHitRatio: cacheHitRatio,
 		}
 
 		return metricsMsg(metrics)

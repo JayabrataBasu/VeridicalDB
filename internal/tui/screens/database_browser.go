@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -16,8 +17,9 @@ type DatabaseBrowser struct {
 	selectedDBIdx  int
 	selectedTblIdx int
 	selectedColIdx int
-	panelFocus     int // 0: databases, 1: tables, 2: columns
-	scrollOffset   [3]int // scroll positions for each panel
+	panelFocus     int                          // 0: databases, 1: tables, 2: columns
+	scrollOffset   [3]int                       // scroll positions for each panel
+	sysCatalog     *observability.SystemCatalog // Real schema data
 }
 
 // Database represents a database with its tables
@@ -32,20 +34,20 @@ type Table struct {
 	Name      string
 	Columns   []Column
 	RowCount  int64
-	Size      int64 // bytes
+	Size      int64  // bytes
 	Type      string // "BASE TABLE", "VIEW", etc.
 	CreatedAt string
 }
 
 // Column represents a table column
 type Column struct {
-	Name       string
-	Type       string
-	Nullable   bool
-	Default    string
-	IsPrimary  bool
-	IsForeign  bool
-	IndexName  string
+	Name      string
+	Type      string
+	Nullable  bool
+	Default   string
+	IsPrimary bool
+	IsForeign bool
+	IndexName string
 }
 
 // NewDatabaseBrowser creates a new database browser
@@ -72,7 +74,76 @@ func (db *DatabaseBrowser) SetDatabases(databases []Database) {
 	db.selectedColIdx = 0
 }
 
-// Init initializes the database browser
+// SetSystemCatalog sets the system catalog for real schema data
+func (db *DatabaseBrowser) SetSystemCatalog(sc *observability.SystemCatalog) {
+	db.sysCatalog = sc
+	// Load real tables from catalog
+	db.refreshFromCatalog()
+}
+
+// refreshFromCatalog loads real table and column data from SystemCatalog
+func (db *DatabaseBrowser) refreshFromCatalog() {
+	if db.sysCatalog == nil {
+		return
+	}
+
+	tableRows := db.sysCatalog.GetTables()
+	realDatabase := Database{
+		Name:   "default",
+		Tables: make([]Table, 0, len(tableRows)),
+		Size:   0,
+	}
+
+	for _, tableRow := range tableRows {
+		var tableName string
+
+		// Extract table name and column count from SystemTableRow
+		if len(tableRow.Values) >= 1 {
+			tableName = fmt.Sprintf("%v", tableRow.Values[0])
+		}
+
+		columnRows := db.sysCatalog.GetColumns(tableName)
+		realTable := Table{
+			Name:     tableName,
+			Type:     "BASE TABLE",
+			RowCount: 0,
+			Size:     0,
+			Columns:  make([]Column, 0, len(columnRows)),
+		}
+
+		for _, colRow := range columnRows {
+			var colName, colType string
+			var notNull bool
+
+			if len(colRow.Values) >= 2 {
+				colName = fmt.Sprintf("%v", colRow.Values[1])
+			}
+			if len(colRow.Values) >= 3 {
+				colType = fmt.Sprintf("%v", colRow.Values[2])
+			}
+			if len(colRow.Values) >= 4 {
+				if nn, ok := colRow.Values[3].(bool); ok {
+					notNull = nn
+				}
+			}
+
+			realTable.Columns = append(realTable.Columns, Column{
+				Name:      colName,
+				Type:      colType,
+				Nullable:  !notNull,
+				Default:   "",
+				IsPrimary: false,
+				IsForeign: false,
+			})
+		}
+
+		realDatabase.Tables = append(realDatabase.Tables, realTable)
+	}
+
+	db.SetDatabases([]Database{realDatabase})
+}
+
+// Init initializes the database browser (required by tea.Model interface)
 func (db *DatabaseBrowser) Init() tea.Cmd {
 	return nil
 }
@@ -313,7 +384,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 	var info strings.Builder
 
 	// Database info
-	dbInfo := fmt.Sprintf("DB: %s (%s)", 
+	dbInfo := fmt.Sprintf("DB: %s (%s)",
 		db.databases[db.selectedDBIdx].Name,
 		dbFormatBytes(db.databases[db.selectedDBIdx].Size),
 	)

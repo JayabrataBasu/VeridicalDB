@@ -3,11 +3,21 @@ package screens
 import (
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/syntax"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+var keywordSuggestions = []string{
+	"SELECT", "INSERT", "UPDATE", "DELETE",
+	"CREATE", "CREATE TABLE", "CREATE INDEX",
+	"DROP", "DROP TABLE", "DROP INDEX",
+	"BEGIN", "COMMIT", "ROLLBACK",
+	"HELP", "EXIT", "QUIT",
+	"\\dt", "\\di", "\\d", "\\status", "\\config", "\\clear", "\\help", "\\q",
+}
 
 // EditorScreen is the primary SQL editor interface
 type EditorScreen struct {
@@ -19,6 +29,10 @@ type EditorScreen struct {
 	historyIdx  int
 	highlighter *syntax.Highlighter    // Syntax highlighter for full coverage
 	lineOps     *syntax.LineOperations // Line operations handler
+
+	// Autocomplete
+	autocomplete *components.AutocompleteManager
+	showHelp     bool
 }
 
 // NewEditorScreen creates a new SQL editor screen
@@ -33,14 +47,28 @@ func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 	ta.KeyMap.InsertNewline.SetEnabled(true)
 
 	return &EditorScreen{
-		app:         app,
-		textarea:    ta,
-		status:      "Ready",
-		history:     make([]string, 0),
-		historyIdx:  -1,
-		highlighter: syntax.NewHighlighter(),
-		lineOps:     syntax.NewLineOperations(""),
+		app:          app,
+		textarea:     ta,
+		status:       "Ready",
+		history:      make([]string, 0),
+		historyIdx:   -1,
+		highlighter:  syntax.NewHighlighter(),
+		lineOps:      syntax.NewLineOperations(""),
+		autocomplete: initializeAutocomplete(),
+		showHelp:     false,
 	}
+}
+
+// initializeAutocomplete creates and configures the autocomplete manager with custom keywords
+func initializeAutocomplete() *components.AutocompleteManager {
+	am := components.NewAutocompleteManager()
+
+	// Add editor-specific keyword suggestions to enhance autocomplete
+	for _, keyword := range keywordSuggestions {
+		am.AddKeyword(keyword)
+	}
+
+	return am
 }
 
 // Init initializes the editor screen
@@ -55,7 +83,86 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Handle autocomplete when visible
+		if e.autocomplete.IsVisible() {
+			switch msg.String() {
+			case "up":
+				e.autocomplete.SelectPrev()
+				return e, nil
+			case "down":
+				e.autocomplete.SelectNext()
+				return e, nil
+			case "enter", "tab":
+				selected := e.autocomplete.GetSelected()
+				if selected != "" {
+					// Insert selected keyword into editor
+					text := e.textarea.Value()
+					row := e.textarea.Line()
+					col := e.textarea.LineInfo().ColumnOffset
+					lines := strings.Split(text, "\n")
+
+					// Find the word being completed
+					line := lines[row]
+					wordStart := col
+					for wordStart > 0 && (isWordChar(rune(line[wordStart-1])) || line[wordStart-1] == '_') {
+						wordStart--
+					}
+
+					// Replace word with suggestion
+					before := line[:wordStart]
+					after := line[col:]
+					lines[row] = before + selected + after
+
+					e.textarea.SetValue(strings.Join(lines, "\n"))
+					e.textarea.SetCursor(len(before) + len(selected))
+					e.autocomplete.Hide()
+				}
+				return e, nil
+			case "esc":
+				e.autocomplete.Hide()
+				return e, nil
+			}
+		}
+
+		// Global key handlers
 		switch msg.String() {
+		case "f1":
+			e.showHelp = !e.showHelp
+			return e, nil
+
+		case "ctrl+space":
+			// Trigger autocomplete suggestions based on current text
+			text := e.textarea.Value()
+			row := e.textarea.Line()
+			col := e.textarea.LineInfo().ColumnOffset
+			lines := strings.Split(text, "\n")
+			if row >= 0 && row < len(lines) {
+				line := lines[row]
+				// Extract word being typed
+				wordStart := col
+				for wordStart > 0 && (isWordChar(rune(line[wordStart-1])) || line[wordStart-1] == '_') {
+					wordStart--
+				}
+				prefix := line[wordStart:col]
+				if prefix != "" {
+					e.autocomplete.GetSuggestions(prefix)
+					e.autocomplete.Show()
+				}
+			}
+			return e, nil
+
+		case "up":
+			if e.autocomplete.IsVisible() {
+				e.autocomplete.SelectPrev()
+				return e, nil
+			}
+
+		case "down":
+			if e.autocomplete.IsVisible() {
+				e.autocomplete.SelectNext()
+				return e, nil
+			}
+
 		case "ctrl+c":
 			// Return to home screen
 			return e, func() tea.Msg {
@@ -63,6 +170,10 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			}
 
 		case "esc":
+			if e.autocomplete.IsVisible() {
+				e.autocomplete.Hide()
+				return e, nil
+			}
 			// Return to home screen
 			return e, func() tea.Msg {
 				return ScreenChangeMsg{ScreenID: "home"}
@@ -96,7 +207,6 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 		// Line operations (Task 10)
 		case "ctrl+shift+k":
-			// Delete current line
 			content := e.textarea.Value()
 			e.lineOps.SetContent(content)
 			e.lineOps.DeleteLine()
@@ -259,4 +369,9 @@ func (e *EditorScreen) getStyles() *types.StylePalette {
 		return &types.StylePalette{}
 	}
 	return e.app.GetStyles()
+}
+
+// isWordChar checks if a character can be part of a word for autocomplete
+func isWordChar(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
