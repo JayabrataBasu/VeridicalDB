@@ -1,0 +1,369 @@
+package theme
+
+// darkTheme provides a dark color scheme.
+func darkTheme() *Theme {
+	return &Theme{
+		Name:        "dark",
+		Description: "Default dark theme",
+
+		Foreground: "#E0E0E0",
+		Background: "#1A1A1A",
+
+		Primary:   "#00D9FF",
+		Secondary: "#00AA88",
+		Accent:    "#FFB86C",
+		Muted:     "#6B7280",
+
+		Success: "#55FF55",
+		Warning: "#FFAA00",
+		Error:   "#FF5555",
+		Info:    "#8BE9FD",
+
+		Border:        "#3A3A3A",
+		BorderFocused: "#00D9FF",
+		Selection:     "#264F78",
+		Highlight:     "#00D9FF",
+		LineNumber:    "#6B7280",
+		Cursor:        "#00D9FF",
+		CurrentLine:   "#2A2A2A",
+		Comment:       "#6272A4",
+
+		Keyword:  "#FF79C6",
+		String:   "#F1FA8C",
+		Number:   "#BD93F9",
+		Function: "#50FA7B",
+		Operator: "#FF79C6",
+		Variable: "#8BE9FD",
+		Type:     "#FFB86C",
+		Constant: "#BD93F9",
+
+		TableHeader:    "#00D9FF",
+		TableBorder:    "#3A3A3A",
+		TableRowEven:   "#1A1A1A",
+		TableRowOdd:    "#222222",
+		TableSelected:  "#264F78",
+		TableHighlight: "#00D9FF",
+	}
+}
+
+// lightTheme provides a light color scheme.
+func lightTheme() *Theme {
+	return &Theme{
+		Name:        "light",
+		Description: "Light theme with high contrast",
+
+		Foreground: "#24292E",
+		Background: "#FFFFFF",
+
+		Primary:   "#0366D6",
+		Secondary: "#28A745",
+		Accent:    "#F66A0A",
+		Muted:     "#6A737D",
+
+		Success: "#28A745",
+		Warning: "#FFC107",
+		Error:   "#D73A49",
+		Info:    "#0366D6",
+
+		Border:        "#E1E4E8",
+		BorderFocused: "#0366D6",
+		Selection:     "#C8E1FF",
+		Highlight:     "#FFEA7F",
+		LineNumber:    "#959DA5",
+		Cursor:        "#0366D6",
+		CurrentLine:   "#F6F8FA",
+		Comment:       "#6A737D",
+
+		Keyword:  "#D73A49",
+		String:   "#032F62",
+		Number:   "#005CC5",
+		Function: "#6F42C1",
+		Operator: "#D73A49",
+		Variable: "#24292E",
+		Type:     "#005CC5",
+		Constant: "#005CC5",
+
+		TableHeader:    "#0366D6",
+		TableBorder:    "#E1E4E8",
+		TableRowEven:   "#FFFFFF",
+		TableRowOdd:    "#F6F8FA",
+		TableSelected:  "#C8E1FF",
+		TableHighlight: "#0366D6",
+	}
+}
+
+// draculaTheme provides the popular Dracula color scheme.
+func draculaTheme() *Theme {
+	return &Theme{
+		Name:        "dracula",
+		Description: "Dracula theme - a dark theme for many editors",
+
+		Foreground: "#F8F8F2",
+		Background: "#282A36",
+
+		Primary:   "#BD93F9",
+		Secondary: "#50FA7B",
+		Accent:    "#FFB86C",
+		Muted:     "#6272A4",
+
+		Success: "#50FA7B",
+		Warning: "#F1FA8C",
+		Error:   "#FF5555",
+		Info:    "#8BE9FD",
+
+		Border:        "#44475A",
+		BorderFocused: "#BD93F9",
+		Selection:     "#44475A",
+		Highlight:     "#FFB86C",
+		LineNumber:    "#6272A4",
+		Cursor:        "#F8F8F0",
+		CurrentLine:   "#44475A",
+		Comment:       "#6272A4",
+
+		Keyword:  "#FF79C6",
+		String:   "#F1FA8C",
+		Number:   "#BD93F9",
+		Function: "#50FA7B",
+		Operator: "#FF79C6",
+		Variable: "#8BE9FD",
+		Type:     "#FFB86C",
+		Constant: "#BD93F9",
+
+		TableHeader:    "#BD93F9",
+		TableBorder:    "#44475A",
+		TableRowEven:   "#282A36",
+		TableRowOdd:    "#2D2F3D",
+		TableSelected:  "#44475A",
+		TableHighlight: "#FF79C6",
+	}
+}
+
+// monokaiTheme provides the popular Monokai color scheme.
+func monokaiTheme() *Theme {
+	return &Theme{
+		Name:        "monokai",
+		Description: "Monokai theme - sublime and vibrant",
+
+		Foreground: "#F8F8F2",
+		Background: "#272822",
+
+		Primary:   "#F92672",
+		Secondary: "#A6E22E",
+		Accent:    "#FD971F",
+		Muted:     "#75715E",
+
+		Success: "#A6E22E",
+		Warning: "#E6DB74",
+		Error:   "#F92672",
+		Info:    "#66D9EF",
+
+		Border:        "#3E3D32",
+		BorderFocused: "#F92672",
+		Selection:     "#49483E",
+		Highlight:     "#FD971F",
+		LineNumber:    "#90908A",
+		Cursor:        "#F8F8F0",
+		CurrentLine:   "#3E3D32",
+		Comment:       "#75715E",
+
+		Keyword:  "#F92672",
+		String:   "#E6DB74",
+		Number:   "#AE81FF",
+		Function: "#A6E22E",
+		Operator: "#F92672",
+		Variable: "#66D9EF",
+		Type:     "#66D9EF",
+		Constant: "#AE81FF",
+
+		TableHeader:    "#F92672",
+		TableBorder:    "#3E3D32",
+		TableRowEven:   "#272822",
+		TableRowOdd:    "#2D2E22",
+		TableSelected:  "#49483E",
+		TableHighlight: "#FD971F",
+	}
+}
+
+// solarizedDarkTheme provides the Solarized Dark color scheme.
+func solarizedDarkTheme() *Theme {
+	return &Theme{
+		Name:        "solarized-dark",
+		Description: "Solarized Dark - precision colors for machines and people",
+
+		Foreground: "#839496",
+		Background: "#002B36",
+
+		Primary:   "#268BD2",
+		Secondary: "#2AA198",
+		Accent:    "#CB4B16",
+		Muted:     "#586E75",
+
+		Success: "#859900",
+		Warning: "#B58900",
+		Error:   "#DC322F",
+		Info:    "#268BD2",
+
+		Border:        "#073642",
+		BorderFocused: "#268BD2",
+		Selection:     "#073642",
+		Highlight:     "#B58900",
+		LineNumber:    "#586E75",
+		Cursor:        "#839496",
+		CurrentLine:   "#073642",
+		Comment:       "#586E75",
+
+		Keyword:  "#859900",
+		String:   "#2AA198",
+		Number:   "#D33682",
+		Function: "#268BD2",
+		Operator: "#859900",
+		Variable: "#268BD2",
+		Type:     "#B58900",
+		Constant: "#D33682",
+
+		TableHeader:    "#268BD2",
+		TableBorder:    "#073642",
+		TableRowEven:   "#002B36",
+		TableRowOdd:    "#013340",
+		TableSelected:  "#073642",
+		TableHighlight: "#2AA198",
+	}
+}
+
+// solarizedLightTheme provides the Solarized Light color scheme.
+func solarizedLightTheme() *Theme {
+	return &Theme{
+		Name:        "solarized-light",
+		Description: "Solarized Light - precision colors for machines and people",
+
+		Foreground: "#657B83",
+		Background: "#FDF6E3",
+
+		Primary:   "#268BD2",
+		Secondary: "#2AA198",
+		Accent:    "#CB4B16",
+		Muted:     "#93A1A1",
+
+		Success: "#859900",
+		Warning: "#B58900",
+		Error:   "#DC322F",
+		Info:    "#268BD2",
+
+		Border:        "#EEE8D5",
+		BorderFocused: "#268BD2",
+		Selection:     "#EEE8D5",
+		Highlight:     "#B58900",
+		LineNumber:    "#93A1A1",
+		Cursor:        "#657B83",
+		CurrentLine:   "#EEE8D5",
+		Comment:       "#93A1A1",
+
+		Keyword:  "#859900",
+		String:   "#2AA198",
+		Number:   "#D33682",
+		Function: "#268BD2",
+		Operator: "#859900",
+		Variable: "#268BD2",
+		Type:     "#B58900",
+		Constant: "#D33682",
+
+		TableHeader:    "#268BD2",
+		TableBorder:    "#EEE8D5",
+		TableRowEven:   "#FDF6E3",
+		TableRowOdd:    "#F5EDDA",
+		TableSelected:  "#EEE8D5",
+		TableHighlight: "#2AA198",
+	}
+}
+
+// nordTheme provides the Nord color scheme.
+func nordTheme() *Theme {
+	return &Theme{
+		Name:        "nord",
+		Description: "Nord - An arctic, north-bluish color palette",
+
+		Foreground: "#D8DEE9",
+		Background: "#2E3440",
+
+		Primary:   "#88C0D0",
+		Secondary: "#81A1C1",
+		Accent:    "#D08770",
+		Muted:     "#4C566A",
+
+		Success: "#A3BE8C",
+		Warning: "#EBCB8B",
+		Error:   "#BF616A",
+		Info:    "#88C0D0",
+
+		Border:        "#3B4252",
+		BorderFocused: "#88C0D0",
+		Selection:     "#434C5E",
+		Highlight:     "#EBCB8B",
+		LineNumber:    "#4C566A",
+		Cursor:        "#D8DEE9",
+		CurrentLine:   "#3B4252",
+		Comment:       "#616E88",
+
+		Keyword:  "#81A1C1",
+		String:   "#A3BE8C",
+		Number:   "#B48EAD",
+		Function: "#88C0D0",
+		Operator: "#81A1C1",
+		Variable: "#D8DEE9",
+		Type:     "#8FBCBB",
+		Constant: "#5E81AC",
+
+		TableHeader:    "#88C0D0",
+		TableBorder:    "#3B4252",
+		TableRowEven:   "#2E3440",
+		TableRowOdd:    "#313844",
+		TableSelected:  "#434C5E",
+		TableHighlight: "#81A1C1",
+	}
+}
+
+// tokyoNightTheme provides the Tokyo Night color scheme.
+func tokyoNightTheme() *Theme {
+	return &Theme{
+		Name:        "tokyo-night",
+		Description: "Tokyo Night - A clean, dark theme",
+
+		Foreground: "#C0CAF5",
+		Background: "#1A1B26",
+
+		Primary:   "#7AA2F7",
+		Secondary: "#9ECE6A",
+		Accent:    "#FF9E64",
+		Muted:     "#565F89",
+
+		Success: "#9ECE6A",
+		Warning: "#E0AF68",
+		Error:   "#F7768E",
+		Info:    "#7DCFFF",
+
+		Border:        "#292E42",
+		BorderFocused: "#7AA2F7",
+		Selection:     "#283457",
+		Highlight:     "#FF9E64",
+		LineNumber:    "#565F89",
+		Cursor:        "#C0CAF5",
+		CurrentLine:   "#24283B",
+		Comment:       "#565F89",
+
+		Keyword:  "#BB9AF7",
+		String:   "#9ECE6A",
+		Number:   "#FF9E64",
+		Function: "#7AA2F7",
+		Operator: "#89DDFF",
+		Variable: "#7DCFFF",
+		Type:     "#2AC3DE",
+		Constant: "#FF9E64",
+
+		TableHeader:    "#7AA2F7",
+		TableBorder:    "#292E42",
+		TableRowEven:   "#1A1B26",
+		TableRowOdd:    "#1F202E",
+		TableSelected:  "#283457",
+		TableHighlight: "#BB9AF7",
+	}
+}
