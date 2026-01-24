@@ -28,6 +28,7 @@ func TestNewRetentionManager(t *testing.T) {
 
 	if mgr == nil {
 		t.Fatal("Expected non-nil manager")
+		return
 	}
 	if mgr.policy == nil {
 		t.Error("Expected default policy")
@@ -76,6 +77,7 @@ func TestRetentionManager_RunOnce(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("Expected result")
+		return
 	}
 	if result.StartTime.IsZero() {
 		t.Error("Expected StartTime set")

@@ -355,6 +355,7 @@ func TestBuildTLSConfig(t *testing.T) {
 		}
 		if tlsCfg == nil {
 			t.Fatal("BuildTLSConfig() returned nil")
+			return
 		}
 		if len(tlsCfg.Certificates) != 1 {
 			t.Errorf("expected 1 certificate, got %d", len(tlsCfg.Certificates))

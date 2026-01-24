@@ -604,6 +604,7 @@ func TestRecoveryConfig(t *testing.T) {
 	}
 	if readCfg == nil {
 		t.Fatal("Expected recovery config")
+		return
 	}
 	if readCfg.TargetLSN == nil || *readCfg.TargetLSN != targetLSN {
 		t.Errorf("Target LSN mismatch")
