@@ -1,10 +1,10 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // HomeScreen is the main menu screen of the TUI.
@@ -103,65 +103,132 @@ func (h *HomeScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return h, nil
 }
 
-// View renders the home screen.
+// View renders the home screen with premium styling.
 func (h *HomeScreen) View() string {
 	var buf strings.Builder
 
-	// Header
-	header := h.app.theme.HeaderStyle.Render("═══════════════════════════════════════")
-	headerText := h.app.theme.HeaderStyle.Render("      VeridicalDB TUI v1.0.0")
-	headerBottom := h.app.theme.HeaderStyle.Render("═══════════════════════════════════════")
+	// Define premium styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(1, 4).
+		MarginBottom(1).
+		Width(60).
+		Align(lipgloss.Center)
 
+	logoStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#50FA7B"))
+
+	menuCardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
+		Padding(0, 2).
+		Width(56).
+		MarginLeft(2)
+
+	selectedCardStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 2).
+		Width(56).
+		MarginLeft(2)
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFFFFF"))
+
+	selectedTitleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF"))
+
+	descStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		Italic(true)
+
+	footerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginTop(1)
+
+	// Icons for each menu item
+	icons := map[string]string{
+		"New Query":        "📝",
+		"Database Browser": "🗄️",
+		"Monitoring":       "📊",
+		"User Management":  "👤",
+		"Backup & Restore": "💾",
+		"Settings":         "⚙️",
+		"About":            "ℹ️",
+		"Exit":             "🚪",
+	}
+
+	// Header with logo
+	logo := logoStyle.Render("◆ VeridicalDB")
+	header := headerStyle.Render(logo + " TUI v1.0.0")
 	buf.WriteString(header)
-	buf.WriteString("\n")
-	buf.WriteString(headerText)
-	buf.WriteString("\n")
-	buf.WriteString(headerBottom)
 	buf.WriteString("\n\n")
 
-	// Menu
-	buf.WriteString("Select an option:\n\n")
+	// Subtitle
+	subtitle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888")).
+		MarginLeft(2).
+		Render("Select an option to continue:")
+	buf.WriteString(subtitle)
+	buf.WriteString("\n\n")
 
+	// Menu items as cards
 	for i, item := range h.items {
+		icon := icons[item.Title]
+		if icon == "" {
+			icon = "•"
+		}
+
 		if i == h.menuIdx {
-			// Highlighted item
-			prefix := h.app.theme.PrimaryStyle.Render("› ")
-			title := h.app.theme.PrimaryStyle.Render(item.Title)
-			buf.WriteString(prefix)
-			buf.WriteString(title)
+			// Selected item - highlighted card
+			title := selectedTitleStyle.Render(icon + "  " + item.Title)
+			desc := descStyle.Render("    " + item.Description)
+			card := selectedCardStyle.Render(title + "\n" + desc)
+			buf.WriteString(card)
 		} else {
 			// Normal item
-			buf.WriteString("  ")
-			buf.WriteString(item.Title)
-		}
-		buf.WriteString("\n")
-		if i == h.menuIdx {
-			// Show description for selected item
-			description := h.app.theme.SecondaryStyle.Render("  → " + item.Description)
-			buf.WriteString(description)
-			buf.WriteString("\n")
+			title := titleStyle.Render(icon + "  " + item.Title)
+			card := menuCardStyle.Render(title)
+			buf.WriteString(card)
 		}
 		buf.WriteString("\n")
 	}
 
-	// Footer
+	// Footer with keybindings
 	buf.WriteString("\n")
-	buf.WriteString(h.app.theme.BorderStyle.Render(strings.Repeat("─", 43)))
-	buf.WriteString("\n")
-	buf.WriteString(h.app.theme.SecondaryStyle.Render("Use ↑↓ or j/k to navigate, Enter to select, Ctrl+C to quit"))
+	keybindings := []string{
+		"↑↓/jk Navigate",
+		"Enter Select",
+		"q/Ctrl+C Quit",
+	}
+	footer := footerStyle.Render("  " + strings.Join(keybindings, "  │  "))
+	buf.WriteString(footer)
 	buf.WriteString("\n")
 
 	// Error message if any
 	if h.app.lastError != "" {
-		buf.WriteString("\n")
-		buf.WriteString(h.app.theme.ErrorStyle.Render(fmt.Sprintf("Error: %s", h.app.lastError)))
+		errorStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF5555")).
+			Bold(true).
+			MarginTop(1).
+			MarginLeft(2)
+		buf.WriteString(errorStyle.Render("✗ Error: " + h.app.lastError))
 		buf.WriteString("\n")
 	}
 
-	// Status
+	// Status message if any
 	if h.app.statusMessage != "" {
-		buf.WriteString("\n")
-		buf.WriteString(h.app.theme.SuccessStyle.Render(h.app.statusMessage))
+		statusStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#50FA7B")).
+			MarginTop(1).
+			MarginLeft(2)
+		buf.WriteString(statusStyle.Render("✓ " + h.app.statusMessage))
 		buf.WriteString("\n")
 	}
 

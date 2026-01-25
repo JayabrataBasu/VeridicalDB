@@ -111,62 +111,94 @@ func (r *ResultsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return r, nil
 }
 
-// View renders the results screen
+// View renders the results screen with premium styling
 func (r *ResultsScreen) View() string {
-	palette := r.getStyles()
-
 	var b strings.Builder
 
-	// Header
-	header := palette.Title.Render("Query Results")
+	// Define premium styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 2).
+		MarginBottom(1)
+
+	containerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
+		Padding(1, 2).
+		MarginTop(1)
+
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#50FA7B")).
+		Bold(true)
+
+	infoStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888"))
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginTop(1)
+
+	// Header with icon
+	header := headerStyle.Render("📊  Query Results")
 	b.WriteString(header)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Display results
 	if r.result == nil {
-		b.WriteString(palette.Subtle.Render("No results to display"))
+		emptyMsg := containerStyle.Render(infoStyle.Render("No results to display"))
+		b.WriteString(emptyMsg)
 	} else if r.result.Message != "" {
 		// DDL/Command result (no rows)
-		b.WriteString(palette.Highlight.Render(r.result.Message))
+		successIcon := "✓ "
+		msg := statusStyle.Render(successIcon + r.result.Message)
+		b.WriteString(containerStyle.Render(msg))
 	} else if len(r.result.Rows) == 0 {
-		b.WriteString(palette.Subtle.Render("Query returned no rows"))
+		emptyMsg := containerStyle.Render(infoStyle.Render("Query returned no rows"))
+		b.WriteString(emptyMsg)
 	} else {
-		// Render table
-		b.WriteString(r.renderTable())
+		// Render table with premium styling
+		b.WriteString(r.renderPremiumTable())
 	}
 
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Pagination info
+	// Pagination info with styling
 	if r.totalPages > 0 {
+		pageStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00D9FF")).
+			Bold(true)
+
+		rowStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB86C"))
+
 		paginationInfo := fmt.Sprintf(
-			"Page %d/%d | Rows %d-%d of %d",
-			r.page+1,
-			r.totalPages,
-			r.page*r.pageSize+1,
-			min(r.page*r.pageSize+r.pageSize, len(r.result.Rows)),
-			len(r.result.Rows),
+			"📄 Page %s | Rows %s",
+			pageStyle.Render(fmt.Sprintf("%d/%d", r.page+1, r.totalPages)),
+			rowStyle.Render(fmt.Sprintf("%d-%d of %d",
+				r.page*r.pageSize+1,
+				min(r.page*r.pageSize+r.pageSize, len(r.result.Rows)),
+				len(r.result.Rows))),
 		)
-		b.WriteString(palette.Subtle.Render(paginationInfo))
-		b.WriteString("\n\n")
+		b.WriteString(infoStyle.Render(paginationInfo))
+		b.WriteString("\n")
 	}
 
-	// Help text
-	helpText := palette.Help.Render(
-		"PgUp/PgDn: Navigate | ←/→: Scroll columns | Home/End: First/Last | Ctrl+E: Export | Esc: Back",
+	// Help text with key icons
+	helpText := helpStyle.Render(
+		"  ⇞⇟ Navigate  │  ←→ Scroll Columns  │  Home/End First/Last  │  Ctrl+E Export  │  Esc Back",
 	)
 	b.WriteString(helpText)
 
 	return b.String()
 }
 
-// renderTable renders the result table with current pagination
-func (r *ResultsScreen) renderTable() string {
+// renderPremiumTable renders the result table with premium styling
+func (r *ResultsScreen) renderPremiumTable() string {
 	if r.result == nil || len(r.result.Rows) == 0 {
 		return ""
 	}
-
-	palette := r.getStyles()
 
 	// Determine visible columns
 	startCol := r.colOffset
@@ -203,26 +235,69 @@ func (r *ResultsScreen) renderTable() string {
 		}
 	}
 
+	// Define table styles
+	headerCellStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 1)
+
+	cellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Padding(0, 1)
+
+	altCellStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Background(lipgloss.Color("#252530")).
+		Padding(0, 1)
+
+	borderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3a3a5c"))
+
 	var b strings.Builder
 
+	// Top border
+	topBorder := "╭"
+	for i, w := range colWidths {
+		topBorder += strings.Repeat("─", w+2)
+		if i < len(colWidths)-1 {
+			topBorder += "┬"
+		}
+	}
+	topBorder += "╮"
+	b.WriteString(borderStyle.Render(topBorder))
+	b.WriteString("\n")
+
 	// Header row
-	headerStyle := palette.Title.Foreground(lipgloss.Color("#00FF00"))
+	b.WriteString(borderStyle.Render("│"))
 	for i, col := range visibleCols {
-		b.WriteString(headerStyle.Render(padRight(col, colWidths[i])))
-		b.WriteString("  ")
+		b.WriteString(headerCellStyle.Render(padRight(col, colWidths[i])))
+		b.WriteString(borderStyle.Render("│"))
 	}
 	b.WriteString("\n")
 
-	// Separator
-	for i := range visibleCols {
-		b.WriteString(strings.Repeat("─", colWidths[i]))
-		b.WriteString("  ")
+	// Header separator
+	sepBorder := "├"
+	for i, w := range colWidths {
+		sepBorder += strings.Repeat("─", w+2)
+		if i < len(colWidths)-1 {
+			sepBorder += "┼"
+		}
 	}
+	sepBorder += "┤"
+	b.WriteString(borderStyle.Render(sepBorder))
 	b.WriteString("\n")
 
-	// Data rows
+	// Data rows with alternating colors
 	for rowIdx := startRow; rowIdx < endRow; rowIdx++ {
 		row := r.result.Rows[rowIdx]
+		b.WriteString(borderStyle.Render("│"))
+
+		style := cellStyle
+		if (rowIdx-startRow)%2 == 1 {
+			style = altCellStyle
+		}
+
 		for i := 0; i < len(visibleCols); i++ {
 			colIdx := startCol + i
 			var valStr string
@@ -232,21 +307,25 @@ func (r *ResultsScreen) renderTable() string {
 			if len(valStr) > colWidths[i] {
 				valStr = valStr[:colWidths[i]-3] + "..."
 			}
-			b.WriteString(padRight(valStr, colWidths[i]))
-			b.WriteString("  ")
+			b.WriteString(style.Render(padRight(valStr, colWidths[i])))
+			b.WriteString(borderStyle.Render("│"))
 		}
 		b.WriteString("\n")
 	}
 
-	return b.String()
-}
-
-// getStyles retrieves the shared style palette from the app.
-func (r *ResultsScreen) getStyles() *types.StylePalette {
-	if r.app == nil {
-		return &types.StylePalette{}
+	// Bottom border
+	bottomBorder := "╰"
+	for i, w := range colWidths {
+		bottomBorder += strings.Repeat("─", w+2)
+		if i < len(colWidths)-1 {
+			bottomBorder += "┴"
+		}
 	}
-	return r.app.GetStyles()
+	bottomBorder += "╯"
+	b.WriteString(borderStyle.Render(bottomBorder))
+	b.WriteString("\n")
+
+	return b.String()
 }
 
 // Helper functions

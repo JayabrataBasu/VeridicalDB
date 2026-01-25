@@ -5,6 +5,7 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 ---
 
 ## How to read this document
+
 - Priority: High / Medium / Low (higher means do sooner)
 - Difficulty: Small / Medium / Large (rough implementation effort)
 - Start points: suggested files or packages to begin work
@@ -36,6 +37,7 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 ## Top 6 items — details, acceptance criteria & first steps 🔧
 
 ### 1) Strong authentication & remove default admin (Rank 1 — High / Small) ✅ (Completed)
+
 - Why: SHA-256 with salt is insufficient for password storage; having `admin/admin` on init is insecure.
 - Status: **Completed** — passwords are now stored using bcrypt; legacy SHA-256 passwords are migrated on successful authentication. Initial admin user is created with a secure random password (printed once on init) or can be set via `VERIDICALDB_DEFAULT_ADMIN_PASSWORD` env var.
 - Acceptance criteria (met):
@@ -48,7 +50,9 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
   - Replaced legacy hashing with bcrypt, implemented migration logic for legacy SHA-256 + salt hashes.
   - Added secure default admin generation and updated documentation.
 - Suggested files: `pkg/auth/auth.go`, tests in `pkg/auth/auth_test.go`, `pkg/cli/repl.go`.
+
 ### 2) CI pipeline (Rank 2 — High / Small) ✅
+
 - Why: Ensure regressions are caught early and provide badge/status for contributors.
 - Acceptance criteria:
   - GitHub Actions workflow that runs `go test ./... -coverprofile`, `go vet`, `golangci-lint` with configured linters.
@@ -57,6 +61,7 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
   - Add `.github/workflows/ci.yml` with matrix Go versions (1.21–1.23), cache `GOMODCACHE`.
 
 ### 3) TLS for `pgwire` (Rank 3 — High / Medium) ✅ (Completed)
+
 - Why: Required for secure client connections in production.
 - Status: **Completed** — server-side TLS for `pgwire` implemented with optional mTLS support, tests and docs added.
 - Acceptance criteria (met):
@@ -73,9 +78,8 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
   - Add an automated e2e smoke test to CI (optional) that runs a short TLS client connect (psql or Go client) in the integration suite.
   - Consider certificate hot-reload and ACME/Let's Encrypt support in future iterations.
 
-
-
 ### 4) Backup & PITR (Rank 4 — High / Large) ✅ (Completed)
+
 - Why: Operational safety — backups + point-in-time recovery are essential.
 - Status: **Completed** — core features implemented, tested, and documented:
   - `veridicaldb backup --basebackup` produces consistent snapshot with LSN markers
@@ -98,6 +102,7 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 - Suggested files: `cmd/veridicaldb/*`, `pkg/wal/*`, `pkg/backup/*`
 
 ### 5) pgwire extended protocol completion (Rank 5 — High / Medium)
+
 - Why: Compatibility with `psql` and client drivers depends on correct extended flow.
 - Acceptance criteria:
   - `Parse`/`Bind`/`Execute` properly bind parameters (`$1` etc.) to prepared statements and `Execute` respects portal row limits.
@@ -107,6 +112,7 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
   - Implement a connection lookup for CancelRequest; tests in `pkg/pgwire`.
 
 ### 6) Autovacuum & MVCC GC (Rank 6 — High / Medium) ✅ (Completed)
+
 - Why: Without background vacuum/compaction, MVCC leads to table bloat and poor performance.
 - Status: **Completed** — core vacuum functionality implemented:
   - `pkg/vacuum` package with `Manager`, `Worker`, `Config`, and `Metrics`
@@ -134,12 +140,11 @@ This roadmap captures high-value items to bring VeridicalDB closer to PostgreSQL
 ---
 
 ## Implementation notes & rough estimates ⚖️
+
 - Small: ~1–2 weeks of focused work + tests
 - Medium: ~3–8 weeks, may require multiple PRs and design iterations
 - Large: multi-month effort, often phased (MVP → improvements)
 
-
 - Add labels: `security`, `high-priority`, `release-blocker`, `good-first-issue`.
 
 ---
-

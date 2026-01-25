@@ -58,9 +58,11 @@ func New(session *sql.Session) *Model {
 	m.screens["editor"] = editorScreen
 	m.screens["results"] = resultsScreen
 
-	// Register placeholder screens for menu items
-	m.screens["browser"] = NewPlaceholderScreen(m, "Database Browser")
-	m.screens["monitoring"] = NewPlaceholderScreen(m, "Monitoring")
+	// Initialize real feature screens with adapters
+	m.screens["browser"] = NewDatabaseBrowserAdapter(m, 120, 40)
+	m.screens["monitoring"] = NewDashboardAdapter(m)
+
+	// Placeholder screens for not-yet-implemented features
 	m.screens["users"] = NewPlaceholderScreen(m, "User Management")
 	m.screens["backup"] = NewPlaceholderScreen(m, "Backup & Restore")
 	m.screens["settings"] = NewPlaceholderScreen(m, "Settings")
