@@ -331,7 +331,7 @@ func (e *EditorScreen) View() string {
 		Background(lipgloss.Color("#1a1a2e")).
 		Padding(0, 2).
 		MarginBottom(1)
-	
+
 	header := headerStyle.Render("🗂  SQL Editor")
 	b.WriteString(header)
 	b.WriteString("\n")
@@ -342,7 +342,7 @@ func (e *EditorScreen) View() string {
 		BorderForeground(lipgloss.Color("#00D9FF")).
 		Padding(1).
 		MarginBottom(1)
-	
+
 	// Get raw text for syntax highlighting, then render the textarea
 	editorContent := editorStyle.Render(e.textarea.View())
 	b.WriteString(editorContent)
@@ -351,7 +351,7 @@ func (e *EditorScreen) View() string {
 	// Status bar with icon
 	var statusIcon string
 	var statusStyle lipgloss.Style
-	
+
 	if e.executing {
 		statusIcon = "⏳"
 		statusStyle = lipgloss.NewStyle().
@@ -395,7 +395,7 @@ func (e *EditorScreen) View() string {
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6272A4")).
 		MarginTop(1)
-	
+
 	helpText := helpStyle.Render(
 		"⌨  F5/Ctrl+Enter: Execute │ Ctrl+D: Duplicate │ Ctrl+Space: Autocomplete │ Esc: Back",
 	)

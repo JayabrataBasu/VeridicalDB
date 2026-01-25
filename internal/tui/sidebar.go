@@ -112,7 +112,7 @@ func (s *Sidebar) View(width int) string {
 	// Footer separator
 	b.WriteString(borderStyle.Render(strings.Repeat("─", w)))
 	b.WriteString("\n")
-	
+
 	// Help with keyboard icon
 	b.WriteString(helpStyle.Render("  ⌨ Press ? for help"))
 

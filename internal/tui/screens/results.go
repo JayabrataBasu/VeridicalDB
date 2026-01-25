@@ -169,7 +169,7 @@ func (r *ResultsScreen) View() string {
 		pageStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00D9FF")).
 			Bold(true)
-		
+
 		rowStyle := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFB86C"))
 
@@ -292,12 +292,12 @@ func (r *ResultsScreen) renderPremiumTable() string {
 	for rowIdx := startRow; rowIdx < endRow; rowIdx++ {
 		row := r.result.Rows[rowIdx]
 		b.WriteString(borderStyle.Render("│"))
-		
+
 		style := cellStyle
 		if (rowIdx-startRow)%2 == 1 {
 			style = altCellStyle
 		}
-		
+
 		for i := 0; i < len(visibleCols); i++ {
 			colIdx := startCol + i
 			var valStr string

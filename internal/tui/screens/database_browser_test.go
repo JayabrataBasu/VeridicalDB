@@ -31,16 +31,16 @@ func TestSetDatabases(t *testing.T) {
 
 	databases := []Database{
 		{
-			Name:  "users_db",
-			Size:  1024000,
+			Name: "users_db",
+			Size: 1024000,
 			Tables: []Table{
 				{Name: "users", RowCount: 100, Size: 5000},
 				{Name: "roles", RowCount: 10, Size: 1000},
 			},
 		},
 		{
-			Name:  "products_db",
-			Size:  2048000,
+			Name: "products_db",
+			Size: 2048000,
 			Tables: []Table{
 				{Name: "products", RowCount: 5000, Size: 100000},
 			},
@@ -287,7 +287,7 @@ func TestPadRight(t *testing.T) {
 // TestDatabaseBrowserScrolling tests scroll offset tracking
 func TestDatabaseBrowserScrolling(t *testing.T) {
 	browser := NewDatabaseBrowser(80, 24)
-	
+
 	// Create 20 databases to test scrolling
 	databases := make([]Database, 20)
 	for i := 0; i < 20; i++ {
@@ -336,7 +336,7 @@ func TestColumnFormatting(t *testing.T) {
 	browser := NewDatabaseBrowser(80, 24)
 
 	tests := []struct {
-		column Column
+		column        Column
 		shouldContain string
 	}{
 		{
@@ -403,7 +403,7 @@ func TestMultiPanelSelection(t *testing.T) {
 			},
 		},
 		{
-			Name: "db2",
+			Name:   "db2",
 			Tables: []Table{},
 		},
 	})
