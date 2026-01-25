@@ -42,6 +42,9 @@ veridicaldb.toml
 Roadmap.md
 roadmap.md
 Leftovers.md
+TUI_INTEGRATION_INVESTIGATION.md
+TUI_INTEGRATION_FIX_SUMMARY.md
+TUI_SPRINT5_AUDIT_CRITICAL.md
 # Local config overrides and secrets
 config.yaml
 config.json

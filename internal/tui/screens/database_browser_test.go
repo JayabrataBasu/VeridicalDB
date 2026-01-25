@@ -192,14 +192,14 @@ func TestDatabaseBrowserViewFocusIndicators(t *testing.T) {
 		{Name: "db1", Tables: []Table{}},
 	})
 
-	// Test each panel focus
+	// Test each panel focus - updated to match new premium styling format
 	tests := []struct {
 		panelFocus int
 		indicator  string
 	}{
-		{0, "Databases (●)"},
-		{1, "Tables (●)"},
-		{2, "Columns (●)"},
+		{0, "Databases ●"},
+		{1, "Tables ●"},
+		{2, "Columns ●"},
 	}
 
 	for _, test := range tests {

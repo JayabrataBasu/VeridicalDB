@@ -1,9 +1,6 @@
 package components
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestNewAutocompleteManager tests manager creation
 func TestNewAutocompleteManager(t *testing.T) {
@@ -101,7 +98,7 @@ func TestRenderSuggestions(t *testing.T) {
 	if rendered == "" {
 		t.Errorf("expected non-empty render")
 	}
-	if !strings.Contains(rendered, "SELECT") {
+	if !contains(rendered, "SELECT") {
 		t.Errorf("expected 'SELECT' in rendered output")
 	}
 }
@@ -184,7 +181,7 @@ func TestMultipleMatches(t *testing.T) {
 	}
 
 	for _, s := range sugg {
-		if !strings.Contains(s, "CR") && s != "CREATE" && s != "CROSS" {
+		if !contains(s, "CR") && s != "CREATE" && s != "CROSS" {
 			// Check if starts with CR
 			if len(s) < 2 || s[0:2] != "CR" {
 				t.Errorf("expected suggestion to start with CR, got %s", s)

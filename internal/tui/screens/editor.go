@@ -8,6 +8,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 var keywordSuggestions = []string{
@@ -319,56 +320,88 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return e, tea.Batch(cmds...)
 }
 
-// View renders the editor screen
+// View renders the editor screen with premium styling
 func (e *EditorScreen) View() string {
-	// Get theme from app
-	palette := e.getStyles()
-
 	var b strings.Builder
 
-	// Header
-	header := palette.Title.Render("SQL Editor")
+	// Premium header with icon and rounded border
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 2).
+		MarginBottom(1)
+	
+	header := headerStyle.Render("🗂  SQL Editor")
 	b.WriteString(header)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Editor with syntax highlighting
-	editorContent := e.renderWithSyntaxHighlight(e.textarea.View())
+	// Editor container with border - shows textarea content
+	editorStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00D9FF")).
+		Padding(1).
+		MarginBottom(1)
+	
+	// Get raw text for syntax highlighting, then render the textarea
+	editorContent := editorStyle.Render(e.textarea.View())
 	b.WriteString(editorContent)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Status bar
-	statusStyle := palette.Subtle
+	// Status bar with icon
+	var statusIcon string
+	var statusStyle lipgloss.Style
+	
 	if e.executing {
-		statusStyle = palette.Highlight
+		statusIcon = "⏳"
+		statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFB86C")).
+			Bold(true)
 	} else if strings.HasPrefix(e.status, "Error") {
-		statusStyle = palette.Error
+		statusIcon = "✗"
+		statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF5555")).
+			Bold(true)
+	} else if strings.Contains(e.status, "success") {
+		statusIcon = "✓"
+		statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#50FA7B")).
+			Bold(true)
+	} else {
+		statusIcon = "●"
+		statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00D9FF"))
 	}
 
-	statusBar := statusStyle.Render("Status: " + e.status)
+	statusBar := statusStyle.Render(statusIcon + " " + e.status)
 	b.WriteString(statusBar)
 	b.WriteString("\n\n")
 
-	// Help text with Sprint-2 keybindings
-	helpText := palette.Help.Render(
-		"F5/Ctrl+Enter: Execute | Ctrl+D: Duplicate Line | Ctrl+Shift+K: Delete Line | Alt+Shift+↑↓: Move Line | Tab/Shift+Tab: Indent | Esc: Back",
+	// Autocomplete popup if visible
+	if e.autocomplete.IsVisible() {
+		autocompleteView := e.autocomplete.RenderSuggestions()
+		if autocompleteView != "" {
+			popupStyle := lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("#FFB86C")).
+				Padding(0, 1).
+				MarginLeft(2)
+			b.WriteString(popupStyle.Render(autocompleteView))
+			b.WriteString("\n")
+		}
+	}
+
+	// Help bar with keyboard shortcuts
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#6272A4")).
+		MarginTop(1)
+	
+	helpText := helpStyle.Render(
+		"⌨  F5/Ctrl+Enter: Execute │ Ctrl+D: Duplicate │ Ctrl+Space: Autocomplete │ Esc: Back",
 	)
 	b.WriteString(helpText)
 
 	return b.String()
-}
-
-// renderWithSyntaxHighlight applies full SQL syntax highlighting (Task 7)
-func (e *EditorScreen) renderWithSyntaxHighlight(text string) string {
-	// Use the comprehensive highlighter for full coverage
-	return e.highlighter.Highlight(text)
-}
-
-// getStyles retrieves the shared style palette from the app.
-func (e *EditorScreen) getStyles() *types.StylePalette {
-	if e.app == nil {
-		return &types.StylePalette{}
-	}
-	return e.app.GetStyles()
 }
 
 // isWordChar checks if a character can be part of a word for autocomplete

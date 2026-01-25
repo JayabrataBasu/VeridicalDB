@@ -237,16 +237,28 @@ func (db *DatabaseBrowser) View() string {
 	)
 }
 
-// renderDatabasesPanel renders the databases panel
+// renderDatabasesPanel renders the databases panel with premium styling
 func (db *DatabaseBrowser) renderDatabasesPanel(width int) string {
-	title := "📦 Databases"
+	// Title styling
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF"))
+
+	activeTitleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#50FA7B"))
+
+	separatorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3a3a5c"))
+
+	title := titleStyle.Render("📦 Databases")
 	if db.panelFocus == 0 {
-		title = "📦 Databases (●)"
+		title = activeTitleStyle.Render("📦 Databases ●")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, strings.Repeat("─", width-2))
+	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
 
 	panelHeight := 10
 	for i := db.scrollOffset[0]; i < len(db.databases) && i < db.scrollOffset[0]+panelHeight; i++ {
@@ -264,30 +276,43 @@ func (db *DatabaseBrowser) renderDatabasesPanel(width int) string {
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
 		Width(width).
 		Padding(0, 1)
 
 	if db.panelFocus == 0 {
-		style = style.BorderForeground(lipgloss.Color("33"))
+		style = style.BorderForeground(lipgloss.Color("#00D9FF"))
 	}
 
 	return style.Render(content)
 }
 
-// renderTablesPanel renders the tables panel
+// renderTablesPanel renders the tables panel with premium styling
 func (db *DatabaseBrowser) renderTablesPanel(width int) string {
-	title := "📋 Tables"
+	// Title styling
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#FFB86C"))
+
+	activeTitleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#50FA7B"))
+
+	separatorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3a3a5c"))
+
+	title := titleStyle.Render("📋 Tables")
 	if db.panelFocus == 1 {
-		title = "📋 Tables (●)"
+		title = activeTitleStyle.Render("📋 Tables ●")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, strings.Repeat("─", width-2))
+	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
 
 	if len(db.databases) == 0 || db.selectedDBIdx >= len(db.databases) {
-		lines = append(lines, "(No database selected)")
+		emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+		lines = append(lines, emptyStyle.Render("(No database selected)"))
 		for len(lines) < 12 {
 			lines = append(lines, "")
 		}
@@ -310,37 +335,51 @@ func (db *DatabaseBrowser) renderTablesPanel(width int) string {
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
 		Width(width).
 		Padding(0, 1)
 
 	if db.panelFocus == 1 {
-		style = style.BorderForeground(lipgloss.Color("33"))
+		style = style.BorderForeground(lipgloss.Color("#00D9FF"))
 	}
 
 	return style.Render(content)
 }
 
-// renderColumnsPanel renders the columns panel
+// renderColumnsPanel renders the columns panel with premium styling
 func (db *DatabaseBrowser) renderColumnsPanel(width int) string {
-	title := "🏛️ Columns"
+	// Title styling
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#BD93F9"))
+
+	activeTitleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#50FA7B"))
+
+	separatorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3a3a5c"))
+
+	title := titleStyle.Render("🏛️ Columns")
 	if db.panelFocus == 2 {
-		title = "🏛️ Columns (●)"
+		title = activeTitleStyle.Render("🏛️ Columns ●")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, strings.Repeat("─", width-2))
+	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
+
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 
 	if len(db.databases) == 0 || db.selectedDBIdx >= len(db.databases) {
-		lines = append(lines, "(No table selected)")
+		lines = append(lines, emptyStyle.Render("(No table selected)"))
 		for len(lines) < 12 {
 			lines = append(lines, "")
 		}
 	} else {
 		tables := db.databases[db.selectedDBIdx].Tables
 		if len(tables) == 0 || db.selectedTblIdx >= len(tables) {
-			lines = append(lines, "(No columns)")
+			lines = append(lines, emptyStyle.Render("(No columns)"))
 			for len(lines) < 12 {
 				lines = append(lines, "")
 			}
@@ -364,18 +403,18 @@ func (db *DatabaseBrowser) renderColumnsPanel(width int) string {
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("240")).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
 		Width(width).
 		Padding(0, 1)
 
 	if db.panelFocus == 2 {
-		style = style.BorderForeground(lipgloss.Color("33"))
+		style = style.BorderForeground(lipgloss.Color("#00D9FF"))
 	}
 
 	return style.Render(content)
 }
 
-// renderBottomInfo renders information about selected items
+// renderBottomInfo renders information about selected items with premium styling
 func (db *DatabaseBrowser) renderBottomInfo() string {
 	if len(db.databases) == 0 {
 		return ""
@@ -383,25 +422,33 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 
 	var info strings.Builder
 
+	// Define styles
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#888888"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00D9FF")).
+		Bold(true)
+
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginTop(1)
+
 	// Database info
-	dbInfo := fmt.Sprintf("DB: %s (%s)",
-		db.databases[db.selectedDBIdx].Name,
-		dbFormatBytes(db.databases[db.selectedDBIdx].Size),
-	)
-	info.WriteString(dbInfo)
+	info.WriteString(labelStyle.Render("🗄️ Database: "))
+	info.WriteString(valueStyle.Render(db.databases[db.selectedDBIdx].Name))
+	info.WriteString(labelStyle.Render(fmt.Sprintf(" (%s)", dbFormatBytes(db.databases[db.selectedDBIdx].Size))))
 
 	// Table info
 	if db.selectedDBIdx < len(db.databases) {
 		tables := db.databases[db.selectedDBIdx].Tables
 		if db.selectedTblIdx < len(tables) {
 			table := tables[db.selectedTblIdx]
-			tblInfo := fmt.Sprintf(" | Table: %s (%d rows, %s, %s)",
-				table.Name,
+			info.WriteString(labelStyle.Render("  │  📋 Table: "))
+			info.WriteString(valueStyle.Render(table.Name))
+			info.WriteString(labelStyle.Render(fmt.Sprintf(" (%d rows, %s)",
 				table.RowCount,
-				dbFormatBytes(table.Size),
-				table.Type,
-			)
-			info.WriteString(tblInfo)
+				dbFormatBytes(table.Size))))
 
 			// Column info
 			if db.selectedColIdx < len(table.Columns) {
@@ -410,19 +457,18 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 				if col.Nullable {
 					nullable = "NULL"
 				}
-				colInfo := fmt.Sprintf(" | Col: %s (%s, %s)",
-					col.Name,
-					col.Type,
-					nullable,
-				)
-				info.WriteString(colInfo)
+				info.WriteString(labelStyle.Render("  │  🏛️ Column: "))
+				info.WriteString(valueStyle.Render(col.Name))
+				info.WriteString(labelStyle.Render(fmt.Sprintf(" (%s, %s)", col.Type, nullable)))
 			}
 		}
 	}
 
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("245")).
-		Render(info.String())
+	// Help bar
+	info.WriteString("\n")
+	info.WriteString(helpStyle.Render("  ↑↓ Navigate  │  ←→/Tab Switch Panel  │  Home/End First/Last  │  q/Esc Back"))
+
+	return info.String()
 }
 
 // formatDatabaseLine formats a database line with selection highlight
@@ -435,11 +481,14 @@ func (db *DatabaseBrowser) formatDatabaseLine(database Database, selected bool, 
 
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color("33")).
-			Foreground(lipgloss.Color("0")).
+			Background(lipgloss.Color("#00D9FF")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
 			Render(line)
 	}
-	return line
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Render(line)
 }
 
 // formatTableLine formats a table line with selection highlight
@@ -456,11 +505,14 @@ func (db *DatabaseBrowser) formatTableLine(table Table, selected bool, width int
 
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color("33")).
-			Foreground(lipgloss.Color("0")).
+			Background(lipgloss.Color("#00D9FF")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
 			Render(line)
 	}
-	return line
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Render(line)
 }
 
 // formatColumnLine formats a column line with selection highlight
@@ -486,11 +538,14 @@ func (db *DatabaseBrowser) formatColumnLine(column Column, selected bool, width 
 
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color("33")).
-			Foreground(lipgloss.Color("0")).
+			Background(lipgloss.Color("#00D9FF")).
+			Foreground(lipgloss.Color("#1a1a2e")).
+			Bold(true).
 			Render(line)
 	}
-	return line
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Render(line)
 }
 
 // moveUp moves selection up in the current panel
