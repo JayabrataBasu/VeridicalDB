@@ -35,18 +35,63 @@ type Model struct {
 
 	// Status message
 	statusMessage string
+
+	// Layout manager for 3-pane layout
+	layout *Layout
+
+	// Window dimensions
+	width  int
+	height int
+
+	// Sidebar collapsed state
+	sidebarCollapsed bool
 }
 
 // New creates a new TUI Model.
 func New(session *sql.Session) *Model {
 	theme := NewTheme("dark")
 
+	// Configure compact sidebar layout
+	layoutConfig := &LayoutConfig{
+		SidebarWidth:       20, // Compact sidebar
+		AuxiliaryWidth:     40,
+		SidebarCollapsed:   false,
+		AuxiliaryCollapsed: true,
+		MinSidebarWidth:    14,
+		MinAuxiliaryWidth:  30,
+		MinMainWidth:       50,
+	}
+
+	// Create pane styles for premium look
+	paneStyles := &PaneStyles{
+		ActiveBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#00D9FF")),
+		InactiveBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#3a3a5c")),
+		ActiveTitle: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#00D9FF")).
+			Background(lipgloss.Color("#1a1a2e")).
+			Padding(0, 1),
+		InactiveTitle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Padding(0, 1),
+		ActiveBackground: lipgloss.NewStyle(),
+		InactiveBackground: lipgloss.NewStyle(),
+	}
+
 	m := &Model{
-		session:  session,
-		theme:    theme,
-		screens:  make(map[string]Screen),
-		msgChan:  make(chan tea.Msg, 100),
-		quitting: false,
+		session:          session,
+		theme:            theme,
+		screens:          make(map[string]Screen),
+		msgChan:          make(chan tea.Msg, 100),
+		quitting:         false,
+		layout:           NewLayout(layoutConfig, paneStyles),
+		width:            120,
+		height:           40,
+		sidebarCollapsed: false,
 	}
 
 	// Initialize screens
@@ -81,11 +126,24 @@ func (m *Model) Init() tea.Cmd {
 // Update handles messages and updates the model.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Update dimensions for proper layout
+		m.width = msg.Width
+		m.height = msg.Height
+		m.layout.SetDimensions(msg.Width, msg.Height)
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			m.quitting = true
 			return m, tea.Quit
+
+		case "ctrl+b":
+			// Toggle sidebar visibility
+			m.sidebarCollapsed = !m.sidebarCollapsed
+			m.layout.ToggleSidebar()
+			return m, nil
 
 		case "ctrl+l":
 			// Clear screen
@@ -158,22 +216,58 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	// Compose main screen and sidebar
-	mainContent := m.screen.View()
-	side := NewSidebar(m)
-	// Try to place sidebar to the right with fixed width (32)
-	layout := lipgloss.JoinHorizontal(lipgloss.Top, mainContent, side.View(32))
+	// Calculate available space
+	sidebarWidth := 20
+	if m.sidebarCollapsed {
+		sidebarWidth = 0
+	}
 
-	// Status bar at bottom
+	// Main content with proper width constraint
+	mainWidth := m.width - sidebarWidth - 2 // 2 for border/spacing
+	if mainWidth < 50 {
+		mainWidth = 50
+	}
+
+	// Style main content area with breathing room
+	mainContentStyle := lipgloss.NewStyle().
+		Width(mainWidth).
+		Padding(1, 2).
+		MarginRight(1)
+
+	mainContent := mainContentStyle.Render(m.screen.View())
+
+	// Render sidebar if not collapsed
+	var layout string
+	if !m.sidebarCollapsed {
+		side := NewSidebar(m)
+		sidebarContent := side.View(sidebarWidth)
+		layout = lipgloss.JoinHorizontal(lipgloss.Top, mainContent, sidebarContent)
+	} else {
+		layout = mainContent
+	}
+
+	// Status bar with better styling
 	status := ""
 	if m.lastError != "" {
-		status = m.theme.ErrorStyle.Render("✗ Error: " + m.lastError)
+		status = m.theme.ErrorStyle.Render("✗ " + m.lastError)
 	} else if m.statusMessage != "" {
 		status = m.theme.PrimaryStyle.Render("✓ " + m.statusMessage)
 	} else {
 		status = m.theme.SecondaryStyle.Render("Ready")
 	}
-	footer := m.theme.Palette().Footer.Render(" " + status + " ")
+
+	// Footer with toggle hint
+	toggleHint := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		Render(" │ Ctrl+B Toggle Sidebar")
+
+	footerStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#101010")).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Padding(0, 1).
+		Width(m.width)
+
+	footer := footerStyle.Render(" " + status + toggleHint)
 
 	return lipgloss.JoinVertical(lipgloss.Left, layout, footer)
 }

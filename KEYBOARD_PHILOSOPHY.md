@@ -1,4 +1,4 @@
-# Keyboard Philosophy & Design
+# Keyboard Philosophy & Designs
 
 VeridicalDB follows a comprehensive keyboard-driven philosophy to maximize efficiency and accessibility for database administrators and developers working in the terminal.
 
