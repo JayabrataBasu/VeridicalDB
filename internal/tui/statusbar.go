@@ -142,7 +142,8 @@ func (s *StatusBar) View() string {
 	latencySection := latencyStyle.Render(latencyText)
 
 	// Help section
-	helpStyle := styles.Muted.Copy().Padding(0, 1)
+	helpStyle := styles.Muted
+	helpStyle = helpStyle.Padding(0, 1)
 	helpSection := helpStyle.Render("? Help")
 
 	// Separator

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -341,11 +342,11 @@ func TestColumnFormatting(t *testing.T) {
 	}{
 		{
 			Column{Name: "id", Type: "INT", IsPrimary: true},
-			"🔑",
+			types.Icons.Key,
 		},
 		{
 			Column{Name: "user_id", Type: "INT", IsForeign: true},
-			"🔗",
+			types.Icons.ForeignKey,
 		},
 		{
 			Column{Name: "email", Type: "VARCHAR", Nullable: true},
@@ -371,11 +372,11 @@ func TestTableTypeIcon(t *testing.T) {
 	baseLine := browser.formatTableLine(baseTable, false, 60)
 	viewLine := browser.formatTableLine(viewTable, false, 60)
 
-	if !strings.Contains(baseLine, "📄") {
-		t.Errorf("expected 📄 icon for base table")
+	if !strings.Contains(baseLine, types.Icons.Table) {
+		t.Errorf("expected %s icon for base table", types.Icons.Table)
 	}
-	if !strings.Contains(viewLine, "👁") {
-		t.Errorf("expected 👁 icon for view")
+	if !strings.Contains(viewLine, types.Icons.File) {
+		t.Errorf("expected %s icon for view", types.Icons.File)
 	}
 }
 

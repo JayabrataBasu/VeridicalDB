@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 )
 
 // TestNewToastManager tests toast manager creation
@@ -376,10 +378,10 @@ func TestToastIcons(t *testing.T) {
 		showFunc func(string) string
 		icon     string
 	}{
-		{manager.ShowSuccess, "✓"},
-		{manager.ShowError, "✗"},
-		{manager.ShowWarning, "⚠"},
-		{manager.ShowInfo, "ℹ"},
+		{manager.ShowSuccess, types.Icons.Success},
+		{manager.ShowError, types.Icons.Error},
+		{manager.ShowWarning, types.Icons.Warning},
+		{manager.ShowInfo, types.Icons.Info},
 	}
 
 	for _, test := range tests {
