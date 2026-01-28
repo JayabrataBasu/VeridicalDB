@@ -107,34 +107,37 @@ func (h *HomeScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (h *HomeScreen) View() string {
 	var buf strings.Builder
 
-	// Define premium styles
+	// Define premium styles with better spacing
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00D9FF")).
 		Background(lipgloss.Color("#1a1a2e")).
 		Padding(1, 4).
-		MarginBottom(1).
-		Width(60).
+		MarginBottom(2).
+		Width(50).
 		Align(lipgloss.Center)
 
 	logoStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#50FA7B"))
 
+	// Wider cards with more padding
 	menuCardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3a3a5c")).
-		Padding(0, 2).
-		Width(56).
-		MarginLeft(2)
+		Padding(0, 3).
+		Width(48).
+		MarginLeft(1).
+		MarginBottom(1)
 
 	selectedCardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#00D9FF")).
 		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 2).
-		Width(56).
-		MarginLeft(2)
+		Padding(0, 3).
+		Width(48).
+		MarginLeft(1).
+		MarginBottom(1)
 
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -150,7 +153,8 @@ func (h *HomeScreen) View() string {
 
 	footerStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
-		MarginTop(1)
+		MarginTop(2).
+		MarginLeft(1)
 
 	// Icons for each menu item
 	icons := map[string]string{
@@ -170,15 +174,16 @@ func (h *HomeScreen) View() string {
 	buf.WriteString(header)
 	buf.WriteString("\n\n")
 
-	// Subtitle
+	// Subtitle with spacing
 	subtitle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#888888")).
-		MarginLeft(2).
+		MarginLeft(1).
+		MarginBottom(1).
 		Render("Select an option to continue:")
 	buf.WriteString(subtitle)
 	buf.WriteString("\n\n")
 
-	// Menu items as cards
+	// Menu items as cards with better spacing
 	for i, item := range h.items {
 		icon := icons[item.Title]
 		if icon == "" {
@@ -186,13 +191,13 @@ func (h *HomeScreen) View() string {
 		}
 
 		if i == h.menuIdx {
-			// Selected item - highlighted card
+			// Selected item - highlighted card with description
 			title := selectedTitleStyle.Render(icon + "  " + item.Title)
 			desc := descStyle.Render("    " + item.Description)
 			card := selectedCardStyle.Render(title + "\n" + desc)
 			buf.WriteString(card)
 		} else {
-			// Normal item
+			// Normal item - compact
 			title := titleStyle.Render(icon + "  " + item.Title)
 			card := menuCardStyle.Render(title)
 			buf.WriteString(card)
@@ -200,14 +205,14 @@ func (h *HomeScreen) View() string {
 		buf.WriteString("\n")
 	}
 
-	// Footer with keybindings
+	// Footer with keybindings and more breathing room
 	buf.WriteString("\n")
 	keybindings := []string{
 		"↑↓/jk Navigate",
 		"Enter Select",
 		"q/Ctrl+C Quit",
 	}
-	footer := footerStyle.Render("  " + strings.Join(keybindings, "  │  "))
+	footer := footerStyle.Render(strings.Join(keybindings, "  │  "))
 	buf.WriteString(footer)
 	buf.WriteString("\n")
 

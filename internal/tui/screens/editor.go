@@ -308,9 +308,17 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		return e, nil
 
 	case tea.WindowSizeMsg:
-		// Resize textarea to fit window
-		e.textarea.SetWidth(msg.Width - 4)
-		e.textarea.SetHeight(msg.Height - 10)
+		// Resize textarea to fit window with proper padding
+		editorWidth := msg.Width - 8 // Account for padding and borders
+		editorHeight := msg.Height - 12 // Account for header, status, help
+		if editorWidth < 40 {
+			editorWidth = 40
+		}
+		if editorHeight < 8 {
+			editorHeight = 8
+		}
+		e.textarea.SetWidth(editorWidth)
+		e.textarea.SetHeight(editorHeight)
 	}
 
 	// Update textarea
@@ -320,7 +328,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return e, tea.Batch(cmds...)
 }
 
-// View renders the editor screen with premium styling
+// View renders the editor screen with premium styling and proper spacing
 func (e *EditorScreen) View() string {
 	var b strings.Builder
 
@@ -329,24 +337,24 @@ func (e *EditorScreen) View() string {
 		Bold(true).
 		Foreground(lipgloss.Color("#00D9FF")).
 		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 2).
-		MarginBottom(1)
+		Padding(0, 3).
+		MarginBottom(2)
 
 	header := headerStyle.Render("🗂  SQL Editor")
 	b.WriteString(header)
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
-	// Editor container with border - shows textarea content
+	// Editor container with more padding and better border
 	editorStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#00D9FF")).
-		Padding(1).
-		MarginBottom(1)
+		Padding(1, 2).
+		MarginBottom(2)
 
-	// Get raw text for syntax highlighting, then render the textarea
+	// Render the textarea with syntax highlighting
 	editorContent := editorStyle.Render(e.textarea.View())
 	b.WriteString(editorContent)
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
 	// Status bar with icon
 	var statusIcon string
@@ -391,13 +399,14 @@ func (e *EditorScreen) View() string {
 		}
 	}
 
-	// Help bar with keyboard shortcuts
+	// Help bar with keyboard shortcuts - better spacing
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#6272A4")).
-		MarginTop(1)
+		MarginTop(2).
+		Padding(0, 1)
 
 	helpText := helpStyle.Render(
-		"⌨  F5/Ctrl+Enter: Execute │ Ctrl+D: Duplicate │ Ctrl+Space: Autocomplete │ Esc: Back",
+		"F5/Ctrl+Enter Execute  │  Ctrl+D Duplicate  │  Ctrl+Space Autocomplete  │  Esc Back",
 	)
 	b.WriteString(helpText)
 

@@ -115,19 +115,20 @@ func (r *ResultsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (r *ResultsScreen) View() string {
 	var b strings.Builder
 
-	// Define premium styles
+	// Define premium styles with better spacing
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00D9FF")).
 		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 2).
-		MarginBottom(1)
+		Padding(0, 3).
+		MarginBottom(2)
 
 	containerStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3a3a5c")).
 		Padding(1, 2).
-		MarginTop(1)
+		MarginTop(1).
+		MarginBottom(1)
 
 	statusStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#50FA7B")).
@@ -138,12 +139,13 @@ func (r *ResultsScreen) View() string {
 
 	helpStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#666666")).
-		MarginTop(1)
+		MarginTop(2).
+		Padding(0, 1)
 
 	// Header with icon
 	header := headerStyle.Render("📊  Query Results")
 	b.WriteString(header)
-	b.WriteString("\n")
+	b.WriteString("\n\n")
 
 	// Display results
 	if r.result == nil {
