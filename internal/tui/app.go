@@ -78,7 +78,7 @@ func New(session *sql.Session) *Model {
 		InactiveTitle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#888888")).
 			Padding(0, 1),
-		ActiveBackground: lipgloss.NewStyle(),
+		ActiveBackground:   lipgloss.NewStyle(),
 		InactiveBackground: lipgloss.NewStyle(),
 	}
 

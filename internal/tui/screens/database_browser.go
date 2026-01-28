@@ -193,13 +193,25 @@ func (db *DatabaseBrowser) Update(msg tea.Msg) (*DatabaseBrowser, tea.Cmd) {
 
 // View renders the database browser
 func (db *DatabaseBrowser) View() string {
+	// Premium header
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 3).
+		MarginBottom(2)
+
+	header := headerStyle.Render("🗄️  Database Browser")
+
 	if len(db.databases) == 0 {
-		return lipgloss.NewStyle().
-			Foreground(lipgloss.Color("240")).
-			Align(lipgloss.Center, lipgloss.Top).
-			Width(db.width).
-			Height(db.height).
-			Render("No databases available\nPress 'q' to go back")
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Padding(2, 4)
+		return lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			"",
+			emptyStyle.Render("No databases available\n\nPress 'q' to go back"),
+		)
 	}
 
 	// Calculate panel widths (33% each)
@@ -223,14 +235,16 @@ func (db *DatabaseBrowser) View() string {
 	// Add bottom info
 	info := db.renderBottomInfo()
 
-	// Combine with space between
-	remaining := db.height - lipgloss.Height(info) - 2
+	// Combine with header
+	remaining := db.height - lipgloss.Height(header) - lipgloss.Height(info) - 4
 	if remaining > 0 {
 		panels = lipgloss.NewStyle().Height(remaining).Render(panels)
 	}
 
 	return lipgloss.JoinVertical(
 		lipgloss.Top,
+		header,
+		"",
 		panels,
 		"",
 		info,

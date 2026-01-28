@@ -122,12 +122,15 @@ func (d *Dashboard) View() string {
 
 	var sections []string
 
-	// Header
-	titleStyle := lipgloss.NewStyle().
+	// Premium header matching app style
+	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00D9FF")).
-		MarginBottom(1)
-	sections = append(sections, titleStyle.Render("📊 System Dashboard"))
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 3).
+		MarginBottom(2)
+	sections = append(sections, headerStyle.Render("📊  System Dashboard"))
+	sections = append(sections, "")
 
 	// Metrics grid (2 columns)
 	col1 := d.renderConnectionMetrics()

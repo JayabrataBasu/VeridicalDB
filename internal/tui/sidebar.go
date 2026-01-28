@@ -63,7 +63,7 @@ func (s *Sidebar) View(width int) string {
 	containerStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3a3a5c")).
-		Width(w - 2).
+		Width(w-2).
 		Padding(0, 1)
 
 	var b strings.Builder

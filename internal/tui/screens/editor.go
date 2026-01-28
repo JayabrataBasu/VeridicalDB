@@ -309,7 +309,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		// Resize textarea to fit window with proper padding
-		editorWidth := msg.Width - 8 // Account for padding and borders
+		editorWidth := msg.Width - 8    // Account for padding and borders
 		editorHeight := msg.Height - 12 // Account for header, status, help
 		if editorWidth < 40 {
 			editorWidth = 40

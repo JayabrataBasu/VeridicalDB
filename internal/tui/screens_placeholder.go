@@ -52,7 +52,7 @@ func (p *PlaceholderScreen) View() string {
 		"Settings":         "⚙️",
 		"About":            "ℹ️",
 	}
-	
+
 	icon := icons[p.title]
 	if icon == "" {
 		icon = "📋"
@@ -88,7 +88,7 @@ func (p *PlaceholderScreen) View() string {
 	// Content box
 	content := comingSoonStyle.Render("🚧 Coming Soon") + "\n\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("This feature is under development.")
-	
+
 	buf.WriteString(contentStyle.Render(content))
 	buf.WriteString("\n")
 
