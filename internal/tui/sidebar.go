@@ -16,105 +16,98 @@ func NewSidebar(app *Model) *Sidebar {
 	return &Sidebar{app: app}
 }
 
-// View renders the sidebar content with premium styling and icons.
+// View renders the sidebar content with compact, premium styling.
 func (s *Sidebar) View(width int) string {
-	w := 32
-	if width > 0 && width < w {
-		w = width
+	w := width
+	if w < 14 {
+		w = 14
+	}
+	if w > 24 {
+		w = 24
 	}
 
-	// Define premium styles
+	// Premium compact styles
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#00D9FF")).
 		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 1).
 		Width(w).
 		Align(lipgloss.Center)
 
 	sectionStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFB86C")).
-		MarginTop(1)
+		PaddingLeft(1)
 
 	itemStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		PaddingLeft(2)
+		Foreground(lipgloss.Color("#AAAAAA")).
+		PaddingLeft(1)
 
 	activeStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#50FA7B")).
-		PaddingLeft(2)
+		PaddingLeft(1)
 
 	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		PaddingLeft(2)
+		Foreground(lipgloss.Color("#555555")).
+		PaddingLeft(1)
 
 	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		MarginTop(1)
+		Foreground(lipgloss.Color("#555555")).
+		Italic(true).
+		PaddingLeft(1)
 
 	borderStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3a3a5c"))
 
+	// Container with border
+	containerStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
+		Width(w - 2).
+		Padding(0, 1)
+
 	var b strings.Builder
 
-	// Logo / header with premium styling
-	logo := "◆ VERIDICAL DB"
-	b.WriteString(headerStyle.Render(logo))
+	// Compact header
+	b.WriteString(headerStyle.Render("◆ VERIDICAL DB"))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		Width(w).
+		Align(lipgloss.Center).
+		Render("v1.0.0"))
+	b.WriteString("\n")
+	b.WriteString(borderStyle.Render(strings.Repeat("─", w-2)))
 	b.WriteString("\n")
 
-	// Version info
-	versionStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888")).
-		Width(w).
-		Align(lipgloss.Center)
-	b.WriteString(versionStyle.Render("v1.0.0"))
-	b.WriteString("\n\n")
-
-	// Section: Context
+	// Compact sections - single line each
 	b.WriteString(sectionStyle.Render("📋 Context"))
 	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-4)))
-	b.WriteString("\n")
-	b.WriteString(itemStyle.Render("📁 Modified Files: None"))
-	b.WriteString("\n")
-	b.WriteString(itemStyle.Render("💾 Unsaved: 0"))
+	b.WriteString(itemStyle.Render("Files: 0 │ Unsaved: 0"))
 	b.WriteString("\n\n")
 
-	// Section: LSPs
-	b.WriteString(sectionStyle.Render("🔌 Language Servers"))
+	b.WriteString(sectionStyle.Render("🔌 LSP"))
 	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-4)))
-	b.WriteString("\n")
-	b.WriteString(activeStyle.Render("● Go (gopls)"))
-	b.WriteString("\n")
-	b.WriteString(activeStyle.Render("● Nix (nil)"))
+	b.WriteString(activeStyle.Render("● Go"))
+	b.WriteString(itemStyle.Render(" │ "))
+	b.WriteString(activeStyle.Render("● Nix"))
 	b.WriteString("\n\n")
 
-	// Section: MCPs
-	b.WriteString(sectionStyle.Render("🤖 MCP Servers"))
+	b.WriteString(sectionStyle.Render("🤖 MCP"))
 	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-4)))
-	b.WriteString("\n")
-	b.WriteString(inactiveStyle.Render("○ None connected"))
+	b.WriteString(inactiveStyle.Render("○ None"))
 	b.WriteString("\n\n")
 
-	// Section: Database Status
 	b.WriteString(sectionStyle.Render("🗄️ Database"))
-	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-4)))
 	b.WriteString("\n")
 	b.WriteString(activeStyle.Render("● Connected"))
 	b.WriteString("\n")
-	b.WriteString(itemStyle.Render("📊 Tables: --"))
+	b.WriteString(itemStyle.Render("Tables: --"))
 	b.WriteString("\n\n")
 
-	// Footer separator
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w)))
+	b.WriteString(borderStyle.Render(strings.Repeat("─", w-2)))
 	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("? Help"))
 
-	// Help with keyboard icon
-	b.WriteString(helpStyle.Render("  ⌨ Press ? for help"))
-
-	return lipgloss.NewStyle().Width(w).Render(b.String())
+	return containerStyle.Render(b.String())
 }
