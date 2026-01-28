@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // PlaceholderScreen represents a screen that's not yet implemented.
@@ -40,27 +41,59 @@ func (p *PlaceholderScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return p, nil
 }
 
-// View renders the placeholder screen.
+// View renders the placeholder screen with premium styling.
 func (p *PlaceholderScreen) View() string {
 	var buf strings.Builder
 
-	// Header
-	header := p.app.theme.HeaderStyle.Render("═══════════════════════════════════════")
-	headerText := p.app.theme.HeaderStyle.Render("      " + p.title)
-	headerBottom := p.app.theme.HeaderStyle.Render("═══════════════════════════════════════")
+	// Icon map for different screens
+	icons := map[string]string{
+		"User Management":  "👤",
+		"Backup & Restore": "💾",
+		"Settings":         "⚙️",
+		"About":            "ℹ️",
+	}
+	
+	icon := icons[p.title]
+	if icon == "" {
+		icon = "📋"
+	}
 
+	// Premium header style matching other screens
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D9FF")).
+		Background(lipgloss.Color("#1a1a2e")).
+		Padding(0, 3).
+		MarginBottom(2)
+
+	contentStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3a3a5c")).
+		Padding(2, 4).
+		MarginTop(2)
+
+	comingSoonStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFB86C")).
+		Bold(true)
+
+	hintStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#666666")).
+		MarginTop(2)
+
+	// Header
+	header := headerStyle.Render(icon + "  " + p.title)
 	buf.WriteString(header)
-	buf.WriteString("\n")
-	buf.WriteString(headerText)
-	buf.WriteString("\n")
-	buf.WriteString(headerBottom)
 	buf.WriteString("\n\n")
 
-	// Content
-	buf.WriteString(p.app.theme.SecondaryStyle.Render("  This feature is coming soon!"))
-	buf.WriteString("\n\n\n")
-	buf.WriteString(p.app.theme.SecondaryStyle.Render("  Press ESC or 'q' to return to menu"))
+	// Content box
+	content := comingSoonStyle.Render("🚧 Coming Soon") + "\n\n" +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("This feature is under development.")
+	
+	buf.WriteString(contentStyle.Render(content))
 	buf.WriteString("\n")
+
+	// Help hint
+	buf.WriteString(hintStyle.Render("Esc/q Return to menu"))
 
 	return buf.String()
 }

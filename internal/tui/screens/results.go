@@ -187,9 +187,9 @@ func (r *ResultsScreen) View() string {
 		b.WriteString("\n")
 	}
 
-	// Help text with key icons
+	// Help text with key icons - better spacing
 	helpText := helpStyle.Render(
-		"  ⇞⇟ Navigate  │  ←→ Scroll Columns  │  Home/End First/Last  │  Ctrl+E Export  │  Esc Back",
+		"PgUp/PgDn Navigate  │  ←→ Scroll Columns  │  Home/End First/Last  │  Ctrl+E Export  │  Esc Back",
 	)
 	b.WriteString(helpText)
 
