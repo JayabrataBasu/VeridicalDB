@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -201,7 +202,7 @@ func (db *DatabaseBrowser) View() string {
 		Padding(0, 3).
 		MarginBottom(2)
 
-	header := headerStyle.Render("🗄️  Database Browser")
+	header := headerStyle.Render(types.Icons.Browser + "  Database Browser")
 
 	if len(db.databases) == 0 {
 		emptyStyle := lipgloss.NewStyle().
@@ -265,9 +266,9 @@ func (db *DatabaseBrowser) renderDatabasesPanel(width int) string {
 	separatorStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3a3a5c"))
 
-	title := titleStyle.Render("📦 Databases")
+	title := titleStyle.Render(types.Icons.Database + " Databases")
 	if db.panelFocus == 0 {
-		title = activeTitleStyle.Render("📦 Databases ●")
+		title = activeTitleStyle.Render(types.Icons.Database + " Databases ●")
 	}
 
 	var lines []string
@@ -315,9 +316,9 @@ func (db *DatabaseBrowser) renderTablesPanel(width int) string {
 	separatorStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3a3a5c"))
 
-	title := titleStyle.Render("📋 Tables")
+	title := titleStyle.Render(types.Icons.Table + " Tables")
 	if db.panelFocus == 1 {
-		title = activeTitleStyle.Render("📋 Tables ●")
+		title = activeTitleStyle.Render(types.Icons.Table + " Tables ●")
 	}
 
 	var lines []string
@@ -374,9 +375,9 @@ func (db *DatabaseBrowser) renderColumnsPanel(width int) string {
 	separatorStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#3a3a5c"))
 
-	title := titleStyle.Render("🏛️ Columns")
+	title := titleStyle.Render(types.Icons.Column + " Columns")
 	if db.panelFocus == 2 {
-		title = activeTitleStyle.Render("🏛️ Columns ●")
+		title = activeTitleStyle.Render(types.Icons.Column + " Columns ●")
 	}
 
 	var lines []string
@@ -449,7 +450,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 		MarginTop(1)
 
 	// Database info
-	info.WriteString(labelStyle.Render("🗄️ Database: "))
+	info.WriteString(labelStyle.Render(types.Icons.Database + " Database: "))
 	info.WriteString(valueStyle.Render(db.databases[db.selectedDBIdx].Name))
 	info.WriteString(labelStyle.Render(fmt.Sprintf(" (%s)", dbFormatBytes(db.databases[db.selectedDBIdx].Size))))
 
@@ -458,7 +459,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 		tables := db.databases[db.selectedDBIdx].Tables
 		if db.selectedTblIdx < len(tables) {
 			table := tables[db.selectedTblIdx]
-			info.WriteString(labelStyle.Render("  │  📋 Table: "))
+			info.WriteString(labelStyle.Render("  │  " + types.Icons.Table + " Table: "))
 			info.WriteString(valueStyle.Render(table.Name))
 			info.WriteString(labelStyle.Render(fmt.Sprintf(" (%d rows, %s)",
 				table.RowCount,
@@ -471,7 +472,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 				if col.Nullable {
 					nullable = "NULL"
 				}
-				info.WriteString(labelStyle.Render("  │  🏛️ Column: "))
+				info.WriteString(labelStyle.Render("  │  " + types.Icons.Column + " Column: "))
 				info.WriteString(valueStyle.Render(col.Name))
 				info.WriteString(labelStyle.Render(fmt.Sprintf(" (%s, %s)", col.Type, nullable)))
 			}
@@ -507,9 +508,9 @@ func (db *DatabaseBrowser) formatDatabaseLine(database Database, selected bool, 
 
 // formatTableLine formats a table line with selection highlight
 func (db *DatabaseBrowser) formatTableLine(table Table, selected bool, width int) string {
-	icon := "📄"
+	icon := types.Icons.Table
 	if table.Type == "VIEW" {
-		icon = "👁"
+		icon = types.Icons.File
 	}
 	line := fmt.Sprintf("  %s %s (%d)", icon, table.Name, table.RowCount)
 	if len(line) > width {
@@ -534,9 +535,9 @@ func (db *DatabaseBrowser) formatColumnLine(column Column, selected bool, width 
 	// Build column indicators
 	indicators := ""
 	if column.IsPrimary {
-		indicators += "🔑 "
+		indicators += types.Icons.Key + " "
 	} else if column.IsForeign {
-		indicators += "🔗 "
+		indicators += types.Icons.ForeignKey + " "
 	}
 
 	// Build column line

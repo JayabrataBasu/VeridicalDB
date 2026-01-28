@@ -143,7 +143,7 @@ func (r *ResultsScreen) View() string {
 		Padding(0, 1)
 
 	// Header with icon
-	header := headerStyle.Render("📊  Query Results")
+	header := headerStyle.Render(types.Icons.Dashboard + "  Query Results")
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
@@ -153,7 +153,7 @@ func (r *ResultsScreen) View() string {
 		b.WriteString(emptyMsg)
 	} else if r.result.Message != "" {
 		// DDL/Command result (no rows)
-		successIcon := "✓ "
+		successIcon := types.Icons.Success + " "
 		msg := statusStyle.Render(successIcon + r.result.Message)
 		b.WriteString(containerStyle.Render(msg))
 	} else if len(r.result.Rows) == 0 {
@@ -176,7 +176,8 @@ func (r *ResultsScreen) View() string {
 			Foreground(lipgloss.Color("#FFB86C"))
 
 		paginationInfo := fmt.Sprintf(
-			"📄 Page %s | Rows %s",
+			"%s Page %s | Rows %s",
+			types.Icons.File,
 			pageStyle.Render(fmt.Sprintf("%d/%d", r.page+1, r.totalPages)),
 			rowStyle.Render(fmt.Sprintf("%d-%d of %d",
 				r.page*r.pageSize+1,

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -129,7 +130,7 @@ func (d *Dashboard) View() string {
 		Background(lipgloss.Color("#1a1a2e")).
 		Padding(0, 3).
 		MarginBottom(2)
-	sections = append(sections, headerStyle.Render("📊  System Dashboard"))
+	sections = append(sections, headerStyle.Render(types.Icons.Dashboard+"  System Dashboard"))
 	sections = append(sections, "")
 
 	// Metrics grid (2 columns)
@@ -186,7 +187,7 @@ func (d *Dashboard) renderConnectionMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FFB86C")).
-		Render("🔌 Connections")
+		Render(types.Icons.Connections + " Connections")
 
 	usage := float64(0)
 	if d.metrics.MaxConnections > 0 {
@@ -222,7 +223,7 @@ func (d *Dashboard) renderQueryMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#50FA7B")).
-		Render("⚡ Query Performance")
+		Render(types.Icons.Performance + " Query Performance")
 
 	content := fmt.Sprintf(`%s
 
@@ -250,7 +251,7 @@ func (d *Dashboard) renderMemoryMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#BD93F9")).
-		Render("💾 Memory")
+		Render(types.Icons.Memory + " Memory")
 
 	usage := float64(0)
 	if d.metrics.MemoryLimit > 0 {
@@ -286,7 +287,7 @@ func (d *Dashboard) renderTransactionMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FF79C6")).
-		Render("🔄 Transactions")
+		Render(types.Icons.Transactions + " Transactions")
 
 	content := fmt.Sprintf(`%s
 
@@ -314,7 +315,7 @@ func (d *Dashboard) renderDatabaseMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#8BE9FD")).
-		Render("🗄️  Database")
+		Render(types.Icons.Database + "  Database")
 
 	content := fmt.Sprintf(`%s
 
@@ -342,7 +343,7 @@ func (d *Dashboard) renderSystemMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#F1FA8C")).
-		Render("⚙️  System")
+		Render(types.Icons.Settings + "  System")
 
 	content := fmt.Sprintf(`%s
 

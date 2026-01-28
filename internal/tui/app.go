@@ -3,6 +3,7 @@ package tui
 
 import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/screens"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
@@ -18,8 +19,11 @@ type Model struct {
 	// Shared session for database operations
 	session *sql.Session
 
-	// Theme configuration
+	// Theme configuration (legacy, for compatibility)
 	theme *Theme
+
+	// Theme manager for advanced theming
+	themeManager *theme.Manager
 
 	// Screen registry
 	screens map[string]Screen
@@ -39,17 +43,32 @@ type Model struct {
 	// Layout manager for 3-pane layout
 	layout *Layout
 
+	// Status bar
+	statusBar *StatusBar
+
 	// Window dimensions
 	width  int
 	height int
 
 	// Sidebar collapsed state
 	sidebarCollapsed bool
+
+	// Available theme names for cycling
+	themeNames []string
+	themeIndex int
 }
 
 // New creates a new TUI Model.
 func New(session *sql.Session) *Model {
-	theme := NewTheme("dark")
+	// Initialize icons based on environment
+	InitIcons()
+
+	// Initialize theme manager
+	themeManager := theme.NewManager()
+	themeNames := themeManager.ListThemes()
+
+	// Legacy theme for backward compatibility
+	legacyTheme := NewTheme("dark")
 
 	// Configure compact sidebar layout
 	layoutConfig := &LayoutConfig{
@@ -62,36 +81,44 @@ func New(session *sql.Session) *Model {
 		MinMainWidth:       50,
 	}
 
-	// Create pane styles for premium look
+	// Create pane styles using theme colors
+	t := themeManager.Current()
 	paneStyles := &PaneStyles{
 		ActiveBorder: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#00D9FF")),
+			BorderForeground(lipgloss.Color(t.BorderFocused)),
 		InactiveBorder: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#3a3a5c")),
+			BorderForeground(lipgloss.Color(t.Border)),
 		ActiveTitle: lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#00D9FF")).
-			Background(lipgloss.Color("#1a1a2e")).
+			Foreground(lipgloss.Color(t.Primary)).
+			Background(lipgloss.Color(t.CurrentLine)).
 			Padding(0, 1),
 		InactiveTitle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#888888")).
+			Foreground(lipgloss.Color(t.Muted)).
 			Padding(0, 1),
 		ActiveBackground:   lipgloss.NewStyle(),
 		InactiveBackground: lipgloss.NewStyle(),
 	}
 
+	// Create status bar
+	statusBar := NewStatusBar(themeManager)
+
 	m := &Model{
 		session:          session,
-		theme:            theme,
+		theme:            legacyTheme,
+		themeManager:     themeManager,
 		screens:          make(map[string]Screen),
 		msgChan:          make(chan tea.Msg, 100),
 		quitting:         false,
 		layout:           NewLayout(layoutConfig, paneStyles),
+		statusBar:        statusBar,
 		width:            120,
 		height:           40,
 		sidebarCollapsed: false,
+		themeNames:       themeNames,
+		themeIndex:       0,
 	}
 
 	// Initialize screens
@@ -131,6 +158,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout.SetDimensions(msg.Width, msg.Height)
+		m.statusBar.SetWidth(msg.Width)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -143,6 +171,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle sidebar visibility
 			m.sidebarCollapsed = !m.sidebarCollapsed
 			m.layout.ToggleSidebar()
+			return m, nil
+
+		case "ctrl+t":
+			// Cycle through themes
+			m.themeIndex = (m.themeIndex + 1) % len(m.themeNames)
+			themeName := m.themeNames[m.themeIndex]
+			m.themeManager.SetTheme(themeName)
+			m.statusMessage = "Theme: " + themeName
 			return m, nil
 
 		case "ctrl+l":
@@ -216,23 +252,26 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	// Calculate available space
+	t := m.themeManager.Current()
+
+	// Calculate available space (reserve 1 line for status bar)
+	contentHeight := m.height - 1
 	sidebarWidth := 20
 	if m.sidebarCollapsed {
 		sidebarWidth = 0
 	}
 
 	// Main content with proper width constraint
-	mainWidth := m.width - sidebarWidth - 2 // 2 for border/spacing
+	mainWidth := m.width - sidebarWidth - 2
 	if mainWidth < 50 {
 		mainWidth = 50
 	}
 
-	// Style main content area with breathing room
+	// Style main content area
 	mainContentStyle := lipgloss.NewStyle().
 		Width(mainWidth).
-		Padding(1, 2).
-		MarginRight(1)
+		Height(contentHeight).
+		Padding(1, 2)
 
 	mainContent := mainContentStyle.Render(m.screen.View())
 
@@ -246,30 +285,24 @@ func (m *Model) View() string {
 		layout = mainContent
 	}
 
-	// Status bar with better styling
-	status := ""
+	// Update status bar state
+	m.statusBar.SetDatabase("default", true)
 	if m.lastError != "" {
-		status = m.theme.ErrorStyle.Render("✗ " + m.lastError)
+		m.statusBar.SetInfo(Icons.Error + " " + m.lastError)
 	} else if m.statusMessage != "" {
-		status = m.theme.PrimaryStyle.Render("✓ " + m.statusMessage)
+		m.statusBar.SetInfo(Icons.Success + " " + m.statusMessage)
 	} else {
-		status = m.theme.SecondaryStyle.Render("Ready")
+		m.statusBar.SetInfo("")
 	}
 
-	// Footer with toggle hint
-	toggleHint := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		Render(" │ Ctrl+B Toggle Sidebar")
+	// Render status bar
+	statusBarView := m.statusBar.View()
 
-	footerStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#101010")).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Padding(0, 1).
-		Width(m.width)
+	// Container style with theme background
+	containerStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color(t.Background))
 
-	footer := footerStyle.Render(" " + status + toggleHint)
-
-	return lipgloss.JoinVertical(lipgloss.Left, layout, footer)
+	return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, layout, statusBarView))
 }
 
 // RegisterScreen registers a screen in the TUI.
@@ -282,9 +315,14 @@ func (m *Model) GetSession() *sql.Session {
 	return m.session
 }
 
-// GetTheme returns the current theme.
+// GetTheme returns the current theme (legacy compatibility).
 func (m *Model) GetTheme() *Theme {
 	return m.theme
+}
+
+// GetThemeManager returns the theme manager.
+func (m *Model) GetThemeManager() *theme.Manager {
+	return m.themeManager
 }
 
 // GetStyles returns the shared style palette for screens.
@@ -295,9 +333,9 @@ func (m *Model) GetStyles() *types.StylePalette {
 	return m.theme.Palette()
 }
 
-// SetTheme updates the theme.
-func (m *Model) SetTheme(theme *Theme) {
-	m.theme = theme
+// SetTheme updates the theme (legacy compatibility).
+func (m *Model) SetTheme(t *Theme) {
+	m.theme = t
 }
 
 // ShowError displays an error message.

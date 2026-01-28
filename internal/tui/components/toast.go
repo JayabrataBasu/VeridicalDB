@@ -3,6 +3,7 @@ package components
 import (
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -37,16 +38,16 @@ type ToastManager struct {
 
 // ToastTheme provides colors for toast messages
 type ToastTheme struct {
-	SuccessBG   lipgloss.Color
-	SuccessFG   lipgloss.Color
-	WarningBG   lipgloss.Color
-	WarningFG   lipgloss.Color
-	ErrorBG     lipgloss.Color
-	ErrorFG     lipgloss.Color
-	InfoBG      lipgloss.Color
-	InfoFG      lipgloss.Color
-	Border      lipgloss.Color
-	DimmedFG    lipgloss.Color
+	SuccessBG lipgloss.Color
+	SuccessFG lipgloss.Color
+	WarningBG lipgloss.Color
+	WarningFG lipgloss.Color
+	ErrorBG   lipgloss.Color
+	ErrorFG   lipgloss.Color
+	InfoBG    lipgloss.Color
+	InfoFG    lipgloss.Color
+	Border    lipgloss.Color
+	DimmedFG  lipgloss.Color
 }
 
 // NewToastManager creates a new toast manager
@@ -63,16 +64,16 @@ func NewToastManager(width int) *ToastManager {
 // DefaultToastTheme returns the default toast theme
 func DefaultToastTheme() ToastTheme {
 	return ToastTheme{
-		SuccessBG:   lipgloss.Color("22"),   // Dark green
-		SuccessFG:   lipgloss.Color("46"),   // Light green
-		WarningBG:   lipgloss.Color("136"),  // Dark yellow
-		WarningFG:   lipgloss.Color("226"),  // Bright yellow
-		ErrorBG:     lipgloss.Color("52"),   // Dark red
-		ErrorFG:     lipgloss.Color("196"),  // Bright red
-		InfoBG:      lipgloss.Color("17"),   // Dark blue
-		InfoFG:      lipgloss.Color("39"),   // Light blue
-		Border:      lipgloss.Color("238"),  // Gray
-		DimmedFG:    lipgloss.Color("245"),  // Light gray
+		SuccessBG: lipgloss.Color("22"),  // Dark green
+		SuccessFG: lipgloss.Color("46"),  // Light green
+		WarningBG: lipgloss.Color("136"), // Dark yellow
+		WarningFG: lipgloss.Color("226"), // Bright yellow
+		ErrorBG:   lipgloss.Color("52"),  // Dark red
+		ErrorFG:   lipgloss.Color("196"), // Bright red
+		InfoBG:    lipgloss.Color("17"),  // Dark blue
+		InfoFG:    lipgloss.Color("39"),  // Light blue
+		Border:    lipgloss.Color("238"), // Gray
+		DimmedFG:  lipgloss.Color("245"), // Light gray
 	}
 }
 
@@ -242,15 +243,15 @@ func (tm *ToastManager) renderToast(toast Toast) string {
 func (tm *ToastManager) getToastStyle(toastType ToastType) (string, lipgloss.Color, lipgloss.Color) {
 	switch toastType {
 	case ToastSuccess:
-		return "✓", tm.theme.SuccessBG, tm.theme.SuccessFG
+		return types.Icons.Success, tm.theme.SuccessBG, tm.theme.SuccessFG
 	case ToastWarning:
-		return "⚠", tm.theme.WarningBG, tm.theme.WarningFG
+		return types.Icons.Warning, tm.theme.WarningBG, tm.theme.WarningFG
 	case ToastError:
-		return "✗", tm.theme.ErrorBG, tm.theme.ErrorFG
+		return types.Icons.Error, tm.theme.ErrorBG, tm.theme.ErrorFG
 	case ToastInfo:
-		return "ℹ", tm.theme.InfoBG, tm.theme.InfoFG
+		return types.Icons.Info, tm.theme.InfoBG, tm.theme.InfoFG
 	default:
-		return "•", tm.theme.InfoBG, tm.theme.InfoFG
+		return types.Icons.Bullet, tm.theme.InfoBG, tm.theme.InfoFG
 	}
 }
 

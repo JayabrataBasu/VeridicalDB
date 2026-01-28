@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -81,24 +82,24 @@ func (s *Sidebar) View(width int) string {
 	b.WriteString("\n")
 
 	// Compact sections - single line each
-	b.WriteString(sectionStyle.Render("📋 Context"))
+	b.WriteString(sectionStyle.Render(types.Icons.Table + " Context"))
 	b.WriteString("\n")
 	b.WriteString(itemStyle.Render("Files: 0 │ Unsaved: 0"))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render("🔌 LSP"))
+	b.WriteString(sectionStyle.Render(types.Icons.Connected + " LSP"))
 	b.WriteString("\n")
 	b.WriteString(activeStyle.Render("● Go"))
 	b.WriteString(itemStyle.Render(" │ "))
 	b.WriteString(activeStyle.Render("● Nix"))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render("🤖 MCP"))
+	b.WriteString(sectionStyle.Render(types.Icons.Network + " MCP"))
 	b.WriteString("\n")
 	b.WriteString(inactiveStyle.Render("○ None"))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render("🗄️ Database"))
+	b.WriteString(sectionStyle.Render(types.Icons.Database + " Database"))
 	b.WriteString("\n")
 	b.WriteString(activeStyle.Render("● Connected"))
 	b.WriteString("\n")

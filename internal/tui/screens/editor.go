@@ -361,22 +361,22 @@ func (e *EditorScreen) View() string {
 	var statusStyle lipgloss.Style
 
 	if e.executing {
-		statusIcon = "⏳"
+		statusIcon = types.Icons.Pending
 		statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FFB86C")).
 			Bold(true)
 	} else if strings.HasPrefix(e.status, "Error") {
-		statusIcon = "✗"
+		statusIcon = types.Icons.Error
 		statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#FF5555")).
 			Bold(true)
 	} else if strings.Contains(e.status, "success") {
-		statusIcon = "✓"
+		statusIcon = types.Icons.Success
 		statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#50FA7B")).
 			Bold(true)
 	} else {
-		statusIcon = "●"
+		statusIcon = types.Icons.Running
 		statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#00D9FF"))
 	}

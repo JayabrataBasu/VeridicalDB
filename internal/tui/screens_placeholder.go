@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -47,15 +48,15 @@ func (p *PlaceholderScreen) View() string {
 
 	// Icon map for different screens
 	icons := map[string]string{
-		"User Management":  "👤",
-		"Backup & Restore": "💾",
-		"Settings":         "⚙️",
-		"About":            "ℹ️",
+		"User Management":  types.Icons.Users,
+		"Backup & Restore": types.Icons.Backup,
+		"Settings":         types.Icons.Settings,
+		"About":            types.Icons.About,
 	}
 
 	icon := icons[p.title]
 	if icon == "" {
-		icon = "📋"
+		icon = types.Icons.Table
 	}
 
 	// Premium header style matching other screens
@@ -86,7 +87,7 @@ func (p *PlaceholderScreen) View() string {
 	buf.WriteString("\n\n")
 
 	// Content box
-	content := comingSoonStyle.Render("🚧 Coming Soon") + "\n\n" +
+	content := comingSoonStyle.Render(types.Icons.Warning+" Coming Soon") + "\n\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("#888888")).Render("This feature is under development.")
 
 	buf.WriteString(contentStyle.Render(content))
