@@ -20,11 +20,12 @@ type Config struct {
 
 // ServerConfig holds server-related configuration
 type ServerConfig struct {
-	Port            int    `mapstructure:"port"`
-	Host            string `mapstructure:"host"`
-	MaxConnections  int    `mapstructure:"max_connections"`
-	ReadTimeoutSec  int    `mapstructure:"read_timeout_sec"`
-	WriteTimeoutSec int    `mapstructure:"write_timeout_sec"`
+	Port              int    `mapstructure:"port"`
+	Host              string `mapstructure:"host"`
+	MaxConnections    int    `mapstructure:"max_connections"`
+	ReadTimeoutSec    int    `mapstructure:"read_timeout_sec"`
+	WriteTimeoutSec   int    `mapstructure:"write_timeout_sec"`
+	ObservabilityPort int    `mapstructure:"observability_port"`
 }
 
 // StorageConfig holds storage engine configuration
@@ -71,11 +72,12 @@ type BackupConfig struct {
 func defaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port:            5433,
-			Host:            "localhost",
-			MaxConnections:  100,
-			ReadTimeoutSec:  30,
-			WriteTimeoutSec: 30,
+			Port:              5433,
+			Host:              "localhost",
+			MaxConnections:    100,
+			ReadTimeoutSec:    30,
+			WriteTimeoutSec:   30,
+			ObservabilityPort: 8081,
 		},
 		Storage: StorageConfig{
 			DataDir:       "./data",

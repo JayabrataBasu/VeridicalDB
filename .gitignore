@@ -46,6 +46,9 @@ TUI_INTEGRATION_INVESTIGATION.md
 TUI_INTEGRATION_FIX_SUMMARY.md
 TUI_SPRINT5_AUDIT_CRITICAL.md
 Fixes and grooves
+IMPLEMENTATION_PROGRESS.md
+OBSERVABILITY_TESTING.md
+server
 # Local config overrides and secrets
 config.yaml
 config.json

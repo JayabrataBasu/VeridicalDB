@@ -995,3 +995,14 @@ func (s *ShowProceduresStmt) statementNode() {}
 type ShowFunctionsStmt struct{}
 
 func (s *ShowFunctionsStmt) statementNode() {}
+
+// AnalyzeStmt represents ANALYZE [table] statement for statistics collection.
+// ANALYZE - analyzes all tables
+// ANALYZE tablename - analyzes specific table
+// ANALYZE tablename (col1, col2) - analyzes specific columns
+type AnalyzeStmt struct {
+	TableName string   // empty means all tables
+	Columns   []string // empty means all columns
+}
+
+func (s *AnalyzeStmt) statementNode() {}

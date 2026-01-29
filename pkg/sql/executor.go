@@ -75,6 +75,8 @@ func (e *Executor) Execute(stmt Statement) (*Result, error) {
 		return e.executeShow(s)
 	case *ExplainStmt:
 		return e.executeExplain(s)
+	case *AnalyzeStmt:
+		return e.executeAnalyze(s)
 	case *MergeStmt:
 		return e.executeMerge(s)
 	default:
@@ -5986,6 +5988,49 @@ func (e *Executor) executeExplain(stmt *ExplainStmt) (*Result, error) {
 	return &Result{
 		Columns: []string{"QUERY PLAN"},
 		Rows:    explanation,
+	}, nil
+}
+
+// executeAnalyze collects statistics for query optimization.
+// ANALYZE - analyzes all tables
+// ANALYZE tablename - analyzes specific table
+// ANALYZE tablename (col1, col2) - analyzes specific columns
+func (e *Executor) executeAnalyze(stmt *AnalyzeStmt) (*Result, error) {
+	// TODO: Integrate with StatsManager for full statistics collection
+	// Full implementation would include:
+	// - Row count
+	// - Distinct value counts per column
+	// - NULL counts per column
+	// - Most common values (MCVs) with frequencies
+	// - Histogram generation for range queries
+	// - Average column widths
+
+	var message string
+	if stmt.TableName == "" {
+		// Analyze all tables
+		tables := e.tm.ListTables()
+		message = fmt.Sprintf("ANALYZE - Statistics collection for %d tables. Full implementation pending.", len(tables))
+	} else {
+		// Verify table exists
+		_, err := e.tm.Catalog().GetTable(stmt.TableName)
+		if err != nil {
+			return nil, fmt.Errorf("table not found: %w", err)
+		}
+
+		if len(stmt.Columns) > 0 {
+			message = fmt.Sprintf("ANALYZE %s (%s) - Column-specific statistics collection pending.",
+				stmt.TableName, strings.Join(stmt.Columns, ", "))
+		} else {
+			message = fmt.Sprintf("ANALYZE %s - Table statistics collection pending. Will collect row counts, distinct values, histograms, etc.",
+				stmt.TableName)
+		}
+	}
+
+	return &Result{
+		Columns: []string{"ANALYZE"},
+		Rows: [][]catalog.Value{
+			{catalog.NewText(message)},
+		},
 	}, nil
 }
 

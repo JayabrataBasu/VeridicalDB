@@ -34,6 +34,9 @@ type ServerConfig struct {
 
 	// Host address to bind to
 	Host string `json:"host" yaml:"host"`
+
+	// ObservabilityPort for metrics and health endpoints
+	ObservabilityPort int `json:"observability_port" yaml:"observability_port"`
 }
 
 // PgWireConfig holds PostgreSQL wire protocol configuration.

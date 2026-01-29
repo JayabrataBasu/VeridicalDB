@@ -96,6 +96,8 @@ func (p *Parser) Parse() (Statement, error) {
 		return p.parseShow()
 	case TOKEN_EXPLAIN:
 		return p.parseExplain()
+	case TOKEN_ANALYZE:
+		return p.parseAnalyze()
 	case TOKEN_MERGE:
 		return p.parseMerge()
 	case TOKEN_PREPARE:
@@ -3701,6 +3703,51 @@ func (p *Parser) parseExplain() (Statement, error) {
 		Statement: stmt,
 		Analyze:   analyze,
 	}, nil
+}
+
+// parseAnalyze parses ANALYZE [table [(columns)]] statement.
+// ANALYZE - analyzes all tables
+// ANALYZE tablename - analyzes specific table
+// ANALYZE tablename (col1, col2) - analyzes specific columns
+func (p *Parser) parseAnalyze() (Statement, error) {
+	p.nextToken() // consume ANALYZE
+
+	stmt := &AnalyzeStmt{}
+
+	// Check if a table name is provided
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SEMICOLON) && !p.curTokenIs(TOKEN_EOF) {
+		tableName, err := p.parseIdentifier()
+		if err != nil {
+			return nil, fmt.Errorf("error parsing table name: %w", err)
+		}
+		stmt.TableName = tableName
+
+		// Check for column list: ANALYZE table (col1, col2)
+		if p.curTokenIs(TOKEN_LPAREN) {
+			p.nextToken() // consume '('
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
+				}
+				col, err := p.parseIdentifier()
+				if err != nil {
+					return nil, err
+				}
+				stmt.Columns = append(stmt.Columns, col)
+
+				if p.curTokenIs(TOKEN_COMMA) {
+					p.nextToken() // consume comma
+					continue
+				}
+				break
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ')' after column list: %w", err)
+			}
+		}
+	}
+
+	return stmt, nil
 }
 
 // parseCaseExpression parses CASE WHEN expressions.

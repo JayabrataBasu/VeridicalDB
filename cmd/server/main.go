@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
@@ -118,6 +120,64 @@ func main() {
 
 	// Initialize MVCCTableManager
 	mtm := catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
+
+	// Initialize SystemCatalog for observability
+	sysCatalog := observability.NewSystemCatalog(txnMgr, nil, tm.Catalog())
+
+	// Register observability HTTP endpoints (always available for monitoring)
+	// These run on a separate port to avoid conflicts with the main server
+	observabilityPort := 8081
+	if cfg.Server.ObservabilityPort > 0 {
+		observabilityPort = cfg.Server.ObservabilityPort
+	}
+
+	// Start observability HTTP server in a goroutine
+	go func() {
+		obsMux := http.NewServeMux()
+
+		// Prometheus metrics endpoint
+		obsMux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			metrics := sysCatalog.PrometheusMetrics()
+			_, _ = fmt.Fprint(w, metrics)
+		})
+
+		// Health check endpoint
+		obsMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			health := map[string]interface{}{
+				"status":    "healthy",
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+				"tables":    len(tm.ListTables()),
+				"version":   cli.Version,
+			}
+			_ = json.NewEncoder(w).Encode(health)
+		})
+
+		// Readiness probe (for Kubernetes)
+		obsMux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+		})
+
+		// Liveness probe (for Kubernetes)
+		obsMux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
+		})
+
+		// pprof endpoints for Go profiling
+		obsMux.HandleFunc("/debug/pprof/", pprof.Index)
+		obsMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		obsMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		obsMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		obsMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
+		logger.Info("Starting observability server", "port", observabilityPort)
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", observabilityPort), obsMux); err != nil {
+			logger.Error("Observability server failed", "error", err)
+		}
+	}()
 
 	// If UI is enabled, register API endpoints that can use the MTM to run read-only queries.
 	if *enableUI {

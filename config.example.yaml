@@ -6,6 +6,8 @@ server:
   port: 5432
   # Host address to bind to
   host: "127.0.0.1"
+  # Port for observability endpoints (metrics, health, pprof)
+  observability_port: 8081
 
 storage:
   # Directory where database files are stored

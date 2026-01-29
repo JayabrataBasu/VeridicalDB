@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"fmt"
 	"testing"
 	"time"
 )
@@ -114,11 +113,9 @@ func TestBufferPoolUnpin(t *testing.T) {
 func TestBufferPoolEviction(t *testing.T) {
 	bp := NewBufferPool(3, 4096) // Small pool for eviction testing
 
-	loader := func(id uint32) func() ([]byte, error) {
+	loader := func(_ uint32) func() ([]byte, error) {
 		return func() ([]byte, error) {
-			data := make([]byte, 4096)
-			copy(data, []byte(fmt.Sprintf("page-%d", id)))
-			return data, nil
+			return make([]byte, 4096), nil
 		}
 	}
 
