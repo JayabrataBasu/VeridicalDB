@@ -367,3 +367,49 @@ func tokyoNightTheme() *Theme {
 		TableHighlight: "#BB9AF7",
 	}
 }
+
+// cyberpunkTheme provides the Deep Space Neon cyberpunk color scheme.
+func cyberpunkTheme() *Theme {
+	return &Theme{
+		Name:        "cyberpunk",
+		Description: "Deep Space Neon - Radioactive gradients and living interfaces",
+
+		Foreground: "#e6edf3",
+		Background: "#0d1117",
+
+		Primary:   "#7dce13", // Radioactive green
+		Secondary: "#2a2139", // Deep purple
+		Accent:    "#00f2ff", // Electric blue
+		Muted:     "#6e7681",
+
+		Success: "#7dce13", // Radioactive green
+		Warning: "#f0b429",
+		Error:   "#ff5370",
+		Info:    "#00f2ff", // Electric blue
+
+		Border:        "#21262d",
+		BorderFocused: "#7dce13", // Radioactive green focus
+		Selection:     "#1c2938",
+		Highlight:     "#bd00ff", // Neon purple
+		LineNumber:    "#6e7681",
+		Cursor:        "#00f2ff",
+		CurrentLine:   "#161b22",
+		Comment:       "#8b949e",
+
+		Keyword:  "#ff79c6",
+		String:   "#7dce13",
+		Number:   "#bd00ff",
+		Function: "#00f2ff",
+		Operator: "#ff79c6",
+		Variable: "#e6edf3",
+		Type:     "#bd00ff",
+		Constant: "#00f2ff",
+
+		TableHeader:    "#7dce13",
+		TableBorder:    "#21262d",
+		TableRowEven:   "#0d1117",
+		TableRowOdd:    "#161b22",
+		TableSelected:  "#1c2938",
+		TableHighlight: "#00f2ff",
+	}
+}

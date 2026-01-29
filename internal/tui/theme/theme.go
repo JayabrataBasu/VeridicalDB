@@ -2,6 +2,10 @@
 package theme
 
 import (
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -76,6 +80,7 @@ func NewManager() *Manager {
 	m.RegisterTheme(solarizedLightTheme())
 	m.RegisterTheme(nordTheme())
 	m.RegisterTheme(tokyoNightTheme())
+	m.RegisterTheme(cyberpunkTheme())
 
 	// Set default theme
 	m.current = m.themes["dark"]
@@ -232,4 +237,65 @@ type StyleSet struct {
 	StatusBar     lipgloss.Style
 	Title         lipgloss.Style
 	Subtitle      lipgloss.Style
+}
+
+// DetectTrueColor checks if terminal supports 24-bit colors.
+func DetectTrueColor() bool {
+	colorterm := os.Getenv("COLORTERM")
+	return strings.Contains(colorterm, "truecolor") || strings.Contains(colorterm, "24bit")
+}
+
+// GradientText creates a horizontal gradient text effect.
+// For terminals without truecolor support, falls back to the start color.
+func GradientText(text, startColor, endColor string) string {
+	hasTrueColor := DetectTrueColor()
+
+	// If not truecolor, use solid start color
+	if !hasTrueColor {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(startColor)).Render(text)
+	}
+
+	// For truecolor terminals, create character-by-character gradient
+	if len(text) == 0 {
+		return text
+	}
+
+	runes := []rune(text)
+	length := len(runes)
+	if length == 1 {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(startColor)).Render(text)
+	}
+
+	// Parse hex colors
+	startR, startG, startB := hexToRGB(startColor)
+	endR, endG, endB := hexToRGB(endColor)
+
+	var result strings.Builder
+	for i, r := range runes {
+		// Calculate interpolation factor (0.0 to 1.0)
+		t := float64(i) / float64(length-1)
+
+		// Interpolate RGB values
+		red := int(float64(startR) + t*float64(endR-startR))
+		green := int(float64(startG) + t*float64(endG-startG))
+		blue := int(float64(startB) + t*float64(endB-startB))
+
+		// Create color string and render character
+		color := fmt.Sprintf("#%02x%02x%02x", red, green, blue)
+		result.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(string(r)))
+	}
+
+	return result.String()
+}
+
+// hexToRGB converts hex color string to RGB values.
+func hexToRGB(hex string) (int, int, int) {
+	hex = strings.TrimPrefix(hex, "#")
+
+	var r, g, b int
+	if len(hex) == 6 {
+		_, _ = fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
+	}
+
+	return r, g, b
 }

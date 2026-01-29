@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
@@ -27,6 +29,10 @@ type Dashboard struct {
 
 	// System catalog for real metrics
 	sysCatalog *observability.SystemCatalog
+
+	// Cyberpunk enhancements
+	heartbeat    components.HeartbeatModel
+	themeManager *theme.Manager
 }
 
 // SystemMetrics holds database system metrics.
@@ -72,6 +78,8 @@ func NewDashboard() *Dashboard {
 		updateInterval: 2 * time.Second,
 		lastUpdate:     time.Now(),
 		sysCatalog:     nil,
+		heartbeat:      components.NewHeartbeatModel(40, 10),
+		themeManager:   theme.NewManager(),
 	}
 }
 
@@ -83,6 +91,7 @@ func (d *Dashboard) SetSystemCatalog(sc *observability.SystemCatalog) {
 // Init initializes the dashboard.
 func (d *Dashboard) Init() tea.Cmd {
 	return tea.Batch(
+		d.heartbeat.Init(),
 		d.fetchMetrics(),
 		d.tickCmd(),
 	)
@@ -96,6 +105,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		d.width = msg.Width
 		d.height = msg.Height
+		d.heartbeat.SetSize(msg.Width/2-4, 12)
 		return d, nil
 
 	case tickMsg:
@@ -112,6 +122,16 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, nil
 	}
 
+	// Update heartbeat widget
+	var heartbeatCmd tea.Cmd
+	d.heartbeat, heartbeatCmd = d.heartbeat.Update(msg)
+	if heartbeatCmd != nil {
+		cmds = append(cmds, heartbeatCmd)
+	}
+
+	if len(cmds) > 0 {
+		return d, tea.Batch(cmds...)
+	}
 	return d, nil
 }
 
@@ -123,19 +143,28 @@ func (d *Dashboard) View() string {
 
 	var sections []string
 
-	// Premium header matching app style
+	// Cyberpunk gradient header
+	gradientTitle := theme.GradientText("▶ VERIDICALDB COMMAND CENTER", "#00f2ff", "#bd00ff")
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 3).
-		MarginBottom(2)
-	sections = append(sections, headerStyle.Render(types.Icons.Dashboard+"  System Dashboard"))
+		MarginBottom(1).
+		MarginTop(1)
+	sections = append(sections, headerStyle.Render(gradientTitle))
+	sections = append(sections, "")
+
+	// Top row: Heartbeat widget + Connection Status
+	row0 := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		d.heartbeat.View(),
+		strings.Repeat(" ", 2),
+		d.renderConnectionMetrics(),
+	)
+	sections = append(sections, row0)
 	sections = append(sections, "")
 
 	// Metrics grid (2 columns)
-	col1 := d.renderConnectionMetrics()
-	col2 := d.renderQueryMetrics()
+	col1 := d.renderQueryMetrics()
+	col2 := d.renderMemoryMetrics()
 
 	row1 := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -145,8 +174,8 @@ func (d *Dashboard) View() string {
 	)
 	sections = append(sections, row1)
 
-	col3 := d.renderMemoryMetrics()
-	col4 := d.renderTransactionMetrics()
+	col3 := d.renderTransactionMetrics()
+	col4 := d.renderDatabaseMetrics()
 
 	row2 := lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -156,22 +185,15 @@ func (d *Dashboard) View() string {
 	)
 	sections = append(sections, row2)
 
-	col5 := d.renderDatabaseMetrics()
-	col6 := d.renderSystemMetrics()
+	// System metrics row (single column centered)
+	systemMetrics := d.renderSystemMetrics()
+	sections = append(sections, systemMetrics)
 
-	row3 := lipgloss.JoinHorizontal(
-		lipgloss.Top,
-		col5,
-		strings.Repeat(" ", 4),
-		col6,
-	)
-	sections = append(sections, row3)
-
-	// Footer
+	// Cyberpunk footer with gradient timestamp
+	timestampGradient := theme.GradientText(d.lastUpdate.Format("15:04:05"), "#00f2ff", "#bd00ff")
 	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6B7280")).
-		Render(fmt.Sprintf("Last updated: %s | Press q to quit, r to refresh",
-			d.lastUpdate.Format("15:04:05")))
+		Foreground(lipgloss.Color("#6e7681")).
+		Render(fmt.Sprintf("Last updated: %s | Press q to quit, r to refresh", timestampGradient))
 	sections = append(sections, "\n"+footer)
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -180,14 +202,14 @@ func (d *Dashboard) View() string {
 func (d *Dashboard) renderConnectionMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
-		Width(40)
+		Width(d.width/2 - 4)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FFB86C")).
-		Render(types.Icons.Connections + " Connections")
+		Foreground(lipgloss.Color("#00f2ff")).
+		Render("⚡ Connection Status")
 
 	usage := float64(0)
 	if d.metrics.MaxConnections > 0 {
@@ -216,13 +238,13 @@ Usage:   %.1f%%
 func (d *Dashboard) renderQueryMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#50FA7B")).
+		Foreground(lipgloss.Color("#7dce13")).
 		Render(types.Icons.Performance + " Query Performance")
 
 	content := fmt.Sprintf(`%s
@@ -244,13 +266,13 @@ Slow Queries:    %d`,
 func (d *Dashboard) renderMemoryMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#BD93F9")).
+		Foreground(lipgloss.Color("#bd00ff")).
 		Render(types.Icons.Memory + " Memory")
 
 	usage := float64(0)
@@ -280,13 +302,13 @@ Usage:      %.1f%%
 func (d *Dashboard) renderTransactionMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#FF79C6")).
+		Foreground(lipgloss.Color("#ff79c6")).
 		Render(types.Icons.Transactions + " Transactions")
 
 	content := fmt.Sprintf(`%s
@@ -308,13 +330,13 @@ Success Rate: %.1f%%`,
 func (d *Dashboard) renderDatabaseMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#8BE9FD")).
+		Foreground(lipgloss.Color("#00f2ff")).
 		Render(types.Icons.Database + "  Database")
 
 	content := fmt.Sprintf(`%s
@@ -336,13 +358,13 @@ Data Size:   %s`,
 func (d *Dashboard) renderSystemMetrics() string {
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3A3A3A")).
+		BorderForeground(lipgloss.Color("#21262d")).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#F1FA8C")).
+		Foreground(lipgloss.Color("#f0b429")).
 		Render(types.Icons.Settings + "  System")
 
 	content := fmt.Sprintf(`%s
@@ -391,14 +413,14 @@ func renderProgressBar(percentage float64, width int) string {
 	emptyStr := strings.Repeat("-", empty)
 	bar := "[" + fillStr + emptyStr + "]"
 
-	// Color based on percentage
+	// Cyberpunk color scheme
 	style := lipgloss.NewStyle()
 	if percentage > 0.8 {
-		style = style.Foreground(lipgloss.Color("#FF5555")) // Red
+		style = style.Foreground(lipgloss.Color("#ff5370")) // Red
 	} else if percentage > 0.6 {
-		style = style.Foreground(lipgloss.Color("#FFAA00")) // Yellow
+		style = style.Foreground(lipgloss.Color("#f0b429")) // Yellow
 	} else {
-		style = style.Foreground(lipgloss.Color("#55FF55")) // Green
+		style = style.Foreground(lipgloss.Color("#7dce13")) // Radioactive green
 	}
 
 	return style.Render(bar)

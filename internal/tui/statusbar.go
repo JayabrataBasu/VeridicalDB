@@ -3,6 +3,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -90,88 +91,123 @@ func (s *StatusBar) SetInfo(info string) {
 	s.Info = info
 }
 
-// View renders the status bar.
+// View renders the status bar with Powerline styling.
 func (s *StatusBar) View() string {
-	t := s.themeManager.Current()
-	styles := t.Styles()
+	// Powerline arrow separators
+	powerlineRight := ""
+	powerlineRightThin := ""
 
-	// Mode indicator
-	modeStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Background)).
-		Background(lipgloss.Color(t.Primary)).
-		Padding(0, 1)
-
+	// Section 1: Mode (Green background for NORMAL, varies by mode)
+	var modeBg, modeNextBg string
 	switch s.Mode {
 	case ModeInsert:
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Success))
+		modeBg = "#7dce13" // Radioactive green
 	case ModeCommand:
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Warning))
+		modeBg = "#f0b429" // Yellow
 	case ModeSearch:
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Info))
+		modeBg = "#00f2ff" // Electric blue
+	default: // NORMAL
+		modeBg = "#7dce13" // Radioactive green
 	}
+	modeNextBg = "#2a2139" // Deep purple for next section
 
-	modeSection := modeStyle.Render(string(s.Mode))
-
-	// Database section
-	dbIcon := Icons.Connected
-	dbStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Success)).
+	modeStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#0d1117")). // Dark bg as fg
+		Background(lipgloss.Color(modeBg)).
 		Padding(0, 1)
+
+	modeSeparator := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(modeBg)).
+		Background(lipgloss.Color(modeNextBg)).
+		Render(powerlineRight)
+
+	modeSection := modeStyle.Render(string(s.Mode)) + modeSeparator
+
+	// Section 2: Context (Database + Context) - Gray background
+	contextBg := "#2a2139"     // Deep purple
+	contextNextBg := "#161b22" // Darker gray
+
+	dbIcon := Icons.Connected
 	if !s.Connected {
 		dbIcon = Icons.Disconnected
-		dbStyle = dbStyle.Foreground(lipgloss.Color(t.Error))
 	}
-	dbSection := dbStyle.Render(fmt.Sprintf("%s %s", dbIcon, s.DatabaseName))
 
-	// Latency section
-	latencyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		Padding(0, 1)
-	latencyText := "--"
-	if s.Latency > 0 {
-		if s.Latency < 100*time.Millisecond {
-			latencyStyle = latencyStyle.Foreground(lipgloss.Color(t.Success))
-		} else if s.Latency < 500*time.Millisecond {
-			latencyStyle = latencyStyle.Foreground(lipgloss.Color(t.Warning))
-		} else {
-			latencyStyle = latencyStyle.Foreground(lipgloss.Color(t.Error))
-		}
-		latencyText = fmt.Sprintf("%dms", s.Latency.Milliseconds())
-	}
-	latencySection := latencyStyle.Render(latencyText)
-
-	// Help section
-	helpStyle := styles.Muted
-	helpStyle = helpStyle.Padding(0, 1)
-	helpSection := helpStyle.Render("? Help")
-
-	// Separator
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Border)).
-		Render(" │ ")
-
-	// Left side
-	leftParts := []string{modeSection, sep, dbSection, sep, latencySection}
+	contextText := fmt.Sprintf("%s %s", dbIcon, s.DatabaseName)
 	if s.Context != "" {
-		ctxStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.Secondary)).
-			Padding(0, 1)
-		leftParts = append(leftParts, sep, ctxStyle.Render(s.Context))
+		contextText += " • " + s.Context
 	}
-	left := strings.Join(leftParts, "")
 
-	// Right side
+	contextStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#e6edf3")).
+		Background(lipgloss.Color(contextBg)).
+		Padding(0, 1)
+
+	contextSeparator := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(contextBg)).
+		Background(lipgloss.Color(contextNextBg)).
+		Render(powerlineRight)
+
+	contextSection := contextStyle.Render(contextText) + contextSeparator
+
+	// Section 3: Git Branch (if available)
+	gitBranch := s.getGitBranch()
+	var gitSection string
+	if gitBranch != "" {
+		gitBg := "#161b22"
+		gitStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7dce13")).
+			Background(lipgloss.Color(gitBg)).
+			Padding(0, 1)
+
+		gitSeparator := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(gitBg)).
+			Background(lipgloss.Color("#0d1117")). // Back to main bg
+			Render(powerlineRight)
+
+		gitSection = gitStyle.Render(" "+gitBranch) + gitSeparator
+	}
+
+	// Left side: mode + context + git
+	left := modeSection + contextSection + gitSection
+
+	// Right side: Latency + Info
+	var right string
 	rightParts := []string{}
+
+	// Latency indicator with gradient colors
+	if s.Latency > 0 {
+		latencyColor := "#7dce13" // Green
+		if s.Latency > 500*time.Millisecond {
+			latencyColor = "#ff5370" // Red
+		} else if s.Latency > 100*time.Millisecond {
+			latencyColor = "#f0b429" // Yellow
+		}
+
+		latencyStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color(latencyColor)).
+			Background(lipgloss.Color("#0d1117"))
+
+		rightParts = append(rightParts, latencyStyle.Render(fmt.Sprintf("⚡%dms", s.Latency.Milliseconds())))
+	}
+
+	// Info section
 	if s.Info != "" {
 		infoStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(t.Muted)).
-			Padding(0, 1)
+			Foreground(lipgloss.Color("#6e7681")).
+			Background(lipgloss.Color("#0d1117"))
 		rightParts = append(rightParts, infoStyle.Render(s.Info))
-		rightParts = append(rightParts, sep)
 	}
-	rightParts = append(rightParts, helpSection)
-	right := strings.Join(rightParts, "")
+
+	// Help indicator with gradient
+	helpStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00f2ff")).
+		Background(lipgloss.Color("#0d1117"))
+	rightParts = append(rightParts, helpStyle.Render("? Help"))
+
+	if len(rightParts) > 0 {
+		right = strings.Join(rightParts, powerlineRightThin)
+	}
 
 	// Calculate spacing
 	leftWidth := lipgloss.Width(left)
@@ -180,11 +216,14 @@ func (s *StatusBar) View() string {
 	if spacerWidth < 0 {
 		spacerWidth = 0
 	}
-	spacer := strings.Repeat(" ", spacerWidth)
+
+	spacerStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#0d1117"))
+	spacer := spacerStyle.Render(strings.Repeat(" ", spacerWidth))
 
 	// Background style for entire bar
 	barStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(t.Border)).
+		Background(lipgloss.Color("#0d1117")).
 		Width(s.width)
 
 	return barStyle.Render(left + spacer + right)
@@ -241,4 +280,18 @@ func (s *StatusBar) CompactView() string {
 	}
 
 	return barStyle.Render(left + sep + right + strings.Repeat(" ", spacerWidth))
+}
+
+// getGitBranch attempts to get the current git branch name.
+func (s *StatusBar) getGitBranch() string {
+	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	branch := strings.TrimSpace(string(output))
+	if branch == "" || branch == "HEAD" {
+		return ""
+	}
+	return branch
 }

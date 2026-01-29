@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -137,73 +138,89 @@ func (h *HomeScreen) getIcon(iconKey string) string {
 	}
 }
 
-// View renders the home screen with CLI-native styling.
+// View renders the home screen with cyberpunk glow styling.
 func (h *HomeScreen) View() string {
-	t := h.app.themeManager.Current()
 	var buf strings.Builder
 
-	// Header - clean and minimal
+	// Cyberpunk gradient header
+	gradientTitle := theme.GradientText("▶ VERIDICALDB", "#00f2ff", "#bd00ff")
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(t.Primary)).
-		MarginBottom(1)
+		MarginBottom(1).
+		MarginTop(1)
 
 	logoStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(t.Success))
+		Foreground(lipgloss.Color("#7dce13"))
 
-	// Title line
-	title := logoStyle.Render(Icons.Database) + " " + headerStyle.Render("VeridicalDB")
+	// Title line with gradient
+	title := logoStyle.Render(Icons.Database) + " " + headerStyle.Render(gradientTitle)
 	buf.WriteString(title)
 	buf.WriteString("\n")
 
-	// Separator
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(t.Border))
-	buf.WriteString(sepStyle.Render(strings.Repeat("─", 40)))
+	// Neon separator
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#21262d"))
+	buf.WriteString(sepStyle.Render(strings.Repeat("━", 40)))
 	buf.WriteString("\n\n")
 
-	// Menu items - list style with pipe indicator
-	activeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Primary)).
-		Bold(true)
+	// Menu items with cyberpunk glow effect
+	// Active item: thick left border + gradient background
+	// Create gradient background effect for active item (dark gray to black)
+	activeGlowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00f2ff")).
+		Background(lipgloss.Color("#1c2938")). // Subtle glow background
+		Bold(true).
+		Padding(0, 1)
 
 	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Foreground))
+		Foreground(lipgloss.Color("#6e7681"))
 
-	descStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted)).
-		MarginLeft(4)
-
-	pipeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Primary)).
+	// Thick border pipe for active selection
+	thickBorderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#00f2ff")). // Cyan glow
 		Bold(true)
+
+	normalBorderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#21262d"))
 
 	for i, item := range h.items {
 		icon := h.getIcon(item.Icon)
 
 		if i == h.menuIdx {
-			// Selected item with pipe indicator
-			line := pipeStyle.Render("│ ") + activeStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
+			// Selected item with thick border and glow
+			border := thickBorderStyle.Render("┃")
+			content := activeGlowStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
+			line := border + " " + content
 			buf.WriteString(line)
 			buf.WriteString("\n")
-			// Show description for selected item
-			buf.WriteString(descStyle.Render(item.Description))
+			// Show description for selected item with gradient
+			descGradient := theme.GradientText("  "+item.Description, "#6e7681", "#2a2139")
+			buf.WriteString(descGradient)
 			buf.WriteString("\n")
 		} else {
-			// Normal item (indented to align with selected)
-			line := "  " + inactiveStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
+			// Normal item with subtle border
+			border := normalBorderStyle.Render("│")
+			line := border + " " + inactiveStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
 			buf.WriteString(line)
 			buf.WriteString("\n")
 		}
 	}
 
-	// Footer with keybindings
+	// Footer with neon keybindings
 	buf.WriteString("\n")
 	footerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Muted))
+		Foreground(lipgloss.Color("#6e7681"))
 
-	keybindings := fmt.Sprintf("j/k Navigate  %s  Enter Select  %s  Ctrl+T Theme  %s  q Quit",
-		Icons.Separator, Icons.Separator, Icons.Separator)
+	// Add gradient accents to key indicators
+	keybindings := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Theme  %s  %s Quit",
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#7dce13")).Bold(true).Render("j/k"),
+		Icons.Separator,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#00f2ff")).Bold(true).Render("Enter"),
+		Icons.Separator,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#bd00ff")).Bold(true).Render("Ctrl+T"),
+		Icons.Separator,
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5370")).Bold(true).Render("q"),
+	)
 	buf.WriteString(footerStyle.Render(keybindings))
 
 	return buf.String()

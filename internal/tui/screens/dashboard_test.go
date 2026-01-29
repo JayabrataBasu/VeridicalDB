@@ -181,8 +181,8 @@ func TestSystemMetricsIntegration(t *testing.T) {
 	}
 
 	// Check that view contains metrics sections
-	if !contains(view, "Connections") {
-		t.Error("View should contain Connections section")
+	if !contains(view, "Connection Status") {
+		t.Error("View should contain Connection Status section")
 	}
 	if !contains(view, "Query Performance") {
 		t.Error("View should contain Query Performance section")
