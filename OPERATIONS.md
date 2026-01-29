@@ -48,6 +48,7 @@ pgwire:
 ### Client Connection Examples
 
 **psql with TLS:**
+
 ```bash
 # Basic TLS (server verification disabled)
 psql "host=localhost port=5432 user=myuser dbname=mydb sslmode=require"
@@ -63,6 +64,7 @@ psql "host=localhost port=5432 user=myuser dbname=mydb sslmode=verify-full \
 ```
 
 **Connection string SSL modes:**
+
 - `disable` - No SSL
 - `allow` - Try non-SSL, then SSL
 - `prefer` - Try SSL, then non-SSL (default for most clients)
@@ -75,7 +77,7 @@ psql "host=localhost port=5432 user=myuser dbname=mydb sslmode=verify-full \
 The `client_auth` setting controls client certificate requirements:
 
 | Value | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `none` | Don't request client certificate (default) |
 | `request` | Request client cert but don't require it |
 | `require` | Require client cert but don't verify against CA |
@@ -140,6 +142,7 @@ veridicaldb backup basebackup --output /backups/mydb_backup
 ```
 
 Notes:
+
 - Backups include a metadata file (`*.meta.json`) which records `start_lsn`, `end_lsn`, timestamps, file checksums and a backup ID.
 - Consider scheduling regular full backups (daily/weekly) and retaining them as per your retention policy.
 
@@ -148,22 +151,26 @@ Notes:
 WAL (Write-Ahead Log) archiving preserves transaction logs for PITR.
 
 Manual archiving:
+
 ```bash
 veridicaldb wal archive
 ```
 
 Automated/remote archiving:
+
 - Configure `backup.archive_command` in `veridicaldb.yaml` to call `aws s3 cp %p s3://bucket/wal/%f` or similar.
 - Ensure the archive command returns non-zero on failures so the archiver can retry/report.
 
 ### Restoring and PITR
 
 Basic restore:
+
 ```bash
 veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored
 ```
 
 PITR:
+
 ```bash
 veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored \
   --target-time "2026-01-06T15:30:00Z"
@@ -173,15 +180,18 @@ veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored \
 ```
 
 Restoring from remote archives:
+
 ```bash
 # Use a restore command to fetch missing WAL from remote storage (placeholders: %f filename, %p destination)
 veridicaldb restore /backups/backup_YYYYMMDD_HHMMSS.tar.gz /data/restored \
   --restore-command "aws s3 cp s3://my-bucket/wal/%f %p"
 ```
+
 - You can also set `backup.restore_command` in `veridicaldb.yaml` to avoid passing the flag.
 - Pair this with `backup.archive_command` (e.g., `aws s3 cp %p s3://bucket/wal/%f`) to enable remote WAL archiving.
 
 Operational tips:
+
 - Verify backups after creation: `veridicaldb backup verify /path/to/backup`
 - Ensure WAL archives are continuous and verified (missing segments block PITR beyond missing point)
 - Use retention policies to prune old backups and archived WAL segments to control storage costs
@@ -191,6 +201,7 @@ Operational tips:
 VeridicalDB provides automated retention management for backups and WAL archives.
 
 **Manual pruning:**
+
 ```bash
 # Dry run to see what would be deleted
 veridicaldb backup prune --dry-run
@@ -203,12 +214,14 @@ veridicaldb backup prune --keep-backups 3 --keep-days 7
 ```
 
 **Configuration-based retention:**
+
 ```yaml
 backup:
   retention_days: 30          # days to keep backups
 ```
 
 **Scheduling automated pruning:**
+
 - Use cron or systemd timers to run `veridicaldb backup prune` daily/weekly
 - Example cron entry: `0 3 * * * /usr/local/bin/veridicaldb backup prune --keep-backups 7 --keep-days 30`
 
@@ -217,6 +230,7 @@ backup:
 For production deployments, archive WAL segments and backups to remote storage.
 
 **Configure in `veridicaldb.yaml`:**
+
 ```yaml
 backup:
   archive_command: "aws s3 cp %p s3://my-bucket/wal/%f"
@@ -224,6 +238,7 @@ backup:
 ```
 
 **Using MinIO or S3-compatible storage:**
+
 ```yaml
 backup:
   archive_command: "aws s3 cp %p s3://my-bucket/wal/%f --endpoint-url http://minio:9000"
@@ -231,6 +246,7 @@ backup:
 ```
 
 **Built-in S3 archiver (programmatic use):**
+
 ```go
 import "github.com/JayabrataBasu/VeridicalDB/pkg/backup"
 
@@ -254,6 +270,7 @@ fmt.Println(archiver.GenerateRestoreCommand())
 VeridicalDB exposes backup metrics in Prometheus format for monitoring.
 
 **Key metrics:**
+
 - `veridicaldb_backup_last_timestamp_seconds` - Unix timestamp of last backup
 - `veridicaldb_backup_duration_seconds` - Duration of last backup
 - `veridicaldb_backup_size_bytes` - Size of last backup
@@ -263,6 +280,7 @@ VeridicalDB exposes backup metrics in Prometheus format for monitoring.
 - `veridicaldb_verify_success` - Last verification success (1=success, 0=failure)
 
 **Recommended alerts:**
+
 - Alert if `veridicaldb_backup_last_timestamp_seconds` is older than 25 hours (missed daily backup)
 - Alert if `veridicaldb_archive_lag_seconds` > 300 (archive falling behind)
 - Alert if `veridicaldb_backup_errors_total` increases
