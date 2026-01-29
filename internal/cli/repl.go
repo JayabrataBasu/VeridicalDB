@@ -13,8 +13,10 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 	"github.com/chzyer/readline"
 )
 
@@ -521,4 +523,134 @@ func newCompleter() *readline.PrefixCompleter {
 		readline.PcItem("\\help"),
 		readline.PcItem("\\q"),
 	)
+}
+
+// RunInteractive is a compatibility function that starts the REPL in interactive mode.
+// This function provides compatibility with the cmd/server main.go interface.
+func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger, dataDir string) error {
+	// Convert pkg/log.Logger to internal/logger.Logger for compatibility
+	internalLogger, err := logger.New("info", "text", "stdout")
+	if err != nil {
+		internalLogger = logger.NewNop()
+	}
+	
+	// Create a minimal config for the REPL
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			DataDir:  dataDir,
+			PageSize: 4096,
+		},
+	}
+	
+	// Create REPL instance
+	repl := &REPL{
+		config:  cfg,
+		log:     internalLogger,
+		tm:      tm,
+		catalog: tm.Catalog(),
+	}
+	
+	// Create executor and MVCC layer
+	repl.executor = sql.NewExecutor(tm)
+	repl.mtm = catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
+	repl.session = sql.NewSession(repl.mtm)
+	
+	// Wire optional components
+	if dbMgr, err := catalog.NewDatabaseManager(dataDir); err == nil {
+		repl.session.SetDatabaseManager(dbMgr)
+	}
+	
+	if uc, err := auth.NewUserCatalog(dataDir); err == nil {
+		repl.session.SetUserCatalog(uc)
+	}
+	
+	if idxMgr, err := btree.NewIndexManager(dataDir, 4096); err == nil {
+		repl.session.SetIndexManager(idxMgr)
+	}
+	
+	if tc, err := catalog.NewTriggerCatalog(dataDir); err == nil {
+		repl.session.SetTriggerCatalog(tc)
+	}
+	
+	if pc, err := catalog.NewProcedureCatalog(dataDir); err == nil {
+		repl.session.SetProcedureCatalog(pc)
+	}
+	
+	if ftsMgr, err := fts.NewManager(dataDir); err == nil {
+		repl.session.SetFTSManager(ftsMgr)
+	}
+	
+	// Configure readline
+	rlConfig := &readline.Config{
+		Prompt:          "veridicaldb> ",
+		HistoryFile:     getHistoryFile(),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "exit",
+		AutoComplete:    newCompleter(),
+	}
+	
+	rl, err := readline.NewEx(rlConfig)
+	if err != nil {
+		return fmt.Errorf("failed to initialize readline: %w", err)
+	}
+	defer func() { _ = rl.Close() }()
+	repl.rl = rl
+	
+	// Print welcome message
+	repl.printWelcome()
+	
+	// Main REPL loop
+	var multilineBuffer strings.Builder
+	inMultiline := false
+	
+	for {
+		// Update prompt for multiline input
+		if inMultiline {
+			rl.SetPrompt("         -> ")
+		} else {
+			rl.SetPrompt("veridicaldb> ")
+		}
+		
+		line, err := rl.Readline()
+		if err == readline.ErrInterrupt {
+			if inMultiline {
+				// Cancel multiline input
+				multilineBuffer.Reset()
+				inMultiline = false
+				fmt.Println("^C")
+				continue
+			}
+			continue
+		} else if err == io.EOF {
+			fmt.Println("\nGoodbye!")
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("readline error: %w", err)
+		}
+		
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		// Handle multiline input
+		multilineBuffer.WriteString(line)
+		fullInput := multilineBuffer.String()
+		
+		// Check if command is complete (ends with semicolon for SQL, immediate for backslash commands)
+		if strings.HasPrefix(fullInput, "\\") || strings.HasSuffix(fullInput, ";") {
+			// Process complete command
+			result := repl.processCommand(strings.TrimSuffix(fullInput, ";"))
+			if result == commandExit {
+				fmt.Println("Goodbye!")
+				return nil
+			}
+			multilineBuffer.Reset()
+			inMultiline = false
+		} else {
+			// Continue collecting multiline input
+			multilineBuffer.WriteString(" ")
+			inMultiline = true
+		}
+	}
 }

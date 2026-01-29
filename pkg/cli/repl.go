@@ -209,7 +209,7 @@ func (r *REPL) getPrompt() string {
 func (r *REPL) printWelcome() {
 	_, _ = fmt.Fprintf(r.out, `
 ╔═══════════════════════════════════════════════════════════╗
-║                      VeridicalDB v%s                     ║
+║                      VeridicalDB v%s                      ║
 ║          A Modern Database Built From Scratch             ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Type HELP; for available commands                        ║

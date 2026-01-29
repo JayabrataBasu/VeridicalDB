@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
