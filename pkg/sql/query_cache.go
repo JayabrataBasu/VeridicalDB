@@ -22,13 +22,13 @@ type QueryCache struct {
 
 // CacheEntry represents a cached query.
 type CacheEntry struct {
-	Key           string
-	ParsedAST     Statement // The parsed statement
-	PreparedPlan  interface{} // Optional: prepared execution plan
-	CreatedAt     time.Time
-	LastAccess    time.Time
-	AccessCount   uint64
-	lruElement    *list.Element
+	Key          string
+	ParsedAST    Statement   // The parsed statement
+	PreparedPlan interface{} // Optional: prepared execution plan
+	CreatedAt    time.Time
+	LastAccess   time.Time
+	AccessCount  uint64
+	lruElement   *list.Element
 }
 
 // NewQueryCache creates a new query cache with specified capacity.
@@ -46,10 +46,10 @@ func NewQueryCache(maxEntries int) *QueryCache {
 // Get retrieves a cached query by SQL string.
 func (qc *QueryCache) Get(sql string) (*CacheEntry, bool) {
 	qc.mu.RLock()
-	
+
 	// Normalize SQL for cache key (remove extra whitespace)
 	key := qc.normalizeSQL(sql)
-	
+
 	entry, exists := qc.cache[key]
 	if !exists {
 		qc.mu.RUnlock()
@@ -58,20 +58,20 @@ func (qc *QueryCache) Get(sql string) (*CacheEntry, bool) {
 		qc.mu.Unlock()
 		return nil, false
 	}
-	
+
 	qc.mu.RUnlock()
-	
+
 	// Update access statistics (requires write lock)
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	qc.hits++
 	entry.LastAccess = time.Now()
 	entry.AccessCount++
-	
+
 	// Move to front of LRU list
 	qc.lru.MoveToFront(entry.lruElement)
-	
+
 	return entry, true
 }
 
@@ -79,9 +79,9 @@ func (qc *QueryCache) Get(sql string) (*CacheEntry, bool) {
 func (qc *QueryCache) Put(sql string, stmt Statement) error {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	key := qc.normalizeSQL(sql)
-	
+
 	// Check if already exists (update)
 	if entry, exists := qc.cache[key]; exists {
 		entry.ParsedAST = stmt
@@ -89,12 +89,12 @@ func (qc *QueryCache) Put(sql string, stmt Statement) error {
 		qc.lru.MoveToFront(entry.lruElement)
 		return nil
 	}
-	
+
 	// Evict if at capacity
 	if len(qc.cache) >= qc.maxEntries {
 		qc.evictLRU()
 	}
-	
+
 	// Create new entry
 	entry := &CacheEntry{
 		Key:         key,
@@ -103,10 +103,10 @@ func (qc *QueryCache) Put(sql string, stmt Statement) error {
 		LastAccess:  time.Now(),
 		AccessCount: 0,
 	}
-	
+
 	entry.lruElement = qc.lru.PushFront(entry)
 	qc.cache[key] = entry
-	
+
 	return nil
 }
 
@@ -114,9 +114,9 @@ func (qc *QueryCache) Put(sql string, stmt Statement) error {
 func (qc *QueryCache) PutWithPlan(sql string, stmt Statement, plan interface{}) error {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	key := qc.normalizeSQL(sql)
-	
+
 	// Check if already exists
 	if entry, exists := qc.cache[key]; exists {
 		entry.ParsedAST = stmt
@@ -125,12 +125,12 @@ func (qc *QueryCache) PutWithPlan(sql string, stmt Statement, plan interface{}) 
 		qc.lru.MoveToFront(entry.lruElement)
 		return nil
 	}
-	
+
 	// Evict if at capacity
 	if len(qc.cache) >= qc.maxEntries {
 		qc.evictLRU()
 	}
-	
+
 	// Create new entry
 	entry := &CacheEntry{
 		Key:          key,
@@ -140,10 +140,10 @@ func (qc *QueryCache) PutWithPlan(sql string, stmt Statement, plan interface{}) 
 		LastAccess:   time.Now(),
 		AccessCount:  0,
 	}
-	
+
 	entry.lruElement = qc.lru.PushFront(entry)
 	qc.cache[key] = entry
-	
+
 	return nil
 }
 
@@ -151,7 +151,7 @@ func (qc *QueryCache) PutWithPlan(sql string, stmt Statement, plan interface{}) 
 func (qc *QueryCache) Invalidate(sql string) {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	key := qc.normalizeSQL(sql)
 	if entry, exists := qc.cache[key]; exists {
 		qc.lru.Remove(entry.lruElement)
@@ -164,7 +164,7 @@ func (qc *QueryCache) Invalidate(sql string) {
 func (qc *QueryCache) InvalidateTable(tableName string) {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	// Scan all entries and remove those referencing the table
 	// This is a simple implementation - could be optimized with table index
 	for key, entry := range qc.cache {
@@ -179,7 +179,7 @@ func (qc *QueryCache) InvalidateTable(tableName string) {
 func (qc *QueryCache) Clear() {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
-	
+
 	qc.cache = make(map[string]*CacheEntry)
 	qc.lru.Init()
 }
@@ -188,13 +188,13 @@ func (qc *QueryCache) Clear() {
 func (qc *QueryCache) Stats() QueryCacheStats {
 	qc.mu.RLock()
 	defer qc.mu.RUnlock()
-	
+
 	var hitRate float64
 	total := qc.hits + qc.misses
 	if total > 0 {
 		hitRate = float64(qc.hits) / float64(total) * 100
 	}
-	
+
 	return QueryCacheStats{
 		MaxEntries:     qc.maxEntries,
 		CurrentEntries: len(qc.cache),
@@ -212,7 +212,7 @@ func (qc *QueryCache) evictLRU() {
 	if elem == nil {
 		return
 	}
-	
+
 	entry := elem.Value.(*CacheEntry)
 	qc.lru.Remove(elem)
 	delete(qc.cache, entry.Key)

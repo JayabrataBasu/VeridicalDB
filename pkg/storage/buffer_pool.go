@@ -30,12 +30,12 @@ type BufferKey struct {
 
 // Frame represents a single page in the buffer pool.
 type Frame struct {
-	Key        BufferKey      // Page identifier
-	Data       []byte         // Page data
-	PinCount   int            // Number of active references
-	Dirty      bool           // Whether page has been modified
-	LastAccess time.Time      // Last access time for statistics
-	lruElement *list.Element  // Pointer to position in LRU list
+	Key        BufferKey     // Page identifier
+	Data       []byte        // Page data
+	PinCount   int           // Number of active references
+	Dirty      bool          // Whether page has been modified
+	LastAccess time.Time     // Last access time for statistics
+	lruElement *list.Element // Pointer to position in LRU list
 }
 
 // NewBufferPool creates a new buffer pool with specified capacity.
@@ -208,7 +208,7 @@ func (bp *BufferPool) evictLRUPage() error {
 	// Scan from back of LRU list (least recently used)
 	for elem := bp.lru.Back(); elem != nil; elem = elem.Prev() {
 		frame := elem.Value.(*Frame)
-		
+
 		// Can only evict unpinned pages
 		if frame.PinCount == 0 {
 			// If dirty, must flush first (requires external writer)
