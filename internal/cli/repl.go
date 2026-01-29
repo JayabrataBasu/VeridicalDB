@@ -533,7 +533,7 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 	if err != nil {
 		internalLogger = logger.NewNop()
 	}
-	
+
 	// Create a minimal config for the REPL
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
@@ -541,7 +541,7 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 			PageSize: 4096,
 		},
 	}
-	
+
 	// Create REPL instance
 	repl := &REPL{
 		config:  cfg,
@@ -549,37 +549,37 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 		tm:      tm,
 		catalog: tm.Catalog(),
 	}
-	
+
 	// Create executor and MVCC layer
 	repl.executor = sql.NewExecutor(tm)
 	repl.mtm = catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
 	repl.session = sql.NewSession(repl.mtm)
-	
+
 	// Wire optional components
 	if dbMgr, err := catalog.NewDatabaseManager(dataDir); err == nil {
 		repl.session.SetDatabaseManager(dbMgr)
 	}
-	
+
 	if uc, err := auth.NewUserCatalog(dataDir); err == nil {
 		repl.session.SetUserCatalog(uc)
 	}
-	
+
 	if idxMgr, err := btree.NewIndexManager(dataDir, 4096); err == nil {
 		repl.session.SetIndexManager(idxMgr)
 	}
-	
+
 	if tc, err := catalog.NewTriggerCatalog(dataDir); err == nil {
 		repl.session.SetTriggerCatalog(tc)
 	}
-	
+
 	if pc, err := catalog.NewProcedureCatalog(dataDir); err == nil {
 		repl.session.SetProcedureCatalog(pc)
 	}
-	
+
 	if ftsMgr, err := fts.NewManager(dataDir); err == nil {
 		repl.session.SetFTSManager(ftsMgr)
 	}
-	
+
 	// Configure readline
 	rlConfig := &readline.Config{
 		Prompt:          "veridicaldb> ",
@@ -588,21 +588,21 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 		EOFPrompt:       "exit",
 		AutoComplete:    newCompleter(),
 	}
-	
+
 	rl, err := readline.NewEx(rlConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize readline: %w", err)
 	}
 	defer func() { _ = rl.Close() }()
 	repl.rl = rl
-	
+
 	// Print welcome message
 	repl.printWelcome()
-	
+
 	// Main REPL loop
 	var multilineBuffer strings.Builder
 	inMultiline := false
-	
+
 	for {
 		// Update prompt for multiline input
 		if inMultiline {
@@ -610,7 +610,7 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 		} else {
 			rl.SetPrompt("veridicaldb> ")
 		}
-		
+
 		line, err := rl.Readline()
 		if err == readline.ErrInterrupt {
 			if inMultiline {
@@ -627,16 +627,16 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 		} else if err != nil {
 			return fmt.Errorf("readline error: %w", err)
 		}
-		
+
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		
+
 		// Handle multiline input
 		multilineBuffer.WriteString(line)
 		fullInput := multilineBuffer.String()
-		
+
 		// Check if command is complete (ends with semicolon for SQL, immediate for backslash commands)
 		if strings.HasPrefix(fullInput, "\\") || strings.HasSuffix(fullInput, ";") {
 			// Process complete command

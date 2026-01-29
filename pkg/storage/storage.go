@@ -11,15 +11,23 @@ import (
 
 // Storage is a simple table manager that uses one heap file per table.
 type Storage struct {
-	dataDir  string
-	pageSize int
-	wal      *wal.WAL
-	mu       sync.Mutex // Protects all storage operations
+	dataDir    string
+	pageSize   int
+	wal        *wal.WAL
+	mu         sync.Mutex // Protects all storage operations
+	bufferPool *BufferPool
 }
 
 // NewStorage creates a Storage rooted at dataDir using pageSize.
 func NewStorage(dataDir string, pageSize int, walLog *wal.WAL) *Storage {
-	return &Storage{dataDir: dataDir, pageSize: pageSize, wal: walLog}
+	// Initialize buffer pool with capacity for 1000 pages (~4MB with 4KB pages)
+	bp := NewBufferPool(1000, pageSize)
+	return &Storage{
+		dataDir:    dataDir,
+		pageSize:   pageSize,
+		wal:        walLog,
+		bufferPool: bp,
+	}
 }
 
 // CreateTable creates an empty table file (if not exists) and writes an initial page.
@@ -53,10 +61,18 @@ func (s *Storage) Insert(table string, data []byte) (RID, error) {
 	defer func() { _ = pager.Close() }()
 
 	// scan pages for free space; naive linear scan
-	pageBuf := make([]byte, s.pageSize)
 	var pageID uint32 = 0
 	for {
-		if err := pager.ReadPage(pageID, pageBuf); err != nil {
+		// Use buffer pool to fetch page
+		key := BufferKey{Table: table, PageID: pageID}
+		pageBuf, err := s.bufferPool.FetchPage(key, func() ([]byte, error) {
+			buf := make([]byte, s.pageSize)
+			if err := pager.ReadPage(pageID, buf); err != nil {
+				return nil, err
+			}
+			return buf, nil
+		})
+		if err != nil {
 			return RID{}, err
 		}
 		// if page uninitialized, init it
@@ -72,11 +88,18 @@ func (s *Storage) Insert(table string, data []byte) (RID, error) {
 
 		slot, err := insertTuple(pageBuf, data)
 		if err == nil {
-			if err := pager.WritePage(pageID, pageBuf); err != nil {
+			// Mark page as dirty and unpin
+			_ = s.bufferPool.UnpinPage(key, true)
+			// Flush dirty page to disk
+			if err := s.bufferPool.FlushPage(key, func(data []byte) error {
+				return pager.WritePage(pageID, data)
+			}); err != nil {
 				return RID{}, err
 			}
 			return RID{Table: table, Page: pageID, Slot: uint16(slot)}, nil
 		}
+		// Unpin page before trying next page
+		_ = s.bufferPool.UnpinPage(key, false)
 		// if no space, go to next page; check EOF by attempting to read next page
 		pageID++
 		// ensure file grows by writing new zeroed initialized page when we pass EOF
@@ -98,10 +121,21 @@ func (s *Storage) Fetch(rid RID) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = pager.Close() }()
-	pageBuf := make([]byte, s.pageSize)
-	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+
+	// Use buffer pool to fetch page
+	key := BufferKey{Table: rid.Table, PageID: rid.Page}
+	pageBuf, err := s.bufferPool.FetchPage(key, func() ([]byte, error) {
+		buf := make([]byte, s.pageSize)
+		if err := pager.ReadPage(rid.Page, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	})
+	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = s.bufferPool.UnpinPage(key, false) }()
+
 	return fetchTuple(pageBuf, int(rid.Slot))
 }
 
@@ -115,14 +149,30 @@ func (s *Storage) Delete(rid RID) error {
 		return err
 	}
 	defer func() { _ = pager.Close() }()
-	pageBuf := make([]byte, s.pageSize)
-	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+
+	// Use buffer pool to fetch and delete tuple
+	key := BufferKey{Table: rid.Table, PageID: rid.Page}
+	pageBuf, err := s.bufferPool.FetchPage(key, func() ([]byte, error) {
+		buf := make([]byte, s.pageSize)
+		if err := pager.ReadPage(rid.Page, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	})
+	if err != nil {
 		return err
 	}
+
 	if err := deleteTuple(pageBuf, int(rid.Slot)); err != nil {
+		_ = s.bufferPool.UnpinPage(key, false)
 		return err
 	}
-	return pager.WritePage(rid.Page, pageBuf)
+
+	// Mark dirty and flush
+	_ = s.bufferPool.UnpinPage(key, true)
+	return s.bufferPool.FlushPage(key, func(data []byte) error {
+		return pager.WritePage(rid.Page, data)
+	})
 }
 
 // Update updates a record in place. The new data must be the same size as the old.
@@ -136,14 +186,30 @@ func (s *Storage) Update(rid RID, data []byte) error {
 		return err
 	}
 	defer func() { _ = pager.Close() }()
-	pageBuf := make([]byte, s.pageSize)
-	if err := pager.ReadPage(rid.Page, pageBuf); err != nil {
+
+	// Use buffer pool to fetch and update page
+	key := BufferKey{Table: rid.Table, PageID: rid.Page}
+	pageBuf, err := s.bufferPool.FetchPage(key, func() ([]byte, error) {
+		buf := make([]byte, s.pageSize)
+		if err := pager.ReadPage(rid.Page, buf); err != nil {
+			return nil, err
+		}
+		return buf, nil
+	})
+	if err != nil {
 		return err
 	}
+
 	if err := updateTupleInPlace(pageBuf, int(rid.Slot), data); err != nil {
+		_ = s.bufferPool.UnpinPage(key, false)
 		return err
 	}
-	return pager.WritePage(rid.Page, pageBuf)
+
+	// Mark dirty and flush
+	_ = s.bufferPool.UnpinPage(key, true)
+	return s.bufferPool.FlushPage(key, func(data []byte) error {
+		return pager.WritePage(rid.Page, data)
+	})
 }
 
 func tableFileName(table string) string {

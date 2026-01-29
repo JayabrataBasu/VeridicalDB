@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
 
@@ -20,6 +21,8 @@ type Executor struct {
 	cteData         map[string]*Result  // CTE name -> result (for WITH clause)
 	views           map[string]*ViewDef // view name -> view definition
 	viewsMu         sync.RWMutex
+	queryCache      *QueryCache         // Query cache for prepared plans
+	statsManager    *stats.StatsManager // Statistics manager for cost-based optimization
 }
 
 // ViewDef stores a view definition.
@@ -35,6 +38,8 @@ func NewExecutor(tm *catalog.TableManager) *Executor {
 		tm:              tm,
 		autoIncCounters: make(map[string]int64),
 		views:           make(map[string]*ViewDef),
+		queryCache:      NewQueryCache(1000), // Cache up to 1000 queries
+		statsManager:    stats.NewStatsManager(),
 	}
 }
 
@@ -50,27 +55,62 @@ type Result struct {
 func (e *Executor) Execute(stmt Statement) (*Result, error) {
 	switch s := stmt.(type) {
 	case *CreateTableStmt:
-		return e.executeCreate(s)
+		// Invalidate cache for this table on CREATE
+		result, err := e.executeCreate(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *CreateViewStmt:
 		return e.executeCreateView(s)
 	case *DropTableStmt:
-		return e.executeDrop(s)
+		// Invalidate cache for this table on DROP
+		result, err := e.executeDrop(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *DropViewStmt:
 		return e.executeDropView(s)
 	case *InsertStmt:
-		return e.executeInsert(s)
+		// Invalidate cache for this table on INSERT
+		result, err := e.executeInsert(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *SelectStmt:
 		return e.executeSelect(s)
 	case *UnionStmt:
 		return e.executeUnion(s)
 	case *UpdateStmt:
-		return e.executeUpdate(s)
+		// Invalidate cache for this table on UPDATE
+		result, err := e.executeUpdate(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *DeleteStmt:
-		return e.executeDelete(s)
+		// Invalidate cache for this table on DELETE
+		result, err := e.executeDelete(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *AlterTableStmt:
-		return e.executeAlter(s)
+		// Invalidate cache for this table on ALTER
+		result, err := e.executeAlter(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *TruncateTableStmt:
-		return e.executeTruncate(s)
+		// Invalidate cache for this table on TRUNCATE
+		result, err := e.executeTruncate(s)
+		if err == nil && e.queryCache != nil {
+			e.queryCache.InvalidateTable(s.TableName)
+		}
+		return result, err
 	case *ShowStmt:
 		return e.executeShow(s)
 	case *ExplainStmt:
@@ -82,6 +122,37 @@ func (e *Executor) Execute(stmt Statement) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
+}
+
+// ExecuteSQL parses and executes a SQL string, using the query cache for SELECT statements.
+func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
+	// Parse the SQL
+	parser := NewParser(sql)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if it's a SELECT statement and try cache
+	if _, ok := stmt.(*SelectStmt); ok && e.queryCache != nil {
+		// Try to get from cache
+		if cached, found := e.queryCache.Get(sql); found {
+			// Execute the cached statement
+			if selectStmt, ok := cached.ParsedAST.(*SelectStmt); ok {
+				return e.executeSelect(selectStmt)
+			}
+		}
+
+		// Not in cache, execute and cache the statement
+		result, err := e.Execute(stmt)
+		if err == nil {
+			_ = e.queryCache.Put(sql, stmt) // Cache the AST
+		}
+		return result, err
+	}
+
+	// For non-SELECT statements, execute directly
+	return e.Execute(stmt)
 }
 
 func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
@@ -5996,35 +6067,75 @@ func (e *Executor) executeExplain(stmt *ExplainStmt) (*Result, error) {
 // ANALYZE tablename - analyzes specific table
 // ANALYZE tablename (col1, col2) - analyzes specific columns
 func (e *Executor) executeAnalyze(stmt *AnalyzeStmt) (*Result, error) {
-	// TODO: Integrate with StatsManager for full statistics collection
-	// Full implementation would include:
-	// - Row count
-	// - Distinct value counts per column
-	// - NULL counts per column
-	// - Most common values (MCVs) with frequencies
-	// - Histogram generation for range queries
-	// - Average column widths
-
-	var message string
 	if stmt.TableName == "" {
 		// Analyze all tables
 		tables := e.tm.ListTables()
-		message = fmt.Sprintf("ANALYZE - Statistics collection for %d tables. Full implementation pending.", len(tables))
-	} else {
-		// Verify table exists
-		_, err := e.tm.Catalog().GetTable(stmt.TableName)
-		if err != nil {
-			return nil, fmt.Errorf("table not found: %w", err)
+		analyzed := 0
+		var errors []string
+
+		for _, tableName := range tables {
+			if err := e.analyzeTable(tableName, nil); err != nil {
+				errors = append(errors, fmt.Sprintf("%s: %v", tableName, err))
+			} else {
+				analyzed++
+			}
 		}
 
-		if len(stmt.Columns) > 0 {
-			message = fmt.Sprintf("ANALYZE %s (%s) - Column-specific statistics collection pending.",
-				stmt.TableName, strings.Join(stmt.Columns, ", "))
-		} else {
-			message = fmt.Sprintf("ANALYZE %s - Table statistics collection pending. Will collect row counts, distinct values, histograms, etc.",
-				stmt.TableName)
+		message := fmt.Sprintf("ANALYZE completed for %d table(s)", analyzed)
+		if len(errors) > 0 {
+			message += fmt.Sprintf(" (%d failed)", len(errors))
 		}
+
+		return &Result{
+			Columns: []string{"ANALYZE"},
+			Rows: [][]catalog.Value{
+				{catalog.NewText(message)},
+			},
+		}, nil
 	}
+
+	// Verify table exists
+	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table not found: %w", err)
+	}
+
+	// Verify columns exist if specified
+	var columns []string
+	if len(stmt.Columns) > 0 {
+		for _, colName := range stmt.Columns {
+			found := false
+			for _, col := range meta.Schema.Columns {
+				if col.Name == colName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("column %s not found in table %s", colName, stmt.TableName)
+			}
+		}
+		columns = stmt.Columns
+	}
+
+	// Analyze the table
+	if err := e.analyzeTable(stmt.TableName, columns); err != nil {
+		return nil, err
+	}
+
+	// Get statistics summary
+	tableStats, err := e.statsManager.GetTableStats(stmt.TableName)
+	if err != nil || tableStats == nil {
+		return &Result{
+			Columns: []string{"ANALYZE"},
+			Rows: [][]catalog.Value{
+				{catalog.NewText(fmt.Sprintf("ANALYZE %s completed (no data)", stmt.TableName))},
+			},
+		}, nil
+	}
+
+	message := fmt.Sprintf("ANALYZE %s completed: %d rows, %d columns analyzed",
+		stmt.TableName, tableStats.RowCount, len(tableStats.Columns))
 
 	return &Result{
 		Columns: []string{"ANALYZE"},
@@ -6032,6 +6143,152 @@ func (e *Executor) executeAnalyze(stmt *AnalyzeStmt) (*Result, error) {
 			{catalog.NewText(message)},
 		},
 	}, nil
+}
+
+// analyzeTable collects statistics for a specific table.
+func (e *Executor) analyzeTable(tableName string, columns []string) error {
+	meta, err := e.tm.Catalog().GetTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	// Initialize column statistics trackers
+	type columnTracker struct {
+		nullCount    int64
+		distinctVals map[string]int64 // string representation -> count
+		values       []catalog.Value  // for histogram
+	}
+
+	trackers := make(map[string]*columnTracker)
+	for _, col := range meta.Schema.Columns {
+		// Skip if specific columns requested and this isn't one
+		if len(columns) > 0 {
+			found := false
+			for _, requested := range columns {
+				if requested == col.Name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
+		trackers[col.Name] = &columnTracker{
+			distinctVals: make(map[string]int64),
+			values:       make([]catalog.Value, 0, 1000), // Sample up to 1000 values
+		}
+	}
+
+	// Scan table and collect statistics
+	// Use a simple SELECT * to scan all rows
+	selectStmt := &SelectStmt{
+		TableName: tableName,
+		Columns:   []SelectColumn{{Name: "*"}},
+	}
+	result, err := e.executeSelect(selectStmt)
+	if err != nil {
+		return err
+	}
+
+	rowCount := int64(len(result.Rows))
+
+	// Track statistics for each row
+	for _, row := range result.Rows {
+		// Track statistics for each column
+		for i, col := range meta.Schema.Columns {
+			tracker, ok := trackers[col.Name]
+			if !ok {
+				continue
+			}
+
+			if i >= len(row) {
+				continue
+			}
+
+			val := row[i]
+
+			// Track NULL values
+			if val.IsNull {
+				tracker.nullCount++
+				continue
+			}
+
+			// Track distinct values
+			valStr := fmt.Sprintf("%v", val)
+			tracker.distinctVals[valStr]++
+
+			// Sample values for histogram (limit to 1000)
+			if len(tracker.values) < 1000 {
+				tracker.values = append(tracker.values, val)
+			}
+		}
+	}
+
+	// Build statistics objects
+	tableStats := &stats.TableStats{
+		TableName:    tableName,
+		RowCount:     rowCount,
+		LastAnalyzed: time.Now(),
+		Columns:      make(map[string]*stats.ColumnStats),
+	}
+
+	for colName, tracker := range trackers {
+		// Find column type
+		var colType catalog.DataType
+		for _, col := range meta.Schema.Columns {
+			if col.Name == colName {
+				colType = col.Type
+				break
+			}
+		}
+
+		// Find most common values (top 10)
+		type valFreq struct {
+			val   string
+			count int64
+		}
+		var freqs []valFreq
+		for val, count := range tracker.distinctVals {
+			freqs = append(freqs, valFreq{val, count})
+		}
+		sort.Slice(freqs, func(i, j int) bool {
+			return freqs[i].count > freqs[j].count
+		})
+
+		var mcvs []stats.Value
+		var mcvFreqs []float64
+		for i := 0; i < len(freqs) && i < 10; i++ {
+			mcvs = append(mcvs, stats.Value{
+				Type:      colType,
+				StringVal: freqs[i].val,
+			})
+			mcvFreqs = append(mcvFreqs, float64(freqs[i].count)/float64(rowCount))
+		}
+
+		// Build simple histogram (100 buckets by default)
+		histogram := stats.NewHistogram(100)
+
+		colStats := &stats.ColumnStats{
+			ColumnName:      colName,
+			DataType:        colType,
+			DistinctCount:   int64(len(tracker.distinctVals)),
+			NullCount:       tracker.nullCount,
+			MostCommonVals:  mcvs,
+			MostCommonFreqs: mcvFreqs,
+			Histogram:       histogram,
+		}
+
+		tableStats.Columns[colName] = colStats
+	}
+
+	// Store in stats manager
+	if err := e.statsManager.SetTableStats(tableStats); err != nil {
+		return fmt.Errorf("failed to store statistics: %w", err)
+	}
+
+	return nil
 }
 
 // evalCaseExpr evaluates a CASE WHEN expression.

@@ -5,6 +5,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 )
 
 // Planner provides simple rule-based query optimization.
@@ -20,12 +21,24 @@ import (
 // - Cost-based selection between multiple candidate indexes
 // - Join ordering
 type Planner struct {
-	idxMgr *btree.IndexManager
+	idxMgr   *btree.IndexManager
+	statsMgr *stats.StatsManager
+	useStats bool // Enable/disable cost-based optimization
 }
 
 // NewPlanner creates a new query planner.
 func NewPlanner(idxMgr *btree.IndexManager) *Planner {
-	return &Planner{idxMgr: idxMgr}
+	return &Planner{
+		idxMgr:   idxMgr,
+		statsMgr: stats.NewStatsManager(),
+		useStats: true, // Enable cost-based optimization by default
+	}
+}
+
+// SetStatsManager sets the statistics manager for cost-based optimization.
+func (p *Planner) SetStatsManager(mgr *stats.StatsManager) {
+	p.statsMgr = mgr
+	p.useStats = mgr != nil
 }
 
 // PlanType indicates the type of execution plan.
