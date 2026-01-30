@@ -50,6 +50,8 @@ IMPLEMENTATION_PROGRESS.md
 OBSERVABILITY_TESTING.md
 INTEGRATION_SUMMARY.md
 PYTHON_DRIVER_IMPLEMENTATION.md
+DEVELOPMENT.md
+PYTEST_IMPORT_FIX.md
 server
 # Local config overrides and secrets
 config.yaml
@@ -70,3 +72,75 @@ certs/
 # History / Shell state
 .history
 .github/prompts
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+PIPFILE.lock
+poetry.lock
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Python test coverage and testing
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+.tox/
+.nox/
+
+# IDE - Python specific
+.pylint.d/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+pyrightconfig.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Python language servers
+*.code-workspace
