@@ -10,7 +10,7 @@ echo ""
 
 # Build the CLI
 echo "[SETUP] Building CLI binary..."
-cd /home/jayabrata/VeridicalDB
+cd /home/jayabratabasu/VeridicalDB  #had to adjust this because I am on a new system.
 go build -o veridicaldb ./cmd/veridicaldb
 echo "[SETUP] Build complete."
 

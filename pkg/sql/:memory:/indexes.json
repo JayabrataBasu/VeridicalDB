@@ -1,0 +1,22 @@
+[
+  {
+    "name": "idx_users_age",
+    "table_name": "users",
+    "columns": [
+      "age"
+    ],
+    "unique": false,
+    "type": 0,
+    "root_page": 0
+  },
+  {
+    "name": "idx_age",
+    "table_name": "users",
+    "columns": [
+      "age"
+    ],
+    "unique": false,
+    "type": 0,
+    "root_page": 0
+  }
+]

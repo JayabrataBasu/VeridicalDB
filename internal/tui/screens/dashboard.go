@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Dashboard displays system metrics and statistics.
+// Dashboard displays system metrics and statistics. This needs to be better.
 type Dashboard struct {
 	width  int
 	height int
@@ -35,7 +35,7 @@ type Dashboard struct {
 	themeManager *theme.Manager
 }
 
-// SystemMetrics holds database system metrics.
+// SystemMetrics holds database system metrics. Practically useless if there is not a large user base but I built it cuz lolz
 type SystemMetrics struct {
 	// Connection stats
 	ActiveConnections int
