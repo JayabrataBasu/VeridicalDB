@@ -199,7 +199,7 @@ func TestBufferPoolFlush(t *testing.T) {
 func TestBufferPoolLRUOrdering(t *testing.T) {
 	bp := NewBufferPool(3, 4096)
 
-	loader := func(id uint32) func() ([]byte, error) {
+	loader := func(_ uint32) func() ([]byte, error) {
 		return func() ([]byte, error) {
 			return make([]byte, 4096), nil
 		}

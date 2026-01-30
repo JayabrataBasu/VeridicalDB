@@ -226,7 +226,7 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 }
 
 // estimateCostWithoutStats provides fallback cost estimation when statistics are unavailable.
-func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where Expression) {
+func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, _ *catalog.TableMeta, where Expression) {
 	// Rough estimates without statistics
 	assumedRowCount := int64(1000) // Assume 1K rows
 	assumedPageCount := int32(100) // Assume 100 pages
@@ -289,7 +289,7 @@ func (p *Planner) estimateSelectivity(where Expression, tableStats *stats.TableS
 }
 
 // estimateComparisonSelectivity estimates selectivity for comparison operators.
-func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *stats.TableStats, schema *catalog.Schema) float64 {
+func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *stats.TableStats, _ *catalog.Schema) float64 {
 	// Extract column and value from comparison
 	var colName string
 	var value *LiteralExpr
