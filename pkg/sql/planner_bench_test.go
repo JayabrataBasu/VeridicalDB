@@ -49,7 +49,7 @@ func BenchmarkPlanner_JoinOrdering(b *testing.B) {
 			},
 		},
 		Where: &BinaryExpr{
-			Op:    TOKEN_AND,
+			Op: TOKEN_AND,
 			Left: &BinaryExpr{
 				Op:    TOKEN_EQ,
 				Left:  &ColumnRef{Name: "users.status"},
@@ -124,7 +124,7 @@ func BenchmarkPlanner_SelectivityEstimation(b *testing.B) {
 	}
 
 	schema := &catalog.Schema{
-Columns: []catalog.Column{
+		Columns: []catalog.Column{
 			{Name: "id", Type: catalog.TypeInt32},
 			{Name: "age", Type: catalog.TypeInt32},
 			{Name: "status", Type: catalog.TypeText},

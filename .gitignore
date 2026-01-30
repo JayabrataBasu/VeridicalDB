@@ -49,6 +49,7 @@ Fixes and grooves
 IMPLEMENTATION_PROGRESS.md
 OBSERVABILITY_TESTING.md
 INTEGRATION_SUMMARY.md
+PYTHON_DRIVER_IMPLEMENTATION.md
 server
 # Local config overrides and secrets
 config.yaml

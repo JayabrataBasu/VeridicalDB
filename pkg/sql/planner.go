@@ -53,16 +53,16 @@ const (
 // Cost model constants for query planning.
 const (
 	// Page costs
-	TableScanCostPerPage = 1.0   // Cost per page for sequential scan
-	IndexScanCostPerPage = 0.75  // Cost per page for index scan (better cache locality)
-	IndexLookupCost      = 0.1   // Fixed cost per index lookup
+	TableScanCostPerPage = 1.0  // Cost per page for sequential scan
+	IndexScanCostPerPage = 0.75 // Cost per page for index scan (better cache locality)
+	IndexLookupCost      = 0.1  // Fixed cost per index lookup
 
 	// Row costs
-	RowProcessingCost    = 0.001 // Cost per row processed
-	ConditionEvalCost    = 0.001 // Cost per condition evaluation
+	RowProcessingCost = 0.001 // Cost per row processed
+	ConditionEvalCost = 0.001 // Cost per condition evaluation
 
 	// Cache assumptions
-	BufferHitRatio       = 0.9   // Assume 90% buffer pool hit ratio
+	BufferHitRatio         = 0.9  // Assume 90% buffer pool hit ratio
 	DiskPageCostMultiplier = 10.0 // Disk access 10x more expensive
 )
 
@@ -70,7 +70,7 @@ const (
 type ExecutionPlan struct {
 	Type      PlanType
 	TableName string
-	Cost      float64   // Estimated cost of this plan
+	Cost      float64 // Estimated cost of this plan
 
 	// For IndexScan plans
 	IndexName string
@@ -87,8 +87,8 @@ type ExecutionPlan struct {
 	RemainingWhere Expression
 
 	// Optimization metadata
-	EstimatedRows   int64   // Estimated number of rows returned
-	Selectivity     float64 // Selectivity of WHERE conditions
+	EstimatedRows int64   // Estimated number of rows returned
+	Selectivity   float64 // Selectivity of WHERE conditions
 }
 
 // Plan creates an execution plan for a SELECT statement using cost-based optimization.
@@ -193,34 +193,34 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 	case PlanTableScan:
 		// Cost = (pages_to_read * page_cost * cache_miss_factor) + (rows * row_processing_cost)
 		pageReadCost := float64(tableStats.PageCount) * TableScanCostPerPage
-		
+
 		// Apply cache factor
 		cacheAdjustedCost := pageReadCost * (BufferHitRatio + (1.0-BufferHitRatio)*DiskPageCostMultiplier)
-		
+
 		// Add row processing cost
 		rowProcessCost := float64(tableStats.RowCount) * RowProcessingCost
-		
+
 		// Add condition evaluation cost for filtered rows
 		conditionCost := float64(plan.EstimatedRows) * ConditionEvalCost
-		
+
 		plan.Cost = cacheAdjustedCost + rowProcessCost + conditionCost
 
 	case PlanIndexScan:
 		// Index scan cost = index_lookup + (filtered_pages * index_scan_cost) + (rows * row_processing_cost)
 		indexLookupCost := IndexLookupCost
-		
+
 		// Estimate pages needed for index scan (based on selectivity)
 		estimatedPages := int32(float64(tableStats.PageCount) * selectivity)
 		if estimatedPages < 1 {
 			estimatedPages = 1
 		}
-		
+
 		indexScanCost := float64(estimatedPages) * IndexScanCostPerPage
 		cacheAdjustedScanCost := indexScanCost * (BufferHitRatio + (1.0-BufferHitRatio)*DiskPageCostMultiplier)
-		
+
 		rowProcessCost := float64(plan.EstimatedRows) * RowProcessingCost
 		conditionCost := float64(plan.EstimatedRows) * ConditionEvalCost
-		
+
 		plan.Cost = indexLookupCost + cacheAdjustedScanCost + rowProcessCost + conditionCost
 	}
 }
@@ -228,9 +228,9 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 // estimateCostWithoutStats provides fallback cost estimation when statistics are unavailable.
 func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where Expression) {
 	// Rough estimates without statistics
-	assumedRowCount := int64(1000)  // Assume 1K rows
-	assumedPageCount := int32(100)  // Assume 100 pages
-	assumedSelectivity := 0.1       // Assume 10% selectivity for WHERE clauses
+	assumedRowCount := int64(1000) // Assume 1K rows
+	assumedPageCount := int32(100) // Assume 100 pages
+	assumedSelectivity := 0.1      // Assume 10% selectivity for WHERE clauses
 
 	if where == nil {
 		assumedSelectivity = 1.0
@@ -241,13 +241,13 @@ func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catal
 
 	switch plan.Type {
 	case PlanTableScan:
-		plan.Cost = float64(assumedPageCount) * TableScanCostPerPage + float64(assumedRowCount) * RowProcessingCost
+		plan.Cost = float64(assumedPageCount)*TableScanCostPerPage + float64(assumedRowCount)*RowProcessingCost
 	case PlanIndexScan:
 		estimatedPages := int32(float64(assumedPageCount) * assumedSelectivity)
 		if estimatedPages < 1 {
 			estimatedPages = 1
 		}
-		plan.Cost = IndexLookupCost + float64(estimatedPages) * IndexScanCostPerPage + float64(plan.EstimatedRows) * RowProcessingCost
+		plan.Cost = IndexLookupCost + float64(estimatedPages)*IndexScanCostPerPage + float64(plan.EstimatedRows)*RowProcessingCost
 	}
 }
 
@@ -329,7 +329,7 @@ func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *st
 
 	// Convert literal value to stats.Value
 	statsValue := convertLiteralToStatsValue(value)
-	
+
 	// Use column statistics to estimate selectivity
 	opStr := tokenToString(expr.Op)
 	return colStats.EstimateSelectivity(opStr, statsValue)
@@ -531,7 +531,7 @@ func (p *Planner) matchEqualityToIndex(tableName string, expr *BinaryExpr, _ *ca
 // PlanExplain generates a human-readable explanation of the execution plan.
 func (plan *ExecutionPlan) Explain() string {
 	costInfo := fmt.Sprintf(" (cost=%.2f, rows=%d, selectivity=%.2f)", plan.Cost, plan.EstimatedRows, plan.Selectivity)
-	
+
 	switch plan.Type {
 	case PlanTableScan:
 		return "TableScan on " + plan.TableName + costInfo

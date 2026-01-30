@@ -29,10 +29,10 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 
 	// Create index on age
 	ageIndex := &btree.IndexMeta{
-		Name:    "idx_users_age",
+		Name:      "idx_users_age",
 		TableName: "users",
-		Columns: []string{"age"},
-		Unique:  false,
+		Columns:   []string{"age"},
+		Unique:    false,
 	}
 	_ = idxMgr.CreateIndex(*ageIndex)
 
@@ -55,7 +55,7 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 	// Query with high selectivity: age = 25 (should prefer IndexScan)
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Where: &BinaryExpr{
 			Op:    TOKEN_EQ,
 			Left:  &ColumnRef{Name: "age"},
@@ -107,10 +107,10 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 
 	// Create index on age
 	ageIndex := &btree.IndexMeta{
-		Name:    "idx_users_age",
+		Name:      "idx_users_age",
 		TableName: "users",
-		Columns: []string{"age"},
-		Unique:  false,
+		Columns:   []string{"age"},
+		Unique:    false,
 	}
 	_ = idxMgr.CreateIndex(*ageIndex)
 
@@ -133,7 +133,7 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 	// Query with low selectivity: age > 10 (most rows match)
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Where: &BinaryExpr{
 			Op:    TOKEN_GT,
 			Left:  &ColumnRef{Name: "age"},
@@ -275,7 +275,7 @@ func TestPlanner_SelectivityEstimation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			selectivity := planner.estimateSelectivity(tt.expression, tableStats, schema)
-			
+
 			if selectivity < 0 || selectivity > 1 {
 				t.Errorf("Selectivity %f is out of valid range [0,1]", selectivity)
 			}
@@ -285,7 +285,7 @@ func TestPlanner_SelectivityEstimation(t *testing.T) {
 				diff = -diff
 			}
 			if diff > tt.tolerance {
-				t.Errorf("Expected selectivity %f, got %f (tolerance %f)", 
+				t.Errorf("Expected selectivity %f, got %f (tolerance %f)",
 					tt.expectedSelectivity, selectivity, tt.tolerance)
 			}
 
@@ -333,7 +333,7 @@ func TestPlanner_JoinOrderOptimization(t *testing.T) {
 	// Create a join query (basic test - full join optimization would be more complex)
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Joins: []JoinClause{
 			{
 				JoinType:  "INNER",
@@ -399,7 +399,7 @@ func TestPlanner_RuleBased_Fallback(t *testing.T) {
 	// Query with equality (should use index in rule-based mode)
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Where: &BinaryExpr{
 			Op:    TOKEN_EQ,
 			Left:  &ColumnRef{Name: "age"},
@@ -441,7 +441,7 @@ func TestPlanner_NoStats_Fallback(t *testing.T) {
 
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Where: &BinaryExpr{
 			Op:    TOKEN_EQ,
 			Left:  &ColumnRef{Name: "name"},
@@ -511,7 +511,7 @@ func TestPlanner_CostComparison(t *testing.T) {
 	// Highly selective query
 	stmt := &SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{{Star: true}},
+		Columns:   []SelectColumn{{Star: true}},
 		Where: &BinaryExpr{
 			Op:    TOKEN_EQ,
 			Left:  &ColumnRef{Name: "age"},
@@ -551,7 +551,7 @@ func TestPlanner_CostComparison(t *testing.T) {
 
 	// For a highly selective query on a large table, IndexScan should be cheaper
 	if indexScanPlan.Cost >= tableScanPlan.Cost {
-		t.Errorf("Expected IndexScan cost (%f) to be less than TableScan cost (%f)", 
+		t.Errorf("Expected IndexScan cost (%f) to be less than TableScan cost (%f)",
 			indexScanPlan.Cost, tableScanPlan.Cost)
 	}
 
