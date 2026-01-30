@@ -4,9 +4,13 @@
   "include": ["veridicaldb", "tests", "examples"],
   "venv": "venv",
   "reportMissingImports": false,
+  "reportMissingImportSource": false,
+  "reportMissingTypeStubs": false,
   "reportUntypedBaseClass": false,
   "reportUnusedImport": true,
   "reportGeneralTypeIssues": true,
   "reportPrivateImportUsage": false,
-  "reportUnusedVariable": false
+  "reportUnusedVariable": false,
+  "extraPaths": ["tests", "examples"],
+  "stubPath": "."
 }

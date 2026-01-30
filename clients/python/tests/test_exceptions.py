@@ -2,7 +2,12 @@
 Tests for VeridicalDB exceptions.
 """
 
-import pytest
+try:
+    import pytest # type: ignore
+except ImportError:
+    # pytest not installed, tests will be skipped
+    pytest = None
+
 from veridicaldb.exceptions import (
     Error,
     Warning,

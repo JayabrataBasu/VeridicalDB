@@ -17,6 +17,9 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/JayabrataBasu/VeridicalDB",
     packages=find_packages(),
+    package_data={
+        "veridicaldb": ["py.typed"],
+    },
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",

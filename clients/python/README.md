@@ -13,10 +13,37 @@ A Python client library for [VeridicalDB](https://github.com/JayabrataBasu/Verid
 
 ## Installation
 
+### User Installation
+
 ```bash
 cd clients/python
-pip install -e .
+pip install .
 ```
+
+### Development Installation
+
+For development, including test dependencies:
+
+```bash
+cd clients/python
+pip install -e ".[dev]"
+```
+
+This installs pytest and related testing tools required for running the test suite.
+
+### Resolving IDE Type Checking Issues
+
+If you see "Import 'pytest' could not be resolved" in your IDE:
+
+## Option 1: Install dev dependencies
+
+```bash
+pip install -e ".[dev]"
+```
+
+## Option 2: Configure your IDE**
+
+The repository includes a `pyrightconfig.json` which disables import resolution warnings for dev-only imports. The `py.typed` marker indicates the package supports type checking.
 
 ## Quick Start
 

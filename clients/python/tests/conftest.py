@@ -2,9 +2,14 @@
 Pytest configuration and fixtures for VeridicalDB tests.
 
 This module provides shared fixtures and configuration for all tests.
+
+Note: This module is only loaded when running tests with pytest. The pytest
+import warnings in Pylance are expected since pytest is a dev-only dependency.
+To suppress these warnings, install pytest in your development environment:
+    pip install pytest pytest-asyncio
 """
 
-import pytest
+import pytest  # noqa: F401 - Used by pytest plugin system
 from unittest.mock import Mock
 
 

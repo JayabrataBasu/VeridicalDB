@@ -2,7 +2,12 @@
 Tests for VeridicalDB connection pooling.
 """
 
-import pytest
+try:
+    import pytest # type: ignore
+except ImportError:
+    # pytest not installed, tests will be skipped
+    pytest = None
+
 import threading
 import time
 from veridicaldb.pool import ConnectionPool
