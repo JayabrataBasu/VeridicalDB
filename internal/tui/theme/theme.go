@@ -57,6 +57,24 @@ type Theme struct {
 	TableRowOdd    string
 	TableSelected  string
 	TableHighlight string
+
+	// Brand colors - Bold tech aesthetic with vibrant accents
+	// These provide consistent styling across all themes while allowing
+	// each theme to customize values for cohesion with its base palette.
+	BrandAccent    string // Primary vibrant accent (neon cyan family)
+	BrandHighlight string // Secondary vibrant accent (neon magenta family)
+	BrandSelection string // Strong contrast selection background
+	BrandFocus     string // Focus indicator border color
+	BrandSuccess   string // Vibrant success indicator
+	BrandWarning   string // Vibrant warning indicator
+	BrandDanger    string // Vibrant danger/error indicator
+	BrandMuted     string // Muted background for subtle elements
+	BrandGlow      string // Glow effect color for special emphasis
+	BrandGradientA string // Gradient start color
+	BrandGradientB string // Gradient end color
+
+	// Brand palette reference for accessing full palette utilities
+	brandPalette *BrandPalette
 }
 
 // Manager handles theme switching and management.
@@ -212,6 +230,78 @@ func (t *Theme) Styles() *StyleSet {
 		Subtitle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(t.Secondary)).
 			Italic(true),
+
+		// Brand styles - Bold tech aesthetic
+		BrandAccent: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandAccent)).
+			Bold(true),
+
+		BrandHighlight: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.BrandHighlight)).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Bold(true).
+			Padding(0, 1),
+
+		BrandFocus: lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(t.BrandFocus)).
+			Padding(0, 1),
+
+		BrandSelection: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.BrandSelection)).
+			Foreground(lipgloss.Color(t.BrandAccent)).
+			Bold(true),
+
+		BrandSuccess: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandSuccess)).
+			Bold(true),
+
+		BrandWarning: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandWarning)).
+			Bold(true),
+
+		BrandDanger: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandDanger)).
+			Bold(true),
+
+		BrandMuted: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandMuted)),
+
+		BrandGlow: lipgloss.NewStyle().
+			BorderStyle(lipgloss.DoubleBorder()).
+			BorderForeground(lipgloss.Color(t.BrandGlow)).
+			Padding(1, 2),
+
+		BrandCard: lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(t.BrandAccent)).
+			Padding(1, 2).
+			MarginBottom(1),
+
+		BrandActiveRow: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.BrandSelection)).
+			Foreground(lipgloss.Color(t.BrandAccent)).
+			Bold(true).
+			Padding(0, 1),
+
+		BrandInactiveRow: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.Foreground)).
+			Padding(0, 1),
+
+		BrandBadge: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.BrandAccent)).
+			Foreground(lipgloss.Color(t.Background)).
+			Bold(true).
+			Padding(0, 1),
+
+		BrandTag: lipgloss.NewStyle().
+			Background(lipgloss.Color(t.BrandMuted)).
+			Foreground(lipgloss.Color(t.Foreground)).
+			Padding(0, 1),
+
+		// Gradient colors
+		GradientStart: t.BrandGradientA,
+		GradientEnd:   t.BrandGradientB,
 	}
 }
 
@@ -237,6 +327,45 @@ type StyleSet struct {
 	StatusBar     lipgloss.Style
 	Title         lipgloss.Style
 	Subtitle      lipgloss.Style
+
+	// Brand styles - Bold tech aesthetic
+	BrandAccent      lipgloss.Style // Primary vibrant accent text
+	BrandHighlight   lipgloss.Style // Secondary vibrant accent text
+	BrandFocus       lipgloss.Style // Focus border style with glow effect
+	BrandSelection   lipgloss.Style // Strong contrast selection
+	BrandSuccess     lipgloss.Style // Vibrant success indicator
+	BrandWarning     lipgloss.Style // Vibrant warning indicator
+	BrandDanger      lipgloss.Style // Vibrant danger indicator
+	BrandMuted       lipgloss.Style // Muted/disabled style
+	BrandGlow        lipgloss.Style // Glow border effect for emphasis
+	BrandCard        lipgloss.Style // Card container with brand accent border
+	BrandActiveRow   lipgloss.Style // Active row in tables/lists
+	BrandInactiveRow lipgloss.Style // Inactive row style
+	BrandBadge       lipgloss.Style // Badge/pill style
+	BrandTag         lipgloss.Style // Tag style for labels
+
+	// Gradient colors for text effects
+	GradientStart string
+	GradientEnd   string
+}
+
+// BrandPalette returns the brand palette for this theme.
+func (t *Theme) BrandPalette() *BrandPalette {
+	if t.brandPalette != nil {
+		return t.brandPalette
+	}
+	// Return default palette if not set
+	return DefaultBrandPalette()
+}
+
+// SetBrandPalette sets the brand palette for this theme.
+func (t *Theme) SetBrandPalette(palette *BrandPalette) {
+	t.brandPalette = palette
+}
+
+// BrandStyles returns the BrandStyles helper for this theme.
+func (t *Theme) BrandStyles() *BrandStyles {
+	return NewBrandStyles(t.BrandPalette())
 }
 
 // DetectTrueColor checks if terminal supports 24-bit colors.

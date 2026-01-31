@@ -332,56 +332,75 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (e *EditorScreen) View() string {
 	var b strings.Builder
 
-	// Premium header with icon and rounded border
+	// Brand palette colors - bold tech aesthetic
+	brandAccent := "#00D9FF"    // Neon Cyan
+	brandHighlight := "#FF006E" // Neon Magenta
+	brandWarning := "#FFB86C"   // Accent Orange
+	brandSuccess := "#55FF55"   // Bright Green
+	brandMuted := "#44475A"     // Steel Gray
+	brandDark := "#0A0E27"      // Dark Charcoal
+	brandPurple := "#BD00FF"    // Neon Purple
+
+	// Premium header with Nerd Font icon and brand accent
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 3).
-		MarginBottom(2)
+		Foreground(lipgloss.Color(brandAccent)).
+		Padding(0, 2).
+		MarginBottom(1)
 
-	header := headerStyle.Render("🗂  SQL Editor")
+	header := headerStyle.Render(NerdIcons.Query + "  SQL Editor")
 	b.WriteString(header)
+	b.WriteString("\n")
+
+	// Breadcrumb navigation with brand muted styling
+	bcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandMuted))
+	bcActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandAccent)).Bold(true)
+	b.WriteString(bcStyle.Render(NerdIcons.Home+" Home › ") + bcActiveStyle.Render("Editor"))
 	b.WriteString("\n\n")
 
-	// Editor container with more padding and better border
+	// Editor container with rounded border and brand focus color
+	editorBorderColor := brandAccent // Brand accent
+	if e.executing {
+		editorBorderColor = brandWarning // Brand warning when executing
+	}
+
 	editorStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#00D9FF")).
+		BorderForeground(lipgloss.Color(editorBorderColor)).
 		Padding(1, 2).
-		MarginBottom(2)
+		MarginBottom(1)
 
 	// Render the textarea with syntax highlighting
 	editorContent := editorStyle.Render(e.textarea.View())
 	b.WriteString(editorContent)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	// Status bar with icon
+	// Status bar with Nerd Font icon
 	var statusIcon string
 	var statusStyle lipgloss.Style
 
 	if e.executing {
-		statusIcon = types.Icons.Pending
+		statusIcon = NerdIcons.Pending + " "
 		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFB86C")).
+			Foreground(lipgloss.Color(brandWarning)).
 			Bold(true)
 	} else if strings.HasPrefix(e.status, "Error") {
-		statusIcon = types.Icons.Error
+		statusIcon = NerdIcons.Error + " "
 		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FF5555")).
+			Foreground(lipgloss.Color(brandHighlight)).
 			Bold(true)
 	} else if strings.Contains(e.status, "success") {
-		statusIcon = types.Icons.Success
+		statusIcon = NerdIcons.Success + " "
 		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#50FA7B")).
+			Foreground(lipgloss.Color(brandSuccess)).
 			Bold(true)
 	} else {
-		statusIcon = types.Icons.Running
+		statusIcon = NerdIcons.Running + " "
 		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#00D9FF"))
+			Foreground(lipgloss.Color(brandAccent))
 	}
 
-	statusBar := statusStyle.Render(statusIcon + " " + e.status)
+	statusBar := statusStyle.Render(statusIcon + e.status)
 	b.WriteString(statusBar)
 	b.WriteString("\n\n")
 
@@ -391,7 +410,8 @@ func (e *EditorScreen) View() string {
 		if autocompleteView != "" {
 			popupStyle := lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("#FFB86C")).
+				BorderForeground(lipgloss.Color(brandPurple)).
+				Background(lipgloss.Color(brandDark)).
 				Padding(0, 1).
 				MarginLeft(2)
 			b.WriteString(popupStyle.Render(autocompleteView))
@@ -399,14 +419,23 @@ func (e *EditorScreen) View() string {
 		}
 	}
 
-	// Help bar with keyboard shortcuts - better spacing
+	// Help bar with keyboard shortcuts - brand muted styling
 	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6272A4")).
-		MarginTop(2).
+		Foreground(lipgloss.Color(brandMuted)).
+		MarginTop(1).
+		Padding(0, 1)
+
+	keyStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color(brandDark)).
+		Foreground(lipgloss.Color(brandAccent)).
+		Bold(true).
 		Padding(0, 1)
 
 	helpText := helpStyle.Render(
-		"F5/Ctrl+Enter Execute  │  Ctrl+D Duplicate  │  Ctrl+Space Autocomplete  │  Esc Back",
+		keyStyle.Render("F5") + " Execute  " +
+			keyStyle.Render("Ctrl+D") + " Duplicate  " +
+			keyStyle.Render("Ctrl+Space") + " Autocomplete  " +
+			keyStyle.Render("Esc") + " Back",
 	)
 	b.WriteString(helpText)
 

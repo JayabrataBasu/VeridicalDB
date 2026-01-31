@@ -2,7 +2,8 @@ package theme
 
 // darkTheme provides a dark color scheme.
 func darkTheme() *Theme {
-	return &Theme{
+	palette := DefaultBrandPalette()
+	t := &Theme{
 		Name:        "dark",
 		Description: "Default dark theme",
 
@@ -43,12 +44,28 @@ func darkTheme() *Theme {
 		TableRowOdd:    "#222222",
 		TableSelected:  "#264F78",
 		TableHighlight: "#00D9FF",
+
+		// Brand colors - Bold tech aesthetic
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.NeonCyan,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonCyan,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonMagenta,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // lightTheme provides a light color scheme.
 func lightTheme() *Theme {
-	return &Theme{
+	palette := LightBrandPalette()
+	t := &Theme{
 		Name:        "light",
 		Description: "Light theme with high contrast",
 
@@ -89,12 +106,28 @@ func lightTheme() *Theme {
 		TableRowOdd:    "#F6F8FA",
 		TableSelected:  "#C8E1FF",
 		TableHighlight: "#0366D6",
+
+		// Brand colors - Bold tech aesthetic (adjusted for light)
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: "#E1E4E8",
+		BrandFocus:     palette.NeonCyan,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonCyan,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonMagenta,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // draculaTheme provides the popular Dracula color scheme.
 func draculaTheme() *Theme {
-	return &Theme{
+	palette := DraculaBrandPalette()
+	t := &Theme{
 		Name:        "dracula",
 		Description: "Dracula theme - a dark theme for many editors",
 
@@ -135,12 +168,28 @@ func draculaTheme() *Theme {
 		TableRowOdd:    "#2D2F3D",
 		TableSelected:  "#44475A",
 		TableHighlight: "#FF79C6",
+
+		// Brand colors - Dracula-tuned vibrant accents
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.NeonPurple,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonPurple,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // monokaiTheme provides the popular Monokai color scheme.
 func monokaiTheme() *Theme {
-	return &Theme{
+	palette := MonokaiBrandPalette()
+	t := &Theme{
 		Name:        "monokai",
 		Description: "Monokai theme - sublime and vibrant",
 
@@ -181,12 +230,28 @@ func monokaiTheme() *Theme {
 		TableRowOdd:    "#2D2E22",
 		TableSelected:  "#49483E",
 		TableHighlight: "#FD971F",
+
+		// Brand colors - Monokai-tuned vibrant accents
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.NeonMagenta,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonMagenta,
+		BrandGradientA: palette.NeonMagenta,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // solarizedDarkTheme provides the Solarized Dark color scheme.
 func solarizedDarkTheme() *Theme {
-	return &Theme{
+	palette := SolarizedDarkBrandPalette()
+	t := &Theme{
 		Name:        "solarized-dark",
 		Description: "Solarized Dark - precision colors for machines and people",
 
@@ -227,12 +292,28 @@ func solarizedDarkTheme() *Theme {
 		TableRowOdd:    "#013340",
 		TableSelected:  "#073642",
 		TableHighlight: "#2AA198",
+
+		// Brand colors - Solarized Dark-tuned accents
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.ElectricBlue,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.ElectricBlue,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // solarizedLightTheme provides the Solarized Light color scheme.
 func solarizedLightTheme() *Theme {
-	return &Theme{
+	palette := SolarizedLightBrandPalette()
+	t := &Theme{
 		Name:        "solarized-light",
 		Description: "Solarized Light - precision colors for machines and people",
 
@@ -273,12 +354,28 @@ func solarizedLightTheme() *Theme {
 		TableRowOdd:    "#F5EDDA",
 		TableSelected:  "#EEE8D5",
 		TableHighlight: "#2AA198",
+
+		// Brand colors - Solarized Light-tuned accents
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.ElectricBlue,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.ElectricBlue,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // nordTheme provides the Nord color scheme.
 func nordTheme() *Theme {
-	return &Theme{
+	palette := NordBrandPalette()
+	t := &Theme{
 		Name:        "nord",
 		Description: "Nord - An arctic, north-bluish color palette",
 
@@ -319,12 +416,28 @@ func nordTheme() *Theme {
 		TableRowOdd:    "#313844",
 		TableSelected:  "#434C5E",
 		TableHighlight: "#81A1C1",
+
+		// Brand colors - Nord-tuned accents (arctic palette)
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.NeonCyan,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonCyan,
+		BrandGradientA: palette.NeonCyan,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // tokyoNightTheme provides the Tokyo Night color scheme.
 func tokyoNightTheme() *Theme {
-	return &Theme{
+	palette := TokyoNightBrandPalette()
+	t := &Theme{
 		Name:        "tokyo-night",
 		Description: "Tokyo Night - A clean, dark theme",
 
@@ -365,12 +478,28 @@ func tokyoNightTheme() *Theme {
 		TableRowOdd:    "#1F202E",
 		TableSelected:  "#283457",
 		TableHighlight: "#BB9AF7",
+
+		// Brand colors - Tokyo Night-tuned accents
+		BrandAccent:    palette.NeonCyan,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.ElectricBlue,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.ElectricBlue,
+		BrandGradientA: palette.ElectricBlue,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }
 
 // cyberpunkTheme provides the Deep Space Neon cyberpunk color scheme.
 func cyberpunkTheme() *Theme {
-	return &Theme{
+	palette := CyberpunkBrandPalette()
+	t := &Theme{
 		Name:        "cyberpunk",
 		Description: "Deep Space Neon - Radioactive gradients and living interfaces",
 
@@ -411,5 +540,20 @@ func cyberpunkTheme() *Theme {
 		TableRowOdd:    "#161b22",
 		TableSelected:  "#1c2938",
 		TableHighlight: "#00f2ff",
+
+		// Brand colors - Cyberpunk intensified neon accents
+		BrandAccent:    palette.ElectricBlue,
+		BrandHighlight: palette.NeonMagenta,
+		BrandSelection: palette.SteelGray,
+		BrandFocus:     palette.BrightGreen,
+		BrandSuccess:   palette.BrightGreen,
+		BrandWarning:   palette.AccentOrange,
+		BrandDanger:    palette.NeonMagenta,
+		BrandMuted:     palette.SteelGray,
+		BrandGlow:      palette.NeonPurple,
+		BrandGradientA: palette.ElectricBlue,
+		BrandGradientB: palette.NeonPurple,
 	}
+	t.SetBrandPalette(palette)
+	return t
 }

@@ -115,53 +115,66 @@ func (r *ResultsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (r *ResultsScreen) View() string {
 	var b strings.Builder
 
-	// Define premium styles with better spacing
+	// Brand palette colors - bold tech aesthetic
+	brandAccent := "#00D9FF"  // Neon Cyan
+	brandWarning := "#FFB86C" // Accent Orange
+	brandSuccess := "#55FF55" // Bright Green
+	brandMuted := "#44475A"   // Steel Gray
+	brandDark := "#0A0E27"    // Dark Charcoal
+	brandBorder := "#3a3a5c"  // Border color
+
+	// Premium header with Nerd Font icon
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Background(lipgloss.Color("#1a1a2e")).
-		Padding(0, 3).
-		MarginBottom(2)
+		Foreground(lipgloss.Color(brandAccent)).
+		Padding(0, 2).
+		MarginBottom(1)
 
 	containerStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3a3a5c")).
+		BorderForeground(lipgloss.Color(brandBorder)).
 		Padding(1, 2).
 		MarginTop(1).
 		MarginBottom(1)
 
 	statusStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#50FA7B")).
+		Foreground(lipgloss.Color(brandSuccess)).
 		Bold(true)
 
 	infoStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#888888"))
+		Foreground(lipgloss.Color(brandMuted))
 
 	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		MarginTop(2).
+		Foreground(lipgloss.Color(brandMuted)).
+		MarginTop(1).
 		Padding(0, 1)
 
-	// Header with icon
-	header := headerStyle.Render(types.Icons.Dashboard + "  Query Results")
+	// Header with Nerd Font icon
+	header := headerStyle.Render(NerdIcons.Table + "  Query Results")
 	b.WriteString(header)
+	b.WriteString("\n")
+
+	// Breadcrumb
+	bcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandMuted))
+	bcActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandAccent)).Bold(true)
+	b.WriteString(bcStyle.Render(NerdIcons.Home+" Home › "+NerdIcons.Query+" Editor › ") + bcActiveStyle.Render("Results"))
 	b.WriteString("\n\n")
 
 	// Display results
 	if r.result == nil {
-		emptyMsg := containerStyle.Render(infoStyle.Render("No results to display"))
+		emptyMsg := containerStyle.Render(infoStyle.Render(NerdIcons.Info + " No results to display"))
 		b.WriteString(emptyMsg)
 	} else if r.result.Message != "" {
 		// DDL/Command result (no rows)
-		successIcon := types.Icons.Success + " "
+		successIcon := NerdIcons.Success + " "
 		msg := statusStyle.Render(successIcon + r.result.Message)
 		b.WriteString(containerStyle.Render(msg))
 	} else if len(r.result.Rows) == 0 {
-		emptyMsg := containerStyle.Render(infoStyle.Render("Query returned no rows"))
+		emptyMsg := containerStyle.Render(infoStyle.Render(NerdIcons.Info + " Query returned no rows"))
 		b.WriteString(emptyMsg)
 	} else {
 		// Render table with premium styling
-		b.WriteString(r.renderPremiumTable())
+		b.WriteString(r.renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted))
 	}
 
 	b.WriteString("\n")
@@ -169,16 +182,17 @@ func (r *ResultsScreen) View() string {
 	// Pagination info with styling
 	if r.totalPages > 0 {
 		pageStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#00D9FF")).
+			Foreground(lipgloss.Color(brandAccent)).
 			Bold(true)
 
 		rowStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFB86C"))
+			Foreground(lipgloss.Color(brandWarning))
 
 		paginationInfo := fmt.Sprintf(
-			"%s Page %s | Rows %s",
-			types.Icons.File,
+			"%s Page %s │ %s Rows %s",
+			NerdIcons.File,
 			pageStyle.Render(fmt.Sprintf("%d/%d", r.page+1, r.totalPages)),
+			NerdIcons.Database,
 			rowStyle.Render(fmt.Sprintf("%d-%d of %d",
 				r.page*r.pageSize+1,
 				min(r.page*r.pageSize+r.pageSize, len(r.result.Rows)),
@@ -188,9 +202,18 @@ func (r *ResultsScreen) View() string {
 		b.WriteString("\n")
 	}
 
-	// Help text with key icons - better spacing
+	// Help bar with keyboard shortcuts - brand muted styling
+	keyStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color(brandDark)).
+		Foreground(lipgloss.Color(brandAccent)).
+		Bold(true)
+
 	helpText := helpStyle.Render(
-		"PgUp/PgDn Navigate  │  ←→ Scroll Columns  │  Home/End First/Last  │  Ctrl+E Export  │  Esc Back",
+		keyStyle.Render("PgUp/Dn") + " Navigate  " +
+			keyStyle.Render("←→") + " Scroll  " +
+			keyStyle.Render("Home/End") + " First/Last  " +
+			keyStyle.Render("Ctrl+E") + " Export  " +
+			keyStyle.Render("Esc") + " Back",
 	)
 	b.WriteString(helpText)
 
@@ -198,7 +221,7 @@ func (r *ResultsScreen) View() string {
 }
 
 // renderPremiumTable renders the result table with premium styling
-func (r *ResultsScreen) renderPremiumTable() string {
+func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted string) string {
 	if r.result == nil || len(r.result.Rows) == 0 {
 		return ""
 	}
@@ -238,11 +261,11 @@ func (r *ResultsScreen) renderPremiumTable() string {
 		}
 	}
 
-	// Define table styles
+	// Define table styles with brand colors
 	headerCellStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Background(lipgloss.Color("#1a1a2e")).
+		Foreground(lipgloss.Color(brandAccent)).
+		Background(lipgloss.Color(brandDark)).
 		Padding(0, 1)
 
 	cellStyle := lipgloss.NewStyle().
@@ -255,7 +278,7 @@ func (r *ResultsScreen) renderPremiumTable() string {
 		Padding(0, 1)
 
 	borderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#3a3a5c"))
+		Foreground(lipgloss.Color(brandBorder))
 
 	var b strings.Builder
 
