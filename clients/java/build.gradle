@@ -1,0 +1,65 @@
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group = 'com.veridicaldb'
+version = '0.1.0'
+sourceCompatibility = '11'
+targetCompatibility = '11'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // JUnit 5 for testing
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.9.3'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.9.3'
+    
+    // Mockito for testing
+    testImplementation 'org.mockito:mockito-core:5.3.1'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+    }
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'VeridicalDB JDBC Driver',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor': 'VeridicalDB'
+        )
+    }
+}
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            from components.java
+            
+            pom {
+                name = 'VeridicalDB JDBC Driver'
+                description = 'JDBC driver for VeridicalDB database'
+                url = 'https://github.com/JayabrataBasu/VeridicalDB'
+                
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://opensource.org/licenses/MIT'
+                    }
+                }
+            }
+        }
+    }
+}

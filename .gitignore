@@ -39,6 +39,8 @@ veridicaldb.toml
 *.temp
 
 # Local documentation and notes (personal/working files)
+errors.txt
+clients/java/IMPLEMENTATION_COMPLETE.md
 Roadmap.md
 roadmap.md
 Leftovers.md
@@ -144,3 +146,41 @@ ipython_config.py
 
 # Python language servers
 *.code-workspace
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+target/
+.gradle/
+build/
+.gradletasknamecache
+*.iml
+.classpath
+.project
+.settings/
+bin/
+
+# Clients/java build artifacts (explicit - large files / outputs)
+clients/java/target/
+clients/java/build/
+clients/java/.gradle/
+clients/java/*.jar
+clients/java/*.war
+clients/java/*.class
+clients/java/libs/
+clients/java/out/
+
+# Maven
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
