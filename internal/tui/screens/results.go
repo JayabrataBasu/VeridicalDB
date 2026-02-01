@@ -121,10 +121,8 @@ func (r *ResultsScreen) View() string {
 	brandWarning := "#FFB86C" // Accent Orange
 	brandSuccess := "#55FF55" // Bright Green
 	brandMuted := "#44475A"   // Steel Gray
-	brandDark := "#0A0E27"    // Dark Charcoal
-	brandBorder := "#3a3a5c"  // Border color
 	brandText := "#FFFFFF"    // Text color
-	brandAltRow := "#252530"  // Alternate row background
+	// Alternate row styling now uses muted text to avoid background blocks
 	if tp, ok := r.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
 			t := tm.Current()
@@ -132,10 +130,7 @@ func (r *ResultsScreen) View() string {
 			brandWarning = t.BrandWarning
 			brandSuccess = t.BrandSuccess
 			brandMuted = t.BrandMuted
-			brandDark = t.Background
-			brandBorder = t.Border
 			brandText = t.Foreground
-			brandAltRow = t.TableRowOdd
 		}
 	}
 
@@ -147,8 +142,6 @@ func (r *ResultsScreen) View() string {
 		MarginBottom(1)
 
 	containerStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandBorder)).
 		Padding(1, 2).
 		MarginTop(1).
 		MarginBottom(1)
@@ -190,7 +183,7 @@ func (r *ResultsScreen) View() string {
 		b.WriteString(emptyMsg)
 	} else {
 		// Render table with premium styling
-		b.WriteString(r.renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted, brandText, brandAltRow))
+		b.WriteString(r.renderPremiumTable(brandAccent, brandMuted, brandText))
 	}
 
 	b.WriteString("\n")
@@ -220,7 +213,6 @@ func (r *ResultsScreen) View() string {
 
 	// Help bar with keyboard shortcuts - brand muted styling
 	keyStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(brandDark)).
 		Foreground(lipgloss.Color(brandAccent)).
 		Bold(true)
 
@@ -237,7 +229,7 @@ func (r *ResultsScreen) View() string {
 }
 
 // renderPremiumTable renders the result table with premium styling
-func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted, brandText, brandAltRow string) string {
+func (r *ResultsScreen) renderPremiumTable(brandAccent, brandMuted, brandText string) string {
 	if r.result == nil || len(r.result.Rows) == 0 {
 		return ""
 	}
@@ -277,63 +269,45 @@ func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, 
 		}
 	}
 
-	// Define table styles with brand colors
+	// Define table styles with brand colors (no box borders)
 	headerCellStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(brandAccent)).
-		Background(lipgloss.Color(brandDark)).
-		Padding(0, 1)
+		Foreground(lipgloss.Color(brandAccent))
 
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandText)).
-		Padding(0, 1)
+		Foreground(lipgloss.Color(brandText))
 
 	altCellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandText)).
-		Background(lipgloss.Color(brandAltRow)).
-		Padding(0, 1)
+		Foreground(lipgloss.Color(brandMuted))
 
-	borderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandBorder))
+	sepStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(brandMuted))
 
 	var b strings.Builder
 
-	// Top border
-	topBorder := "╭"
-	for i, w := range colWidths {
-		topBorder += strings.Repeat("─", w+2)
-		if i < len(colWidths)-1 {
-			topBorder += "┬"
-		}
-	}
-	topBorder += "╮"
-	b.WriteString(borderStyle.Render(topBorder))
-	b.WriteString("\n")
-
 	// Header row
-	b.WriteString(borderStyle.Render("│"))
 	for i, col := range visibleCols {
+		if i > 0 {
+			b.WriteString("  ")
+		}
 		b.WriteString(headerCellStyle.Render(padRight(col, colWidths[i])))
-		b.WriteString(borderStyle.Render("│"))
 	}
 	b.WriteString("\n")
 
-	// Header separator
-	sepBorder := "├"
-	for i, w := range colWidths {
-		sepBorder += strings.Repeat("─", w+2)
-		if i < len(colWidths)-1 {
-			sepBorder += "┼"
-		}
+	// Soft header separator
+	totalWidth := 0
+	for _, w := range colWidths {
+		totalWidth += w
 	}
-	sepBorder += "┤"
-	b.WriteString(borderStyle.Render(sepBorder))
+	if len(colWidths) > 1 {
+		totalWidth += 2 * (len(colWidths) - 1)
+	}
+	b.WriteString(sepStyle.Render(strings.Repeat("─", totalWidth)))
 	b.WriteString("\n")
 
 	// Data rows with alternating colors
 	for rowIdx := startRow; rowIdx < endRow; rowIdx++ {
 		row := r.result.Rows[rowIdx]
-		b.WriteString(borderStyle.Render("│"))
 
 		style := cellStyle
 		if (rowIdx-startRow)%2 == 1 {
@@ -349,22 +323,13 @@ func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, 
 			if len(valStr) > colWidths[i] {
 				valStr = valStr[:colWidths[i]-3] + "..."
 			}
+			if i > 0 {
+				b.WriteString("  ")
+			}
 			b.WriteString(style.Render(padRight(valStr, colWidths[i])))
-			b.WriteString(borderStyle.Render("│"))
 		}
 		b.WriteString("\n")
 	}
-
-	// Bottom border
-	bottomBorder := "╰"
-	for i, w := range colWidths {
-		bottomBorder += strings.Repeat("─", w+2)
-		if i < len(colWidths)-1 {
-			bottomBorder += "┴"
-		}
-	}
-	bottomBorder += "╯"
-	b.WriteString(borderStyle.Render(bottomBorder))
 	b.WriteString("\n")
 
 	return b.String()

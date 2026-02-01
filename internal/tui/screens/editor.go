@@ -340,7 +340,6 @@ func (e *EditorScreen) View() string {
 	brandWarning := "#FFB86C"   // Accent Orange
 	brandSuccess := "#55FF55"   // Bright Green
 	brandMuted := "#44475A"     // Steel Gray
-	brandDark := "#0A0E27"      // Dark Charcoal
 	brandPurple := "#BD00FF"    // Neon Purple
 	if tp, ok := e.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
@@ -350,7 +349,6 @@ func (e *EditorScreen) View() string {
 			brandWarning = t.BrandWarning
 			brandSuccess = t.BrandSuccess
 			brandMuted = t.BrandMuted
-			brandDark = t.Background
 			brandPurple = t.BrandGradientB
 		}
 	}
@@ -367,20 +365,16 @@ func (e *EditorScreen) View() string {
 	b.WriteString("\n")
 
 	// Breadcrumb navigation with brand muted styling
-	bcStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandMuted))
-	bcActiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(brandAccent)).Bold(true)
+	bcStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(brandMuted))
+	bcActiveStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(brandAccent)).
+		Bold(true)
 	b.WriteString(bcStyle.Render(NerdIcons.Home+" Home › ") + bcActiveStyle.Render("Editor"))
 	b.WriteString("\n\n")
 
-	// Editor container with rounded border and brand focus color
-	editorBorderColor := brandAccent // Brand accent
-	if e.executing {
-		editorBorderColor = brandWarning // Brand warning when executing
-	}
-
+	// Editor container with soft spacing (no box borders)
 	editorStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(editorBorderColor)).
 		Padding(1, 2).
 		MarginBottom(1)
 
@@ -423,9 +417,7 @@ func (e *EditorScreen) View() string {
 		autocompleteView := e.autocomplete.RenderSuggestions()
 		if autocompleteView != "" {
 			popupStyle := lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color(brandPurple)).
-				Background(lipgloss.Color(brandDark)).
+				Foreground(lipgloss.Color(brandPurple)).
 				Padding(0, 1).
 				MarginLeft(2)
 			b.WriteString(popupStyle.Render(autocompleteView))
@@ -440,10 +432,8 @@ func (e *EditorScreen) View() string {
 		Padding(0, 1)
 
 	keyStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(brandDark)).
 		Foreground(lipgloss.Color(brandAccent)).
-		Bold(true).
-		Padding(0, 1)
+		Bold(true)
 
 	helpText := helpStyle.Render(
 		keyStyle.Render("F5") + " Execute  " +

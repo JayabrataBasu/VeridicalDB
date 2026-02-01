@@ -322,17 +322,14 @@ func (db *DatabaseBrowser) renderDatabasesPanel(width int) string {
 		Bold(true).
 		Foreground(lipgloss.Color(p.success))
 
-	separatorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(p.border))
-
 	title := titleStyle.Render(types.Icons.Database + " Databases")
 	if db.panelFocus == 0 {
-		title = activeTitleStyle.Render(types.Icons.Database + " Databases ●")
+		title = activeTitleStyle.Render(types.Icons.Database + " Databases")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
+	lines = append(lines, "")
 
 	panelHeight := 10
 	for i := db.scrollOffset[0]; i < len(db.databases) && i < db.scrollOffset[0]+panelHeight; i++ {
@@ -349,14 +346,8 @@ func (db *DatabaseBrowser) renderDatabasesPanel(width int) string {
 
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
 		Width(width).
 		Padding(0, 1)
-
-	if db.panelFocus == 0 {
-		style = style.BorderForeground(lipgloss.Color(p.accent))
-	}
 
 	return style.Render(content)
 }
@@ -373,17 +364,14 @@ func (db *DatabaseBrowser) renderTablesPanel(width int) string {
 		Bold(true).
 		Foreground(lipgloss.Color(p.success))
 
-	separatorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(p.border))
-
 	title := titleStyle.Render(types.Icons.Table + " Tables")
 	if db.panelFocus == 1 {
-		title = activeTitleStyle.Render(types.Icons.Table + " Tables ●")
+		title = activeTitleStyle.Render(types.Icons.Table + " Tables")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
+	lines = append(lines, "")
 
 	if len(db.databases) == 0 || db.selectedDBIdx >= len(db.databases) {
 		emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(p.subtle))
@@ -409,14 +397,8 @@ func (db *DatabaseBrowser) renderTablesPanel(width int) string {
 
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
 		Width(width).
 		Padding(0, 1)
-
-	if db.panelFocus == 1 {
-		style = style.BorderForeground(lipgloss.Color(p.accent))
-	}
 
 	return style.Render(content)
 }
@@ -433,17 +415,14 @@ func (db *DatabaseBrowser) renderColumnsPanel(width int) string {
 		Bold(true).
 		Foreground(lipgloss.Color(p.success))
 
-	separatorStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(p.border))
-
 	title := titleStyle.Render(types.Icons.Column + " Columns")
 	if db.panelFocus == 2 {
-		title = activeTitleStyle.Render(types.Icons.Column + " Columns ●")
+		title = activeTitleStyle.Render(types.Icons.Column + " Columns")
 	}
 
 	var lines []string
 	lines = append(lines, title)
-	lines = append(lines, separatorStyle.Render(strings.Repeat("─", width-2)))
+	lines = append(lines, "")
 
 	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(p.subtle))
 
@@ -478,14 +457,8 @@ func (db *DatabaseBrowser) renderColumnsPanel(width int) string {
 
 	content := strings.Join(lines, "\n")
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
 		Width(width).
 		Padding(0, 1)
-
-	if db.panelFocus == 2 {
-		style = style.BorderForeground(lipgloss.Color(p.accent))
-	}
 
 	return style.Render(content)
 }
@@ -521,7 +494,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 		tables := db.databases[db.selectedDBIdx].Tables
 		if db.selectedTblIdx < len(tables) {
 			table := tables[db.selectedTblIdx]
-			info.WriteString(labelStyle.Render("  │  " + types.Icons.Table + " Table: "))
+			info.WriteString(labelStyle.Render("  ·  " + types.Icons.Table + " Table: "))
 			info.WriteString(valueStyle.Render(table.Name))
 			info.WriteString(labelStyle.Render(fmt.Sprintf(" (%d rows, %s)",
 				table.RowCount,
@@ -534,7 +507,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 				if col.Nullable {
 					nullable = "NULL"
 				}
-				info.WriteString(labelStyle.Render("  │  " + types.Icons.Column + " Column: "))
+				info.WriteString(labelStyle.Render("  ·  " + types.Icons.Column + " Column: "))
 				info.WriteString(valueStyle.Render(col.Name))
 				info.WriteString(labelStyle.Render(fmt.Sprintf(" (%s, %s)", col.Type, nullable)))
 			}
@@ -543,7 +516,7 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 
 	// Help bar
 	info.WriteString("\n")
-	info.WriteString(helpStyle.Render("  ↑↓ Navigate  │  ←→/Tab Switch Panel  │  Home/End First/Last  │  q/Esc Back"))
+	info.WriteString(helpStyle.Render("  ↑↓ Navigate  ·  ←→/Tab Switch Panel  ·  Home/End First/Last  ·  q/Esc Back"))
 
 	return info.String()
 }
@@ -559,14 +532,13 @@ func (db *DatabaseBrowser) formatDatabaseLine(database Database, selected bool, 
 	p := db.palette()
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color(p.selectionBg)).
-			Foreground(lipgloss.Color(p.selectionFg)).
+			Foreground(lipgloss.Color(p.accent)).
 			Bold(true).
-			Render(line)
+			Render("› " + line)
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(p.text)).
-		Render(line)
+		Render("  " + line)
 }
 
 // formatTableLine formats a table line with selection highlight
@@ -584,14 +556,13 @@ func (db *DatabaseBrowser) formatTableLine(table Table, selected bool, width int
 	p := db.palette()
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color(p.selectionBg)).
-			Foreground(lipgloss.Color(p.selectionFg)).
+			Foreground(lipgloss.Color(p.accent)).
 			Bold(true).
-			Render(line)
+			Render("› " + line)
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(p.text)).
-		Render(line)
+		Render("  " + line)
 }
 
 // formatColumnLine formats a column line with selection highlight
@@ -618,14 +589,13 @@ func (db *DatabaseBrowser) formatColumnLine(column Column, selected bool, width 
 	p := db.palette()
 	if selected {
 		return lipgloss.NewStyle().
-			Background(lipgloss.Color(p.selectionBg)).
-			Foreground(lipgloss.Color(p.selectionFg)).
+			Foreground(lipgloss.Color(p.accent)).
 			Bold(true).
-			Render(line)
+			Render("› " + line)
 	}
 	return lipgloss.NewStyle().
 		Foreground(lipgloss.Color(p.text)).
-		Render(line)
+		Render("  " + line)
 }
 
 // moveUp moves selection up in the current panel

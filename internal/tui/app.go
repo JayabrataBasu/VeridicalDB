@@ -273,6 +273,7 @@ func (m *Model) View() string {
 	mainContentStyle := lipgloss.NewStyle().
 		Width(mainWidth).
 		Height(contentHeight).
+		Background(lipgloss.Color(t.Background)).
 		Padding(1, 2)
 
 	mainContent := mainContentStyle.Render(m.screen.View())
@@ -432,4 +433,9 @@ func convertValue(v catalog.Value) interface{} {
 	default:
 		return nil
 	}
+}
+
+// GetWidth returns the current terminal width
+func (m *Model) GetWidth() int {
+	return m.width
 }

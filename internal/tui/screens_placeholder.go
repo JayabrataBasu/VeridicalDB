@@ -62,15 +62,11 @@ func (p *PlaceholderScreen) View() string {
 	// Theme-aware styling
 	accent := "#00D9FF"
 	muted := "#666666"
-	background := "#1a1a2e"
-	border := "#3a3a5c"
 	warning := "#FFB86C"
 	if tm := p.app.GetThemeManager(); tm != nil {
 		t := tm.Current()
 		accent = t.BrandAccent
 		muted = t.Muted
-		background = t.BrandMuted
-		border = t.Border
 		warning = t.BrandWarning
 	}
 
@@ -78,15 +74,12 @@ func (p *PlaceholderScreen) View() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color(accent)).
-		Background(lipgloss.Color(background)).
-		Padding(0, 3).
-		MarginBottom(2)
+		Padding(0, 2).
+		MarginBottom(1)
 
 	contentStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(border)).
-		Padding(2, 4).
-		MarginTop(2)
+		Padding(1, 2).
+		MarginTop(1)
 
 	comingSoonStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(warning)).

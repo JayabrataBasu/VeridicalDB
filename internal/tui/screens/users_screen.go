@@ -117,13 +117,10 @@ func (u *UsersScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return u, nil
 }
 
-func (u *UsersScreen) palette() (accent, highlight, muted, border, selectionBg, selectionFg, text string) {
+func (u *UsersScreen) palette() (accent, highlight, muted, text string) {
 	accent = "#00D9FF"
 	highlight = "#FF006E"
 	muted = "#44475A"
-	border = "#3a3a5c"
-	selectionBg = "#1c2938"
-	selectionFg = "#FFFFFF"
 	text = "#FFFFFF"
 	if tp, ok := u.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
@@ -131,9 +128,6 @@ func (u *UsersScreen) palette() (accent, highlight, muted, border, selectionBg, 
 			accent = t.BrandAccent
 			highlight = t.BrandHighlight
 			muted = t.BrandMuted
-			border = t.Border
-			selectionBg = t.BrandSelection
-			selectionFg = t.Foreground
 			text = t.Foreground
 		}
 	}
@@ -159,7 +153,7 @@ func (u *UsersScreen) loadCmd() tea.Cmd {
 }
 
 func (u *UsersScreen) View() string {
-	accent, highlight, muted, border, selectionBg, selectionFg, text := u.palette()
+	accent, highlight, muted, text := u.palette()
 
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -168,8 +162,6 @@ func (u *UsersScreen) View() string {
 		MarginBottom(1)
 
 	containerStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(border)).
 		Padding(1, 2)
 
 	mutedStyle := lipgloss.NewStyle().
@@ -179,8 +171,7 @@ func (u *UsersScreen) View() string {
 		Foreground(lipgloss.Color(text))
 
 	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(selectionFg)).
-		Background(lipgloss.Color(selectionBg)).
+		Foreground(lipgloss.Color(accent)).
 		Bold(true)
 
 	var out strings.Builder

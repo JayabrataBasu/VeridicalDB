@@ -157,7 +157,6 @@ func (h *HomeScreen) View() string {
 	danger := "#ff5370"
 	muted := "#6e7681"
 	border := "#21262d"
-	activeBg := "#1c2938"
 	if tm := h.app.GetThemeManager(); tm != nil {
 		t := tm.Current()
 		accent = t.BrandGradientA
@@ -166,7 +165,6 @@ func (h *HomeScreen) View() string {
 		danger = t.BrandDanger
 		muted = t.Muted
 		border = t.Border
-		activeBg = t.BrandMuted
 	}
 
 	// Cyberpunk gradient header
@@ -185,26 +183,21 @@ func (h *HomeScreen) View() string {
 	buf.WriteString(title)
 	buf.WriteString("\n")
 
-	// Neon separator
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(border))
-	buf.WriteString(sepStyle.Render(strings.Repeat("━", 40)))
+	// Soft spacing instead of a hard separator
 	buf.WriteString("\n\n")
 
-	// Menu items with cyberpunk glow effect
-	// Active item: thick left border + gradient background
-	// Create gradient background effect for active item (dark gray to black)
+	// Menu items with a clean tech aesthetic (no background blocks)
 	activeGlowStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(accent)).
-		Background(lipgloss.Color(activeBg)). // Subtle glow background
 		Bold(true).
-		Padding(0, 1)
+		Underline(true)
 
 	inactiveStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color(muted))
 
-	// Thick border pipe for active selection
+	// Slim accent markers for selection
 	thickBorderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(accent)). // Cyan glow
+		Foreground(lipgloss.Color(accent)).
 		Bold(true)
 
 	normalBorderStyle := lipgloss.NewStyle().
@@ -215,7 +208,7 @@ func (h *HomeScreen) View() string {
 
 		if i == h.menuIdx {
 			// Selected item with thick border and glow
-			border := thickBorderStyle.Render("┃")
+			border := thickBorderStyle.Render("▍")
 			content := activeGlowStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
 			line := border + " " + content
 			buf.WriteString(line)
@@ -226,7 +219,7 @@ func (h *HomeScreen) View() string {
 			buf.WriteString("\n")
 		} else {
 			// Normal item with subtle border
-			border := normalBorderStyle.Render("│")
+			border := normalBorderStyle.Render("·")
 			line := border + " " + inactiveStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
 			buf.WriteString(line)
 			buf.WriteString("\n")

@@ -121,13 +121,10 @@ func (q *QueryHistoryScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 }
 
 // an awesoem nightmare
-func (q *QueryHistoryScreen) palette() (accent, highlight, muted, border, selectionBg, selectionFg, text string) {
+func (q *QueryHistoryScreen) palette() (accent, highlight, muted, text string) {
 	accent = "#00D9FF"
 	highlight = "#FF006E"
 	muted = "#44475A"
-	border = "#3a3a5c"
-	selectionBg = "#1c2938"
-	selectionFg = "#FFFFFF"
 	text = "#FFFFFF"
 	if tp, ok := q.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
@@ -135,9 +132,6 @@ func (q *QueryHistoryScreen) palette() (accent, highlight, muted, border, select
 			accent = t.BrandAccent
 			highlight = t.BrandHighlight
 			muted = t.BrandMuted
-			border = t.Border
-			selectionBg = t.BrandSelection
-			selectionFg = t.Foreground
 			text = t.Foreground
 		}
 	}
@@ -164,7 +158,7 @@ func (q *QueryHistoryScreen) loadCmd() tea.Cmd {
 
 // View renders the query history screen.
 func (q *QueryHistoryScreen) View() string {
-	accent, highlight, muted, border, selectionBg, selectionFg, text := q.palette()
+	accent, highlight, muted, text := q.palette()
 
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -173,8 +167,6 @@ func (q *QueryHistoryScreen) View() string {
 		MarginBottom(1)
 
 	containerStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(border)).
 		Padding(1, 2)
 
 	mutedStyle := lipgloss.NewStyle().
@@ -184,8 +176,7 @@ func (q *QueryHistoryScreen) View() string {
 		Foreground(lipgloss.Color(text))
 
 	selectedStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(selectionFg)).
-		Background(lipgloss.Color(selectionBg)).
+		Foreground(lipgloss.Color(accent)).
 		Bold(true)
 
 	// Header

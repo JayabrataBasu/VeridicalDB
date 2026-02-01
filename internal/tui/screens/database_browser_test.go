@@ -193,23 +193,16 @@ func TestDatabaseBrowserViewFocusIndicators(t *testing.T) {
 		{Name: "db1", Tables: []Table{}},
 	})
 
-	// Test each panel focus - updated to match new premium styling format
-	tests := []struct {
-		panelFocus int
-		indicator  string
-	}{
-		{0, "Databases ●"},
-		{1, "Tables ●"},
-		{2, "Columns ●"},
+	// Titles should be present without heavy focus markers
+	view := browser.View()
+	if !strings.Contains(view, "Databases") {
+		t.Errorf("expected 'Databases' in view")
 	}
-
-	for _, test := range tests {
-		browser.panelFocus = test.panelFocus
-		view := browser.View()
-
-		if !strings.Contains(view, test.indicator) {
-			t.Errorf("panelFocus %d: expected '%s' in view", test.panelFocus, test.indicator)
-		}
+	if !strings.Contains(view, "Tables") {
+		t.Errorf("expected 'Tables' in view")
+	}
+	if !strings.Contains(view, "Columns") {
+		t.Errorf("expected 'Columns' in view")
 	}
 }
 

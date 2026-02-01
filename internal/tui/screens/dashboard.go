@@ -248,9 +248,7 @@ func (d *Dashboard) View() string {
 func (d *Dashboard) renderConnectionMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(d.width/2 - 4)
 
 	title := lipgloss.NewStyle().
@@ -285,9 +283,7 @@ Usage:   %.1f%%
 func (d *Dashboard) renderQueryMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(40)
 
 	title := lipgloss.NewStyle().
@@ -314,9 +310,7 @@ Slow Queries:    %d`,
 func (d *Dashboard) renderMemoryMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(40)
 
 	title := lipgloss.NewStyle().
@@ -351,9 +345,7 @@ Usage:      %.1f%%
 func (d *Dashboard) renderTransactionMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(40)
 
 	title := lipgloss.NewStyle().
@@ -380,9 +372,7 @@ Success Rate: %.1f%%`,
 func (d *Dashboard) renderDatabaseMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(40)
 
 	title := lipgloss.NewStyle().
@@ -409,9 +399,7 @@ Data Size:   %s`,
 func (d *Dashboard) renderSystemMetrics() string {
 	p := d.palette()
 	style := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(p.border)).
-		Padding(1, 2).
+		Padding(0, 1).
 		Width(40)
 
 	title := lipgloss.NewStyle().
@@ -461,9 +449,9 @@ func (d *Dashboard) renderProgressBar(percentage float64, width int) string {
 		empty = 0
 	}
 
-	fillStr := strings.Repeat("=", filled)
-	emptyStr := strings.Repeat("-", empty)
-	bar := "[" + fillStr + emptyStr + "]"
+	fillStr := strings.Repeat("▮", filled)
+	emptyStr := strings.Repeat("▯", empty)
+	bar := fillStr + emptyStr
 
 	p := d.palette()
 	style := lipgloss.NewStyle()
