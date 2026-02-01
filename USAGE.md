@@ -17,19 +17,24 @@ Download the right file for your system and follow the steps below.
 ## 🐧 Linux (Mint, Ubuntu, etc.)
 
 ### Step 1: Extract
+
 Open Terminal and run:
+
 ```bash
 tar -xzf veridicaldb-linux.tar.gz
 cd veridicaldb
 ```
 
 ### Step 2: Initialize (first time only)
+
 ```bash
 ./veridicaldb init
 ```
+
 This creates a `data` folder and config file.
 
 ### Step 3: Run
+
 ```bash
 ./veridicaldb
 ```
@@ -37,7 +42,9 @@ This creates a `data` folder and config file.
 That's it! You should see the VeridicalDB banner and prompt.
 
 ### Troubleshooting
+
 If you get "Permission denied":
+
 ```bash
 chmod +x veridicaldb
 ./veridicaldb
@@ -48,21 +55,27 @@ chmod +x veridicaldb
 ## 🪟 Windows
 
 ### Step 1: Extract
+
 1. Right-click `veridicaldb-windows.zip`
 2. Click **"Extract All..."**
 3. Choose a location (e.g., Desktop)
 4. Click **Extract**
 
 ### Step 2: Initialize (first time only)
+
 Open PowerShell or Command Prompt:
+
 ```powershell
 cd C:\Users\YourName\Desktop\veridicaldb
 .\veridicaldb.exe init
 ```
+
 This creates a `data` folder and config file.
 
 ### Step 3: Run
+
 **Option A - Command line:**
+
 ```powershell
 .\veridicaldb.exe
 ```
@@ -73,6 +86,7 @@ After running `init` once, you can double-click `veridicaldb.exe` to start.
 ### Troubleshooting
 
 **"Windows protected your PC" warning:**
+
 1. Click **"More info"**
 2. Click **"Run anyway"**
 
@@ -90,19 +104,24 @@ Make sure you're in the correct folder. Use `dir` to list files.
 ## 🍎 Mac (Apple Silicon - M1/M2/M3)
 
 ### Step 1: Extract
+
 Open Terminal and run:
+
 ```bash
 tar -xzf veridicaldb-mac-silicon.tar.gz
 cd veridicaldb
 ```
 
 ### Step 2: Initialize (first time only)
+
 ```bash
 ./veridicaldb init
 ```
+
 This creates a `data` folder and config file.
 
 ### Step 3: Run
+
 ```bash
 ./veridicaldb
 ```
@@ -110,12 +129,14 @@ This creates a `data` folder and config file.
 ### Troubleshooting
 
 **"cannot be opened because the developer cannot be verified":**
+
 ```bash
 xattr -d com.apple.quarantine veridicaldb
 ./veridicaldb
 ```
 
 **Permission denied:**
+
 ```bash
 chmod +x veridicaldb
 ./veridicaldb
@@ -128,12 +149,14 @@ chmod +x veridicaldb
 Check that your download wasn't corrupted:
 
 **Linux/Mac:**
+
 ```bash
 sha256sum veridicaldb-linux.tar.gz
 # Compare with the hash in SHA256SUMS file
 ```
 
 **Windows (PowerShell):**
+
 ```powershell
 Get-FileHash veridicaldb-windows.zip -Algorithm SHA256
 ```
@@ -174,6 +197,7 @@ For advanced usage (TLS configuration, backups & PITR, WAL archiving, restore pr
 veridicaldb restore /backups/backup_20260106_120000.tar.gz /data/restored \
   --target-time "2026-01-06T15:30:00Z" \
   --archive-dir /wal_archive
+
 ```
 
 ### Backup Strategy Recommendations
@@ -233,14 +257,17 @@ Each backup includes a metadata file (`*.meta.json`) containing:
 ### Troubleshooting
 
 **"Target directory is not empty"**
+
 - The restore target must be empty or non-existent
 - Remove existing files or choose a different directory
 
 **"No archived WAL segments found"**
+
 - Ensure WAL archiving is enabled and running
 - Check the archive directory path in configuration
 
 **"Checksum mismatch"**
+
 - Backup may be corrupted during transfer
 - Re-download or re-copy the backup file
 
@@ -249,7 +276,7 @@ Each backup includes a metadata file (`*.meta.json`) containing:
 ## ❓ Getting Help
 
 - Type `\help` in the VeridicalDB prompt for available commands
-- Report issues: https://github.com/JayabrataBasu/VeridicalDB/issues
+- Report issues: <https://github.com/JayabrataBasu/VeridicalDB/issues>
 
 ---
 

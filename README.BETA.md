@@ -26,6 +26,7 @@ docker run -p 5432:5432 -v $(pwd)/data:/data veridicaldb:<version>
 ```
 
 Notes for testers
+
 - The binary is a standalone Go executable — no Go toolchain required.
 - Data is written to the directory provided via `--data-dir` (create it and ensure write permissions).
 - Check `SHA256SUMS` to verify the downloaded artifact.
