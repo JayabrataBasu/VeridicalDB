@@ -4,12 +4,12 @@ import (
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/syntax"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // just a few of the available ones
@@ -334,7 +334,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (e *EditorScreen) View() string {
 	var b strings.Builder
 
-	// Brand palette colors - bold tech aesthetic (theme-aware with fallbacks). looks nice, don't ask me i don't have opinnions
+	// Brand palette colors - theme-aware with fallbacks
 	brandAccent := "#00D9FF"    // Neon Cyan
 	brandHighlight := "#FF006E" // Neon Magenta
 	brandWarning := "#FFB86C"   // Accent Orange
@@ -353,62 +353,40 @@ func (e *EditorScreen) View() string {
 		}
 	}
 
-	// Premium header with Nerd Font icon and brand accent
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(brandAccent)).
-		Padding(0, 2).
-		MarginBottom(1)
-
-	header := headerStyle.Render(NerdIcons.Query + "  SQL Editor")
+	// Header with ANSI - no lipgloss blocks
+	header := styles.FromHexBold(NerdIcons.Query+"  SQL Editor", brandAccent)
 	b.WriteString(header)
 	b.WriteString("\n")
 
-	// Breadcrumb navigation with brand muted styling
-	bcStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandMuted))
-	bcActiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandAccent)).
-		Bold(true)
-	b.WriteString(bcStyle.Render(NerdIcons.Home+" Home › ") + bcActiveStyle.Render("Editor"))
+	// Breadcrumb navigation
+	bc := styles.FromHex(NerdIcons.Home+" Home › ", brandMuted) + styles.FromHexBold("Editor", brandAccent)
+	b.WriteString(bc)
 	b.WriteString("\n\n")
 
-	// Editor container with soft spacing (no box borders)
-	editorStyle := lipgloss.NewStyle().
-		Padding(1, 2).
-		MarginBottom(1)
+	// Editor content - textarea is a bubble component, we can't fully control it
+	// But we can wrap minimally
+	b.WriteString(e.textarea.View())
+	b.WriteString("\n\n")
 
-	// Render the textarea with syntax highlighting
-	editorContent := editorStyle.Render(e.textarea.View())
-	b.WriteString(editorContent)
-	b.WriteString("\n")
-
-	// Status bar with Nerd Font icon
+	// Status bar with icon - pure ANSI
 	var statusIcon string
-	var statusStyle lipgloss.Style
+	var statusColor string
 
 	if e.executing {
 		statusIcon = NerdIcons.Pending + " "
-		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(brandWarning)).
-			Bold(true)
+		statusColor = brandWarning
 	} else if strings.HasPrefix(e.status, "Error") {
 		statusIcon = NerdIcons.Error + " "
-		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(brandHighlight)).
-			Bold(true)
+		statusColor = brandHighlight
 	} else if strings.Contains(e.status, "success") {
 		statusIcon = NerdIcons.Success + " "
-		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(brandSuccess)).
-			Bold(true)
+		statusColor = brandSuccess
 	} else {
 		statusIcon = NerdIcons.Running + " "
-		statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(brandAccent))
+		statusColor = brandAccent
 	}
 
-	statusBar := statusStyle.Render(statusIcon + e.status)
+	statusBar := styles.FromHexBold(statusIcon+e.status, statusColor)
 	b.WriteString(statusBar)
 	b.WriteString("\n\n")
 
@@ -416,31 +394,16 @@ func (e *EditorScreen) View() string {
 	if e.autocomplete.IsVisible() {
 		autocompleteView := e.autocomplete.RenderSuggestions()
 		if autocompleteView != "" {
-			popupStyle := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(brandPurple)).
-				Padding(0, 1).
-				MarginLeft(2)
-			b.WriteString(popupStyle.Render(autocompleteView))
+			b.WriteString("  " + styles.FromHex(autocompleteView, brandPurple))
 			b.WriteString("\n")
 		}
 	}
 
-	// Help bar with keyboard shortcuts - brand muted styling
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandMuted)).
-		MarginTop(1).
-		Padding(0, 1)
-
-	keyStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(brandAccent)).
-		Bold(true)
-
-	helpText := helpStyle.Render(
-		keyStyle.Render("F5") + " Execute  " +
-			keyStyle.Render("Ctrl+D") + " Duplicate  " +
-			keyStyle.Render("Ctrl+Space") + " Autocomplete  " +
-			keyStyle.Render("Esc") + " Back",
-	)
+	// Help bar with keyboard shortcuts - pure ANSI
+	helpText := styles.FromHexBold("F5", brandAccent) + styles.FromHex(" Execute  ", brandMuted) +
+		styles.FromHexBold("Ctrl+D", brandAccent) + styles.FromHex(" Duplicate  ", brandMuted) +
+		styles.FromHexBold("Ctrl+Space", brandAccent) + styles.FromHex(" Autocomplete  ", brandMuted) +
+		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
 	b.WriteString(helpText)
 
 	return b.String()

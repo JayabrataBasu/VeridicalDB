@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // StatusBarMode represents the current interaction mode.
@@ -91,166 +91,99 @@ func (s *StatusBar) SetInfo(info string) {
 	s.Info = info
 }
 
-// View renders the status bar with Powerline styling.
+// View renders the status bar with simple ANSI styling - no lipgloss backgrounds.
 func (s *StatusBar) View() string {
-	// Powerline arrow separators
-	powerlineRight := ""
-	powerlineRightThin := ""
+	t := s.themeManager.Current()
 
-	// Section 1: Mode (Green background for NORMAL, varies by mode)
-	var modeBg, modeNextBg string
+	// Build status bar with pure ANSI - no block backgrounds
+	var parts []string
+
+	// Mode indicator
+	modeColor := t.BrandSuccess
 	switch s.Mode {
 	case ModeInsert:
-		modeBg = "#7dce13" // Radioactive green
+		modeColor = t.BrandSuccess
 	case ModeCommand:
-		modeBg = "#f0b429" // Yellow
+		modeColor = t.BrandWarning
 	case ModeSearch:
-		modeBg = "#00f2ff" // Electric blue
-	default: // NORMAL
-		modeBg = "#7dce13" // Radioactive green
+		modeColor = t.BrandAccent
 	}
-	modeNextBg = "#2a2139" // Deep purple for next section
+	parts = append(parts, styles.FromHexBold(string(s.Mode), modeColor))
 
-	modeStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#0d1117")). // Dark bg as fg
-		Background(lipgloss.Color(modeBg)).
-		Padding(0, 1)
+	// Separator
+	parts = append(parts, styles.FromHex(" │ ", t.Border))
 
-	modeSeparator := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(modeBg)).
-		Background(lipgloss.Color(modeNextBg)).
-		Render(powerlineRight)
-
-	modeSection := modeStyle.Render(string(s.Mode)) + modeSeparator
-
-	// Section 2: Context (Database + Context) - Gray background
-	contextBg := "#2a2139"     // Deep purple
-	contextNextBg := "#161b22" // Darker gray
-
+	// Database connection
 	dbIcon := Icons.Connected
 	if !s.Connected {
 		dbIcon = Icons.Disconnected
 	}
+	connColor := t.BrandSuccess
+	if !s.Connected {
+		connColor = t.BrandDanger
+	}
+	parts = append(parts, styles.FromHex(dbIcon+" "+s.DatabaseName, connColor))
 
-	contextText := fmt.Sprintf("%s %s", dbIcon, s.DatabaseName)
+	// Context if set
 	if s.Context != "" {
-		contextText += " • " + s.Context
+		parts = append(parts, styles.FromHex(" • ", t.Muted))
+		parts = append(parts, styles.FromHex(s.Context, t.Foreground))
 	}
 
-	contextStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#e6edf3")).
-		Background(lipgloss.Color(contextBg)).
-		Padding(0, 1)
-
-	contextSeparator := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(contextBg)).
-		Background(lipgloss.Color(contextNextBg)).
-		Render(powerlineRight)
-
-	contextSection := contextStyle.Render(contextText) + contextSeparator
-
-	// Section 3: Git Branch (if available)
+	// Git branch
 	gitBranch := s.getGitBranch()
-	var gitSection string
 	if gitBranch != "" {
-		gitBg := "#161b22"
-		gitStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#7dce13")).
-			Background(lipgloss.Color(gitBg)).
-			Padding(0, 1)
-
-		gitSeparator := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(gitBg)).
-			Background(lipgloss.Color("#0d1117")). // Back to main bg
-			Render(powerlineRight)
-
-		gitSection = gitStyle.Render(" "+gitBranch) + gitSeparator
+		parts = append(parts, styles.FromHex(" │ ", t.Border))
+		parts = append(parts, styles.FromHex(" "+gitBranch, t.BrandSuccess))
 	}
 
-	// Left side: mode + context + git
-	left := modeSection + contextSection + gitSection
+	left := strings.Join(parts, "")
 
-	// Right side: Latency + Info
-	var right string
-	rightParts := []string{}
+	// Right side
+	var rightParts []string
 
-	// Latency indicator with gradient colors
+	// Latency
 	if s.Latency > 0 {
-		latencyColor := "#7dce13" // Green
+		latencyColor := t.BrandSuccess
 		if s.Latency > 500*time.Millisecond {
-			latencyColor = "#ff5370" // Red
+			latencyColor = t.BrandDanger
 		} else if s.Latency > 100*time.Millisecond {
-			latencyColor = "#f0b429" // Yellow
+			latencyColor = t.BrandWarning
 		}
-
-		latencyStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color(latencyColor)).
-			Background(lipgloss.Color("#0d1117"))
-
-		rightParts = append(rightParts, latencyStyle.Render(fmt.Sprintf("⚡%dms", s.Latency.Milliseconds())))
+		rightParts = append(rightParts, styles.FromHex(fmt.Sprintf("⚡%dms", s.Latency.Milliseconds()), latencyColor))
 	}
 
-	// Info section
+	// Info
 	if s.Info != "" {
-		infoStyle := lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#6e7681")).
-			Background(lipgloss.Color("#0d1117"))
-		rightParts = append(rightParts, infoStyle.Render(s.Info))
+		rightParts = append(rightParts, styles.FromHex(s.Info, t.Muted))
 	}
 
-	// Help indicator with gradient
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00f2ff")).
-		Background(lipgloss.Color("#0d1117"))
-	rightParts = append(rightParts, helpStyle.Render("? Help"))
+	// Help
+	rightParts = append(rightParts, styles.FromHex("? Help", t.BrandAccent))
 
-	if len(rightParts) > 0 {
-		right = strings.Join(rightParts, powerlineRightThin)
-	}
+	right := strings.Join(rightParts, styles.FromHex(" │ ", t.Border))
 
-	// Calculate spacing
-	leftWidth := lipgloss.Width(left)
-	rightWidth := lipgloss.Width(right)
-	spacerWidth := s.width - leftWidth - rightWidth
-	if spacerWidth < 0 {
-		spacerWidth = 0
-	}
-
-	spacerStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#0d1117"))
-	spacer := spacerStyle.Render(strings.Repeat(" ", spacerWidth))
-
-	// Background style for entire bar
-	barStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color("#0d1117")).
-		Width(s.width)
-
-	return barStyle.Render(left + spacer + right)
+	// Simple join with spacing
+	return left + "  " + right
 }
 
 // CompactView renders a minimal status bar for narrow terminals.
 func (s *StatusBar) CompactView() string {
 	t := s.themeManager.Current()
 
-	// Mode indicator (short)
-	modeStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(t.Background)).
-		Background(lipgloss.Color(t.Primary)).
-		Padding(0, 1)
-
+	// Mode indicator
+	modeColor := t.BrandSuccess
 	modeChar := "N"
 	switch s.Mode {
 	case ModeInsert:
 		modeChar = "I"
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Success))
+		modeColor = t.BrandSuccess
 	case ModeCommand:
 		modeChar = "C"
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Warning))
+		modeColor = t.BrandWarning
 	case ModeSearch:
 		modeChar = "/"
-		modeStyle = modeStyle.Background(lipgloss.Color(t.Info))
+		modeColor = t.BrandAccent
 	}
 
 	// DB status
@@ -259,27 +192,9 @@ func (s *StatusBar) CompactView() string {
 		dbIcon = Icons.Disconnected
 	}
 
-	left := modeStyle.Render(modeChar)
-
-	sep := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Border)).
-		Render(" │ ")
-
-	dbStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(t.Foreground))
-
-	right := dbStyle.Render(fmt.Sprintf("%s %s", dbIcon, s.DatabaseName))
-
-	barStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(t.Border)).
-		Width(s.width)
-
-	spacerWidth := s.width - lipgloss.Width(left) - lipgloss.Width(sep) - lipgloss.Width(right)
-	if spacerWidth < 0 {
-		spacerWidth = 0
-	}
-
-	return barStyle.Render(left + sep + right + strings.Repeat(" ", spacerWidth))
+	return styles.FromHexBold(modeChar, modeColor) +
+		styles.FromHex(" │ ", t.Border) +
+		styles.FromHex(dbIcon+" "+s.DatabaseName, t.Foreground)
 }
 
 // getGitBranch attempts to get the current git branch name.

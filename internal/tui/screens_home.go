@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // HomeScreen is the main menu screen of the TUI.
@@ -156,7 +156,6 @@ func (h *HomeScreen) View() string {
 	success := "#7dce13"
 	danger := "#ff5370"
 	muted := "#6e7681"
-	border := "#21262d"
 	if tm := h.app.GetThemeManager(); tm != nil {
 		t := tm.Current()
 		accent = t.BrandGradientA
@@ -164,84 +163,46 @@ func (h *HomeScreen) View() string {
 		success = t.BrandSuccess
 		danger = t.BrandDanger
 		muted = t.Muted
-		border = t.Border
 	}
 
-	// Cyberpunk gradient header
+	// Title with gradient - using raw ANSI, no lipgloss blocks
 	gradientTitle := theme.GradientText("▶ VERIDICALDB", accent, highlight)
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		MarginBottom(1).
-		MarginTop(1)
-
-	logoStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color(success))
-
-	// Title line with gradient
-	title := logoStyle.Render(Icons.Database) + " " + headerStyle.Render(gradientTitle)
+	title := styles.FromHexBold(Icons.Database, success) + " " + gradientTitle
 	buf.WriteString(title)
-	buf.WriteString("\n")
+	buf.WriteString("\n\n\n")
 
-	// Soft spacing instead of a hard separator
-	buf.WriteString("\n\n")
-
-	// Menu items with a clean tech aesthetic (no background blocks)
-	activeGlowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(accent)).
-		Bold(true).
-		Underline(true)
-
-	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(muted))
-
-	// Slim accent markers for selection
-	thickBorderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(accent)).
-		Bold(true)
-
-	normalBorderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(border))
-
+	// Menu items - pure ANSI styling, no background blocks
 	for i, item := range h.items {
 		icon := h.getIcon(item.Icon)
 
 		if i == h.menuIdx {
-			// Selected item with thick border and glow
-			border := thickBorderStyle.Render("▍")
-			content := activeGlowStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
-			line := border + " " + content
-			buf.WriteString(line)
-			buf.WriteString("\n")
-			// Show description for selected item with gradient
+			// Selected item: accent color, bold, underlined
+			marker := styles.FromHexBold("›", accent)
+			content := styles.FromHexBold(fmt.Sprintf("%s %s", icon, item.Title), accent)
+			buf.WriteString(marker + " " + content + "\n")
+			// Description with gradient
 			descGradient := theme.GradientText("  "+item.Description, muted, highlight)
-			buf.WriteString(descGradient)
-			buf.WriteString("\n")
+			buf.WriteString(descGradient + "\n")
 		} else {
-			// Normal item with subtle border
-			border := normalBorderStyle.Render("·")
-			line := border + " " + inactiveStyle.Render(fmt.Sprintf("%s %s", icon, item.Title))
-			buf.WriteString(line)
-			buf.WriteString("\n")
+			// Normal item: muted color
+			marker := styles.FromHex("·", muted)
+			content := styles.FromHex(fmt.Sprintf("%s %s", icon, item.Title), muted)
+			buf.WriteString(marker + " " + content + "\n")
 		}
 	}
 
-	// Footer with neon keybindings
+	// Footer with keybindings - pure ANSI
 	buf.WriteString("\n")
-	footerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(muted))
-
-	// Add gradient accents to key indicators
-	keybindings := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Theme  %s  %s Quit",
-		lipgloss.NewStyle().Foreground(lipgloss.Color(success)).Bold(true).Render("j/k"),
+	footer := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Theme  %s  %s Quit",
+		styles.FromHexBold("j/k", success),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color(accent)).Bold(true).Render("Enter"),
+		styles.FromHexBold("Enter", accent),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color(highlight)).Bold(true).Render("Ctrl+T"),
+		styles.FromHexBold("Ctrl+T", highlight),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color(danger)).Bold(true).Render("q"),
+		styles.FromHexBold("q", danger),
 	)
-	buf.WriteString(footerStyle.Render(keybindings))
+	buf.WriteString(styles.FromHex(footer, muted))
 
 	return buf.String()
 }

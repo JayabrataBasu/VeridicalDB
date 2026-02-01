@@ -81,7 +81,7 @@ func New(session *sql.Session) *Model {
 		MinMainWidth:       50,
 	}
 
-	// Create pane styles using theme colors
+	// Create pane styles using theme colors - NO backgrounds
 	t := themeManager.Current()
 	paneStyles := &PaneStyles{
 		ActiveBorder: lipgloss.NewStyle().
@@ -93,7 +93,6 @@ func New(session *sql.Session) *Model {
 		ActiveTitle: lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color(t.Primary)).
-			Background(lipgloss.Color(t.CurrentLine)).
 			Padding(0, 1),
 		InactiveTitle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(t.Muted)).
@@ -254,8 +253,6 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	t := m.themeManager.Current()
-
 	// Calculate available space (reserve 1 line for status bar)
 	contentHeight := m.height - 1
 	sidebarWidth := 20
@@ -263,17 +260,16 @@ func (m *Model) View() string {
 		sidebarWidth = 0
 	}
 
-	// Main content with proper width constraint
+	// Main content with proper width constraint - NO BACKGROUND styling
 	mainWidth := m.width - sidebarWidth - 2
 	if mainWidth < 50 {
 		mainWidth = 50
 	}
 
-	// Style main content area
+	// NO background on main content - let terminal handle it
 	mainContentStyle := lipgloss.NewStyle().
 		Width(mainWidth).
 		Height(contentHeight).
-		Background(lipgloss.Color(t.Background)).
 		Padding(1, 2)
 
 	mainContent := mainContentStyle.Render(m.screen.View())
@@ -301,11 +297,8 @@ func (m *Model) View() string {
 	// Render status bar
 	statusBarView := m.statusBar.View()
 
-	// Container style with theme background
-	containerStyle := lipgloss.NewStyle().
-		Background(lipgloss.Color(t.Background))
-
-	return containerStyle.Render(lipgloss.JoinVertical(lipgloss.Left, layout, statusBarView))
+	// NO container background - let terminal handle background uniformly
+	return lipgloss.JoinVertical(lipgloss.Left, layout, statusBarView)
 }
 
 // RegisterScreen registers a screen in the TUI.

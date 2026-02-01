@@ -3,8 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // Sidebar renders contextual info on the right side of the TUI.
@@ -17,7 +17,7 @@ func NewSidebar(app *Model) *Sidebar {
 	return &Sidebar{app: app}
 }
 
-// View renders the sidebar content with compact, premium styling.
+// View renders the sidebar content with compact styling - pure ANSI, no lipgloss blocks.
 func (s *Sidebar) View(width int) string {
 	w := width
 	if w < 14 {
@@ -27,88 +27,64 @@ func (s *Sidebar) View(width int) string {
 		w = 24
 	}
 
-	// Premium compact styles
-	headerStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#00D9FF")).
-		Background(lipgloss.Color("#1a1a2e")).
-		Width(w).
-		Align(lipgloss.Center)
+	// Theme-aware colors
+	accent := "#00D9FF"
+	warning := "#FFB86C"
+	muted := "#AAAAAA"
+	success := "#50FA7B"
+	dim := "#555555"
+	border := "#3a3a5c"
 
-	sectionStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFB86C")).
-		PaddingLeft(1)
-
-	itemStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#AAAAAA")).
-		PaddingLeft(1)
-
-	activeStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#50FA7B")).
-		PaddingLeft(1)
-
-	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#555555")).
-		PaddingLeft(1)
-
-	helpStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#555555")).
-		Italic(true).
-		PaddingLeft(1)
-
-	borderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#3a3a5c"))
-
-	// Container with border
-	containerStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#3a3a5c")).
-		Width(w-2).
-		Padding(0, 1)
+	if tm := s.app.GetThemeManager(); tm != nil {
+		t := tm.Current()
+		accent = t.BrandAccent
+		warning = t.BrandWarning
+		muted = t.Muted
+		success = t.BrandSuccess
+		dim = t.Muted
+		border = t.Border
+	}
 
 	var b strings.Builder
 
-	// Compact header
-	b.WriteString(headerStyle.Render("◆ VERIDICAL DB"))
+	// Header - pure ANSI
+	header := styles.FromHexBold("◆ VERIDICAL DB", accent)
+	b.WriteString(header)
 	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#666666")).
-		Width(w).
-		Align(lipgloss.Center).
-		Render("v1.0.0"))
+	b.WriteString(styles.FromHex("v1.0.0", dim))
 	b.WriteString("\n")
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-2)))
-	b.WriteString("\n")
-
-	// Compact sections - single line each
-	b.WriteString(sectionStyle.Render(types.Icons.Table + " Context"))
-	b.WriteString("\n")
-	b.WriteString(itemStyle.Render("Files: 0 │ Unsaved: 0"))
+	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render(types.Icons.Connected + " LSP"))
+	// Context section
+	b.WriteString(styles.FromHexBold(types.Icons.Table+" Context", warning))
 	b.WriteString("\n")
-	b.WriteString(activeStyle.Render("● Go"))
-	b.WriteString(itemStyle.Render(" │ "))
-	b.WriteString(activeStyle.Render("● Nix"))
+	b.WriteString(styles.FromHex("Files: 0 │ Unsaved: 0", muted))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render(types.Icons.Network + " MCP"))
+	// LSP section
+	b.WriteString(styles.FromHexBold(types.Icons.Connected+" LSP", warning))
 	b.WriteString("\n")
-	b.WriteString(inactiveStyle.Render("○ None"))
+	b.WriteString(styles.FromHex("● Go", success) + styles.FromHex(" │ ", muted) + styles.FromHex("● Nix", success))
 	b.WriteString("\n\n")
 
-	b.WriteString(sectionStyle.Render(types.Icons.Database + " Database"))
+	// MCP section
+	b.WriteString(styles.FromHexBold(types.Icons.Network+" MCP", warning))
 	b.WriteString("\n")
-	b.WriteString(activeStyle.Render("● Connected"))
-	b.WriteString("\n")
-	b.WriteString(itemStyle.Render("Tables: --"))
+	b.WriteString(styles.FromHex("○ None", dim))
 	b.WriteString("\n\n")
 
-	b.WriteString(borderStyle.Render(strings.Repeat("─", w-2)))
+	// Database section
+	b.WriteString(styles.FromHexBold(types.Icons.Database+" Database", warning))
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("? Help"))
+	b.WriteString(styles.FromHex("● Connected", success))
+	b.WriteString("\n")
+	b.WriteString(styles.FromHex("Tables: --", muted))
+	b.WriteString("\n\n")
 
-	return containerStyle.Render(b.String())
+	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
+	b.WriteString("\n")
+	b.WriteString(styles.DimText("? Help"))
+
+	return b.String()
 }
