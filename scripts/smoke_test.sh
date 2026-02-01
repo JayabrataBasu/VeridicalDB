@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Smoke Test for VeridicalDB v1.0.0
+# Smoke Test for VeridicalDB v2.0.0
 # Tests core working functionality
 #
 set -e

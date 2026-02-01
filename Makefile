@@ -2,7 +2,7 @@
 
 BIN=veridicaldb
 BINARY_NAME?=$(BIN)
-VERSION?=v1.0.0
+VERSION?=v2.0.0
 
 all: build
 
@@ -32,7 +32,7 @@ docker:
 .PHONY: test clean install run init fmt lint help smoke-test stress-test
 
 # Build variables
-VERSION?=v1.0.0
+VERSION?=v2.0.0
 BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
 
