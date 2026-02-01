@@ -20,7 +20,7 @@ import (
 	"github.com/chzyer/readline"
 )
 
-const Version = "1.0.0 - Helix"
+const Version = "v2.0.0 - Halcyon" //please remind me to change it when ever I code. dumb of me
 
 // REPL implements the Read-Eval-Print Loop for VeridicalDB
 type REPL struct {

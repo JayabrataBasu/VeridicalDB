@@ -51,7 +51,7 @@ func (s *Sidebar) View(width int) string {
 	header := styles.FromHexBold("◆ VERIDICAL DB", accent)
 	b.WriteString(header)
 	b.WriteString("\n")
-	b.WriteString(styles.FromHex("v1.0.0", dim))
+	b.WriteString(styles.FromHex("v2.0.0 - Halcyon", dim)) //please remind the idiot to chnage it when ever he codes
 	b.WriteString("\n")
 	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
 	b.WriteString("\n\n")
