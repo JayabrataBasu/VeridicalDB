@@ -1,6 +1,7 @@
 // Package styles provides shared text styling utilities using raw ANSI escape codes.
-// This package exists to avoid import cycles between tui and screens packages.
+// This package exists to avoid import cycles between tui and screens packages I committed a blunder of enormity.
 // It uses ANSI codes directly instead of lipgloss to avoid block-level rendering artifacts.
+// This exists as a uniform styling utility across the TUI.
 package styles
 
 import "fmt"
@@ -38,7 +39,7 @@ func ColorBoldUnderline(text string, r, g, b int) string {
 // Hex converts a hex color string like "#268bd2" to RGB values.
 func Hex(hex string) (r, g, b int) {
 	if len(hex) == 7 && hex[0] == '#' {
-		fmt.Sscanf(hex[1:], "%02x%02x%02x", &r, &g, &b)
+		_, _ = fmt.Sscanf(hex[1:], "%02x%02x%02x", &r, &g, &b)
 	}
 	return
 }
