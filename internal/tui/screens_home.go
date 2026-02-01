@@ -37,6 +37,12 @@ func NewHomeScreen(app *Model) *HomeScreen {
 				Icon:        "Query",
 			},
 			{
+				Title:       "Query History",
+				Description: "View recent queries and results",
+				ScreenID:    "history",
+				Icon:        "History",
+			},
+			{
 				Title:       "Database Browser",
 				Description: "Browse tables and schemas",
 				ScreenID:    "browser",
@@ -114,7 +120,7 @@ func (h *HomeScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return h, nil
 }
 
-// getIcon returns the icon for a menu item.
+// getIcon returns the icon for a menu item but somehow the backup section is not working!
 func (h *HomeScreen) getIcon(iconKey string) string {
 	switch iconKey {
 	case "Query":
@@ -125,6 +131,8 @@ func (h *HomeScreen) getIcon(iconKey string) string {
 		return Icons.Dashboard
 	case "Users":
 		return Icons.Users
+	case "History":
+		return Icons.Clock
 	case "Backup":
 		return Icons.Backup
 	case "Settings":
@@ -142,8 +150,27 @@ func (h *HomeScreen) getIcon(iconKey string) string {
 func (h *HomeScreen) View() string {
 	var buf strings.Builder
 
+	// Theme-aware palette
+	accent := "#00f2ff"
+	highlight := "#bd00ff"
+	success := "#7dce13"
+	danger := "#ff5370"
+	muted := "#6e7681"
+	border := "#21262d"
+	activeBg := "#1c2938"
+	if tm := h.app.GetThemeManager(); tm != nil {
+		t := tm.Current()
+		accent = t.BrandGradientA
+		highlight = t.BrandGradientB
+		success = t.BrandSuccess
+		danger = t.BrandDanger
+		muted = t.Muted
+		border = t.Border
+		activeBg = t.BrandMuted
+	}
+
 	// Cyberpunk gradient header
-	gradientTitle := theme.GradientText("▶ VERIDICALDB", "#00f2ff", "#bd00ff")
+	gradientTitle := theme.GradientText("▶ VERIDICALDB", accent, highlight)
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		MarginBottom(1).
@@ -151,7 +178,7 @@ func (h *HomeScreen) View() string {
 
 	logoStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7dce13"))
+		Foreground(lipgloss.Color(success))
 
 	// Title line with gradient
 	title := logoStyle.Render(Icons.Database) + " " + headerStyle.Render(gradientTitle)
@@ -159,7 +186,7 @@ func (h *HomeScreen) View() string {
 	buf.WriteString("\n")
 
 	// Neon separator
-	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#21262d"))
+	sepStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(border))
 	buf.WriteString(sepStyle.Render(strings.Repeat("━", 40)))
 	buf.WriteString("\n\n")
 
@@ -167,21 +194,21 @@ func (h *HomeScreen) View() string {
 	// Active item: thick left border + gradient background
 	// Create gradient background effect for active item (dark gray to black)
 	activeGlowStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00f2ff")).
-		Background(lipgloss.Color("#1c2938")). // Subtle glow background
+		Foreground(lipgloss.Color(accent)).
+		Background(lipgloss.Color(activeBg)). // Subtle glow background
 		Bold(true).
 		Padding(0, 1)
 
 	inactiveStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6e7681"))
+		Foreground(lipgloss.Color(muted))
 
 	// Thick border pipe for active selection
 	thickBorderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#00f2ff")). // Cyan glow
+		Foreground(lipgloss.Color(accent)). // Cyan glow
 		Bold(true)
 
 	normalBorderStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#21262d"))
+		Foreground(lipgloss.Color(border))
 
 	for i, item := range h.items {
 		icon := h.getIcon(item.Icon)
@@ -194,7 +221,7 @@ func (h *HomeScreen) View() string {
 			buf.WriteString(line)
 			buf.WriteString("\n")
 			// Show description for selected item with gradient
-			descGradient := theme.GradientText("  "+item.Description, "#6e7681", "#2a2139")
+			descGradient := theme.GradientText("  "+item.Description, muted, highlight)
 			buf.WriteString(descGradient)
 			buf.WriteString("\n")
 		} else {
@@ -209,17 +236,17 @@ func (h *HomeScreen) View() string {
 	// Footer with neon keybindings
 	buf.WriteString("\n")
 	footerStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6e7681"))
+		Foreground(lipgloss.Color(muted))
 
 	// Add gradient accents to key indicators
 	keybindings := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Theme  %s  %s Quit",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#7dce13")).Bold(true).Render("j/k"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(success)).Bold(true).Render("j/k"),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#00f2ff")).Bold(true).Render("Enter"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(accent)).Bold(true).Render("Enter"),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#bd00ff")).Bold(true).Render("Ctrl+T"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(highlight)).Bold(true).Render("Ctrl+T"),
 		Icons.Separator,
-		lipgloss.NewStyle().Foreground(lipgloss.Color("#ff5370")).Bold(true).Render("q"),
+		lipgloss.NewStyle().Foreground(lipgloss.Color(danger)).Bold(true).Render("q"),
 	)
 	buf.WriteString(footerStyle.Render(keybindings))
 

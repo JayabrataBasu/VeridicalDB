@@ -125,18 +125,20 @@ func New(session *sql.Session) *Model {
 	homeScreen := NewHomeScreen(m)
 	editorScreen := screens.NewEditorScreen(m)
 	resultsScreen := screens.NewResultsScreen(m)
+	historyScreen := screens.NewQueryHistoryScreen(m)
 
 	m.screens["home"] = homeScreen
 	m.screens["editor"] = editorScreen
 	m.screens["results"] = resultsScreen
+	m.screens["history"] = historyScreen
 
 	// Initialize real feature screens with adapters
 	m.screens["browser"] = NewDatabaseBrowserAdapter(m, 120, 40)
 	m.screens["monitoring"] = NewDashboardAdapter(m)
 
-	// Placeholder screens for not-yet-implemented features
-	m.screens["users"] = NewPlaceholderScreen(m, "User Management")
-	m.screens["backup"] = NewPlaceholderScreen(m, "Backup & Restore")
+	// Feature screens
+	m.screens["users"] = screens.NewUsersScreen(m)
+	m.screens["backup"] = screens.NewBackupScreen(m)
 	m.screens["settings"] = NewPlaceholderScreen(m, "Settings")
 	m.screens["about"] = NewPlaceholderScreen(m, "About")
 

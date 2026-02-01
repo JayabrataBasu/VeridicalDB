@@ -5,12 +5,14 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/syntax"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// just a few of the available ones
 var keywordSuggestions = []string{
 	"SELECT", "INSERT", "UPDATE", "DELETE",
 	"CREATE", "CREATE TABLE", "CREATE INDEX",
@@ -60,7 +62,7 @@ func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 	}
 }
 
-// initializeAutocomplete creates and configures the autocomplete manager with custom keywords
+// initializeAutocomplete creates and configures the autocomplete manager with custom keywords, does not seem very functional
 func initializeAutocomplete() *components.AutocompleteManager {
 	am := components.NewAutocompleteManager()
 
@@ -311,7 +313,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		// Resize textarea to fit window with proper padding
 		editorWidth := msg.Width - 8    // Account for padding and borders
 		editorHeight := msg.Height - 12 // Account for header, status, help
-		if editorWidth < 40 {
+		if editorWidth < 40 {           //adjusts minimum size same for 8
 			editorWidth = 40
 		}
 		if editorHeight < 8 {
@@ -332,7 +334,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (e *EditorScreen) View() string {
 	var b strings.Builder
 
-	// Brand palette colors - bold tech aesthetic
+	// Brand palette colors - bold tech aesthetic (theme-aware with fallbacks). looks nice, don't ask me i don't have opinnions
 	brandAccent := "#00D9FF"    // Neon Cyan
 	brandHighlight := "#FF006E" // Neon Magenta
 	brandWarning := "#FFB86C"   // Accent Orange
@@ -340,6 +342,18 @@ func (e *EditorScreen) View() string {
 	brandMuted := "#44475A"     // Steel Gray
 	brandDark := "#0A0E27"      // Dark Charcoal
 	brandPurple := "#BD00FF"    // Neon Purple
+	if tp, ok := e.app.(interface{ GetThemeManager() *theme.Manager }); ok {
+		if tm := tp.GetThemeManager(); tm != nil {
+			t := tm.Current()
+			brandAccent = t.BrandAccent
+			brandHighlight = t.BrandHighlight
+			brandWarning = t.BrandWarning
+			brandSuccess = t.BrandSuccess
+			brandMuted = t.BrandMuted
+			brandDark = t.Background
+			brandPurple = t.BrandGradientB
+		}
+	}
 
 	// Premium header with Nerd Font icon and brand accent
 	headerStyle := lipgloss.NewStyle().
@@ -442,7 +456,7 @@ func (e *EditorScreen) View() string {
 	return b.String()
 }
 
-// isWordChar checks if a character can be part of a word for autocomplete
+// isWordChar checks if a character can be part of a word for autocomplete, how nice, the entire modern keyboard
 func isWordChar(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }

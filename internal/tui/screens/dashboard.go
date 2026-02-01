@@ -35,6 +35,50 @@ type Dashboard struct {
 	themeManager *theme.Manager
 }
 
+type dashboardPalette struct {
+	accent    string
+	highlight string
+	success   string
+	warning   string
+	danger    string
+	muted     string
+	border    string
+	gradientA string
+	gradientB string
+}
+
+func (d *Dashboard) palette() dashboardPalette {
+	defaults := dashboardPalette{
+		accent:    "#00f2ff",
+		highlight: "#bd00ff",
+		success:   "#7dce13",
+		warning:   "#f0b429",
+		danger:    "#ff5370",
+		muted:     "#6e7681",
+		border:    "#21262d",
+		gradientA: "#00f2ff",
+		gradientB: "#bd00ff",
+	}
+	if d.themeManager == nil {
+		return defaults
+	}
+	t := d.themeManager.Current()
+	if t == nil {
+		return defaults
+	}
+	return dashboardPalette{
+		accent:    t.BrandAccent,
+		highlight: t.BrandHighlight,
+		success:   t.BrandSuccess,
+		warning:   t.BrandWarning,
+		danger:    t.BrandDanger,
+		muted:     t.Muted,
+		border:    t.Border,
+		gradientA: t.BrandGradientA,
+		gradientB: t.BrandGradientB,
+	}
+}
+
 // SystemMetrics holds database system metrics. Practically useless if there is not a large user base but I built it cuz lolz
 type SystemMetrics struct {
 	// Connection stats
@@ -88,7 +132,7 @@ func (d *Dashboard) SetSystemCatalog(sc *observability.SystemCatalog) {
 	d.sysCatalog = sc
 }
 
-// Init initializes the dashboard.
+// Init initializes the dashboard. ticks gott synchronise
 func (d *Dashboard) Init() tea.Cmd {
 	return tea.Batch(
 		d.heartbeat.Init(),
@@ -143,8 +187,10 @@ func (d *Dashboard) View() string {
 
 	var sections []string
 
+	p := d.palette()
+
 	// Cyberpunk gradient header
-	gradientTitle := theme.GradientText("▶ VERIDICALDB COMMAND CENTER", "#00f2ff", "#bd00ff")
+	gradientTitle := theme.GradientText("▶ VERIDICALDB COMMAND CENTER", p.gradientA, p.gradientB) //reminds me of whenI learned about constructos
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		MarginBottom(1).
@@ -190,9 +236,9 @@ func (d *Dashboard) View() string {
 	sections = append(sections, systemMetrics)
 
 	// Cyberpunk footer with gradient timestamp
-	timestampGradient := theme.GradientText(d.lastUpdate.Format("15:04:05"), "#00f2ff", "#bd00ff")
+	timestampGradient := theme.GradientText(d.lastUpdate.Format("15:04:05"), p.gradientA, p.gradientB)
 	footer := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#6e7681")).
+		Foreground(lipgloss.Color(p.muted)).
 		Render(fmt.Sprintf("Last updated: %s | Press q to quit, r to refresh", timestampGradient))
 	sections = append(sections, "\n"+footer)
 
@@ -200,22 +246,23 @@ func (d *Dashboard) View() string {
 }
 
 func (d *Dashboard) renderConnectionMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(d.width/2 - 4)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00f2ff")).
+		Foreground(lipgloss.Color(p.accent)).
 		Render("⚡ Connection Status")
 
 	usage := float64(0)
 	if d.metrics.MaxConnections > 0 {
 		usage = float64(d.metrics.ActiveConnections) / float64(d.metrics.MaxConnections)
 	}
-	bar := renderProgressBar(usage, 30)
+	bar := d.renderProgressBar(usage, 30)
 
 	content := fmt.Sprintf(`%s
 
@@ -236,15 +283,16 @@ Usage:   %.1f%%
 }
 
 func (d *Dashboard) renderQueryMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#7dce13")).
+		Foreground(lipgloss.Color(p.success)).
 		Render(types.Icons.Performance + " Query Performance")
 
 	content := fmt.Sprintf(`%s
@@ -264,22 +312,23 @@ Slow Queries:    %d`,
 }
 
 func (d *Dashboard) renderMemoryMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#bd00ff")).
+		Foreground(lipgloss.Color(p.highlight)).
 		Render(types.Icons.Memory + " Memory")
 
 	usage := float64(0)
 	if d.metrics.MemoryLimit > 0 {
 		usage = float64(d.metrics.MemoryUsed) / float64(d.metrics.MemoryLimit)
 	}
-	bar := renderProgressBar(usage, 30)
+	bar := d.renderProgressBar(usage, 30)
 
 	content := fmt.Sprintf(`%s
 
@@ -300,15 +349,16 @@ Usage:      %.1f%%
 }
 
 func (d *Dashboard) renderTransactionMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#ff79c6")).
+		Foreground(lipgloss.Color(p.highlight)).
 		Render(types.Icons.Transactions + " Transactions")
 
 	content := fmt.Sprintf(`%s
@@ -328,15 +378,16 @@ Success Rate: %.1f%%`,
 }
 
 func (d *Dashboard) renderDatabaseMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#00f2ff")).
+		Foreground(lipgloss.Color(p.accent)).
 		Render(types.Icons.Database + "  Database")
 
 	content := fmt.Sprintf(`%s
@@ -356,15 +407,16 @@ Data Size:   %s`,
 }
 
 func (d *Dashboard) renderSystemMetrics() string {
+	p := d.palette()
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("#21262d")).
+		BorderForeground(lipgloss.Color(p.border)).
 		Padding(1, 2).
 		Width(40)
 
 	title := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("#f0b429")).
+		Foreground(lipgloss.Color(p.warning)).
 		Render(types.Icons.Settings + "  System")
 
 	content := fmt.Sprintf(`%s
@@ -384,7 +436,7 @@ Cache Hit Rate: %.1f%%`,
 }
 
 // Helper functions
-func renderProgressBar(percentage float64, width int) string {
+func (d *Dashboard) renderProgressBar(percentage float64, width int) string {
 	if percentage < 0 {
 		percentage = 0
 	}
@@ -413,14 +465,14 @@ func renderProgressBar(percentage float64, width int) string {
 	emptyStr := strings.Repeat("-", empty)
 	bar := "[" + fillStr + emptyStr + "]"
 
-	// Cyberpunk color scheme
+	p := d.palette()
 	style := lipgloss.NewStyle()
 	if percentage > 0.8 {
-		style = style.Foreground(lipgloss.Color("#ff5370")) // Red
+		style = style.Foreground(lipgloss.Color(p.danger))
 	} else if percentage > 0.6 {
-		style = style.Foreground(lipgloss.Color("#f0b429")) // Yellow
+		style = style.Foreground(lipgloss.Color(p.warning))
 	} else {
-		style = style.Foreground(lipgloss.Color("#7dce13")) // Radioactive green
+		style = style.Foreground(lipgloss.Color(p.success))
 	}
 
 	return style.Render(bar)

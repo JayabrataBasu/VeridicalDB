@@ -10,7 +10,7 @@ import (
 
 // TestNewDatabaseBrowser tests browser creation
 func TestNewDatabaseBrowser(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	if browser.width != 80 {
 		t.Errorf("expected width 80, got %d", browser.width)
@@ -28,7 +28,7 @@ func TestNewDatabaseBrowser(t *testing.T) {
 
 // TestSetDatabases tests database list update
 func TestSetDatabases(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	databases := []Database{
 		{
@@ -60,7 +60,7 @@ func TestSetDatabases(t *testing.T) {
 
 // TestDatabaseBrowserInit tests initialization
 func TestDatabaseBrowserInit(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	cmd := browser.Init()
 
 	if cmd != nil {
@@ -70,7 +70,7 @@ func TestDatabaseBrowserInit(t *testing.T) {
 
 // TestDatabaseBrowserWindowSize tests window resize handling
 func TestDatabaseBrowserWindowSize(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	msg := tea.WindowSizeMsg{Width: 120, Height: 30}
 	updated, _ := browser.Update(msg)
@@ -85,7 +85,7 @@ func TestDatabaseBrowserWindowSize(t *testing.T) {
 
 // TestDatabaseBrowserNavigateUp tests navigation
 func TestDatabaseBrowserNavigateUp(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{Name: "db1", Tables: []Table{}},
 		{Name: "db2", Tables: []Table{}},
@@ -103,7 +103,7 @@ func TestDatabaseBrowserNavigateUp(t *testing.T) {
 
 // TestDatabaseBrowserNavigateDown tests navigation
 func TestDatabaseBrowserNavigateDown(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{Name: "db1", Tables: []Table{}},
 		{Name: "db2", Tables: []Table{}},
@@ -121,7 +121,7 @@ func TestDatabaseBrowserNavigateDown(t *testing.T) {
 
 // TestDatabaseBrowserSwitchPanels tests tab navigation
 func TestDatabaseBrowserSwitchPanels(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	if browser.panelFocus != 0 {
 		t.Fatalf("expected initial panelFocus 0")
 	}
@@ -146,7 +146,7 @@ func TestDatabaseBrowserSwitchPanels(t *testing.T) {
 
 // TestDatabaseBrowserViewEmpty tests view rendering with no databases
 func TestDatabaseBrowserViewEmpty(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	view := browser.View()
 
 	if !strings.Contains(view, "No databases available") {
@@ -156,7 +156,7 @@ func TestDatabaseBrowserViewEmpty(t *testing.T) {
 
 // TestDatabaseBrowserViewWithData tests view rendering with databases
 func TestDatabaseBrowserViewWithData(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{
 			Name: "testdb",
@@ -188,7 +188,7 @@ func TestDatabaseBrowserViewWithData(t *testing.T) {
 
 // TestDatabaseBrowserViewFocusIndicators tests focus indicators
 func TestDatabaseBrowserViewFocusIndicators(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{Name: "db1", Tables: []Table{}},
 	})
@@ -215,7 +215,7 @@ func TestDatabaseBrowserViewFocusIndicators(t *testing.T) {
 
 // TestDatabaseBrowserSelectionPersistence tests selection across panel switches
 func TestDatabaseBrowserSelectionPersistence(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{
 			Name: "db1",
@@ -287,7 +287,7 @@ func TestPadRight(t *testing.T) {
 
 // TestDatabaseBrowserScrolling tests scroll offset tracking
 func TestDatabaseBrowserScrolling(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	// Create 20 databases to test scrolling
 	databases := make([]Database, 20)
@@ -311,7 +311,7 @@ func TestDatabaseBrowserScrolling(t *testing.T) {
 
 // TestDatabaseBrowserHomeEnd tests home/end keys
 func TestDatabaseBrowserHomeEnd(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{Name: "db1", Tables: []Table{}},
 		{Name: "db2", Tables: []Table{}},
@@ -334,7 +334,7 @@ func TestDatabaseBrowserHomeEnd(t *testing.T) {
 
 // TestColumnFormatting tests column line formatting
 func TestColumnFormatting(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	tests := []struct {
 		column        Column
@@ -364,7 +364,7 @@ func TestColumnFormatting(t *testing.T) {
 
 // TestTableTypeIcon tests table type icon display
 func TestTableTypeIcon(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	baseTable := Table{Name: "users", Type: "BASE TABLE", RowCount: 100}
 	viewTable := Table{Name: "user_view", Type: "VIEW", RowCount: 50}
@@ -382,7 +382,7 @@ func TestTableTypeIcon(t *testing.T) {
 
 // TestMultiPanelSelection tests independent selection in each panel
 func TestMultiPanelSelection(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{
 			Name: "db1",
@@ -428,7 +428,7 @@ func TestMultiPanelSelection(t *testing.T) {
 
 // TestLeftRightNavigation tests left/right arrow key navigation between panels
 func TestLeftRightNavigation(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 
 	// Start at tables panel
 	browser.panelFocus = 1
@@ -450,7 +450,7 @@ func TestLeftRightNavigation(t *testing.T) {
 
 // TestBottomInfoFormatting tests bottom info bar formatting
 func TestBottomInfoFormatting(t *testing.T) {
-	browser := NewDatabaseBrowser(80, 24)
+	browser := NewDatabaseBrowser(80, 24, nil)
 	browser.SetDatabases([]Database{
 		{
 			Name: "testdb",

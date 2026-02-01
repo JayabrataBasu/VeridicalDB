@@ -14,7 +14,7 @@ type DatabaseBrowserAdapter struct {
 
 // NewDatabaseBrowserAdapter creates a new adapter for DatabaseBrowser
 func NewDatabaseBrowserAdapter(app *Model, width, height int) *DatabaseBrowserAdapter {
-	browser := screens.NewDatabaseBrowser(width, height)
+	browser := screens.NewDatabaseBrowser(width, height, app.GetThemeManager())
 
 	// Wire up system catalog if available
 	// Note: SystemCatalog requires txn.Manager, lock.Manager, and catalog.Catalog

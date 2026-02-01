@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -115,13 +116,28 @@ func (r *ResultsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 func (r *ResultsScreen) View() string {
 	var b strings.Builder
 
-	// Brand palette colors - bold tech aesthetic
+	// Brand palette colors - bold tech aesthetic (theme-aware with fallbacks)
 	brandAccent := "#00D9FF"  // Neon Cyan
 	brandWarning := "#FFB86C" // Accent Orange
 	brandSuccess := "#55FF55" // Bright Green
 	brandMuted := "#44475A"   // Steel Gray
 	brandDark := "#0A0E27"    // Dark Charcoal
 	brandBorder := "#3a3a5c"  // Border color
+	brandText := "#FFFFFF"    // Text color
+	brandAltRow := "#252530"  // Alternate row background
+	if tp, ok := r.app.(interface{ GetThemeManager() *theme.Manager }); ok {
+		if tm := tp.GetThemeManager(); tm != nil {
+			t := tm.Current()
+			brandAccent = t.BrandAccent
+			brandWarning = t.BrandWarning
+			brandSuccess = t.BrandSuccess
+			brandMuted = t.BrandMuted
+			brandDark = t.Background
+			brandBorder = t.Border
+			brandText = t.Foreground
+			brandAltRow = t.TableRowOdd
+		}
+	}
 
 	// Premium header with Nerd Font icon
 	headerStyle := lipgloss.NewStyle().
@@ -174,7 +190,7 @@ func (r *ResultsScreen) View() string {
 		b.WriteString(emptyMsg)
 	} else {
 		// Render table with premium styling
-		b.WriteString(r.renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted))
+		b.WriteString(r.renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted, brandText, brandAltRow))
 	}
 
 	b.WriteString("\n")
@@ -221,7 +237,7 @@ func (r *ResultsScreen) View() string {
 }
 
 // renderPremiumTable renders the result table with premium styling
-func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted string) string {
+func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, brandMuted, brandText, brandAltRow string) string {
 	if r.result == nil || len(r.result.Rows) == 0 {
 		return ""
 	}
@@ -269,12 +285,12 @@ func (r *ResultsScreen) renderPremiumTable(brandAccent, brandDark, brandBorder, 
 		Padding(0, 1)
 
 	cellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
+		Foreground(lipgloss.Color(brandText)).
 		Padding(0, 1)
 
 	altCellStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(lipgloss.Color("#252530")).
+		Foreground(lipgloss.Color(brandText)).
+		Background(lipgloss.Color(brandAltRow)).
 		Padding(0, 1)
 
 	borderStyle := lipgloss.NewStyle().
