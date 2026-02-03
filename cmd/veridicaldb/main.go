@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	version   = "1.0.0"
+	version   = "2.0.0"
 	buildDate = "dev"
 	cfgFile   string
 	useTUI    bool

@@ -29,9 +29,9 @@ Jayabrata Basu
 
 Downloads (Assets)
 
-- `veridicaldb_v2.0.0_linux_amd64.tar.gz` — SHA256: `e53da51b0a7a86393d58a9735758dde5d15f8ce118c24d9ba767b5acb4c816b0`
-- `veridicaldb_v2.0.0_darwin_amd64.tar.gz` — SHA256: `28bffb56bd5a1f5bbb0f2aa90a0d2c06c3bbb68ae8c1408fd8eeb28a044e561c`
-- `veridicaldb_v2.0.0_windows_amd64.zip` — SHA256: `06d9a90204f79a294fce29a0dde6d92ba30c8e37bf3384adbf66174997cc30b8`
+- `veridicaldb_v2.0.0_linux_amd64.tar.gz` — SHA256: `995ed2e35a817feedc5cb93d66c84533f67e5e79ffa5fe477c5bb8069a889874`
+- `veridicaldb_v2.0.0_darwin_amd64.tar.gz` — SHA256: `1fe0d8137864899fabf3b43d0660d74abd4e7b235c49ba23fb91264d40f4c4c2`
+- `veridicaldb_v2.0.0_windows_amd64.zip` — SHA256: `eff5f91e3c53dd680d5a207b3fdd312d1029f6e9df7858714df60dc80a099680`
 
 You can verify the checksums after downloading with:
 
