@@ -18,6 +18,8 @@ type Expression interface {
 type ColumnDef struct {
 	Name             string
 	Type             catalog.DataType
+	Length           int  // For VARCHAR(n): max length, 0 if unbounded
+	Unique           bool // Column-level UNIQUE constraint
 	NotNull          bool
 	PrimaryKey       bool
 	HasDefault       bool

@@ -524,7 +524,7 @@ func (p *Parser) parseOrderByList() ([]OrderByClause, error) {
 	var orderBy []OrderByClause
 
 	for {
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
 		}
 		clause := OrderByClause{Column: p.cur.Literal}
@@ -924,6 +924,7 @@ func (p *Parser) isIdentifierOrContextualKeyword() bool {
 	switch p.cur.Type {
 	case TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING,
 		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
+		TOKEN_DATE, // Allow "date" as column/table name
 		TOKEN_DEFAULT: // Allow "default" as database name
 		return true
 	}
@@ -2261,10 +2262,34 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 		col.Type = catalog.TypeInt64
 	case TOKEN_TEXT:
 		col.Type = catalog.TypeText
+		// Check for VARCHAR(n) - handle both TOKEN_TEXT and possible length
+		if p.peek.Type == TOKEN_LPAREN {
+			p.nextToken() // consume TEXT/VARCHAR
+			p.nextToken() // consume (
+			if !p.curTokenIs(TOKEN_INT) {
+				return col, fmt.Errorf("expected integer after VARCHAR(, got %v", p.cur.Type)
+			}
+			length, err := strconv.Atoi(p.cur.Literal)
+			if err != nil {
+				return col, fmt.Errorf("invalid VARCHAR length: %w", err)
+			}
+			if length <= 0 {
+				return col, fmt.Errorf("VARCHAR length must be positive, got %d", length)
+			}
+			col.Length = length
+			p.nextToken() // consume length
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return col, fmt.Errorf("expected ) after VARCHAR length: %w", err)
+			}
+			p.nextToken() // move past )
+			goto parseModifiers
+		}
 	case TOKEN_BOOL:
 		col.Type = catalog.TypeBool
 	case TOKEN_TIMESTAMP:
 		col.Type = catalog.TypeTimestamp
+	case TOKEN_DATE:
+		col.Type = catalog.TypeDate
 	case TOKEN_JSON_TYPE:
 		col.Type = catalog.TypeJSON
 	default:
@@ -2272,7 +2297,8 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 	}
 	p.nextToken()
 
-	// Optional NOT NULL, PRIMARY KEY, DEFAULT, CHECK, and AUTO_INCREMENT
+parseModifiers:
+	// Optional NOT NULL, PRIMARY KEY, DEFAULT, CHECK, UNIQUE, and AUTO_INCREMENT
 	for {
 		if p.curTokenIs(TOKEN_NOT) {
 			p.nextToken()
@@ -2287,6 +2313,9 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			}
 			col.PrimaryKey = true
 			col.NotNull = true // primary keys are implicitly not null
+		} else if p.curTokenIs(TOKEN_UNIQUE) {
+			p.nextToken()
+			col.Unique = true
 		} else if p.curTokenIs(TOKEN_DEFAULT) {
 			p.nextToken()
 			// Parse default value (literal expression)
@@ -3844,7 +3873,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 
 		// Parse partition columns
 		for {
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name in PARTITION BY, got %v", p.cur.Type)
 			}
 			spec.PartitionBy = append(spec.PartitionBy, p.cur.Literal)
@@ -3867,7 +3896,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 
 		// Parse order by columns
 		for {
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
 			}
 			orderCol := OrderByClause{Column: p.cur.Literal}
