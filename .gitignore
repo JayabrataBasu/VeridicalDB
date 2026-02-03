@@ -38,6 +38,10 @@ veridicaldb.toml
 *.tmp
 *.temp
 
+#test-files
+test_data/
+testdata_sql/
+
 # Local documentation and notes (personal/working files)
 errors.txt
 clients/java/IMPLEMENTATION_COMPLETE.md

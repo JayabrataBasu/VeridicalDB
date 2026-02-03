@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// DataType represents a column data type.
+// DataType represents a column data type. If it does not exist in lexer.go then fraud is afoot.
 type DataType int
 
 const (
@@ -19,6 +19,7 @@ const (
 	TypeText
 	TypeBool
 	TypeTimestamp
+	TypeDate
 	TypeJSON
 	TypeTrigger // Special type for trigger function return type
 )
@@ -38,6 +39,8 @@ func (t DataType) String() string {
 		return "BOOL"
 	case TypeTimestamp:
 		return "TIMESTAMP"
+	case TypeDate: //Blast the idiot who did not add this earlier
+		return "DATE"
 	case TypeJSON:
 		return "JSON"
 	case TypeTrigger:
@@ -62,6 +65,8 @@ func ParseDataType(s string) DataType {
 		return TypeBool
 	case "TIMESTAMP", "DATETIME":
 		return TypeTimestamp
+	case "DATE":
+		return TypeDate
 	case "JSON", "JSONB":
 		return TypeJSON
 	default:
@@ -72,7 +77,7 @@ func ParseDataType(s string) DataType {
 // IsFixedWidth returns true if the type has a fixed byte width.
 func (t DataType) IsFixedWidth() bool {
 	switch t {
-	case TypeInt32, TypeInt64, TypeFloat64, TypeBool, TypeTimestamp:
+	case TypeInt32, TypeInt64, TypeFloat64, TypeBool, TypeTimestamp, TypeDate:
 		return true
 	default:
 		return false
@@ -84,7 +89,7 @@ func (t DataType) FixedWidth() int {
 	switch t {
 	case TypeInt32:
 		return 4
-	case TypeInt64, TypeFloat64, TypeTimestamp:
+	case TypeInt64, TypeFloat64, TypeTimestamp, TypeDate:
 		return 8
 	case TypeBool:
 		return 1
@@ -103,7 +108,8 @@ type Value struct {
 	Text      string
 	Bool      bool
 	Timestamp time.Time
-	JSON      string // JSON stored as string, validated on insert
+	Date      time.Time // DATE type (stores date only)
+	JSON      string    // JSON stored as string, validated on insert
 }
 
 // NewInt32 creates an INT32 value.
@@ -134,6 +140,11 @@ func NewBool(v bool) Value {
 // NewTimestamp creates a TIMESTAMP value.
 func NewTimestamp(v time.Time) Value {
 	return Value{Type: TypeTimestamp, Timestamp: v}
+}
+
+// NewDate creates a DATE value.
+func NewDate(v time.Time) Value {
+	return Value{Type: TypeDate, Date: v}
 }
 
 // NewJSON creates a JSON value.
@@ -167,6 +178,8 @@ func (v Value) String() string {
 		return "false"
 	case TypeTimestamp:
 		return v.Timestamp.Format(time.RFC3339)
+	case TypeDate:
+		return v.Date.Format("2006-01-02")
 	case TypeJSON:
 		return v.JSON
 	default:
@@ -238,6 +251,13 @@ func (v Value) Compare(other Value) int {
 			return 1
 		}
 		return 0
+	case TypeDate:
+		if v.Date.Before(other.Date) {
+			return -1
+		} else if v.Date.After(other.Date) {
+			return 1
+		}
+		return 0
 	case TypeJSON:
 		// JSON comparison: lexicographic comparison of string representation
 		if v.JSON < other.JSON {
@@ -256,6 +276,8 @@ type Column struct {
 	ID            int
 	Name          string
 	Type          DataType
+	Length        int  // For VARCHAR(n): max length, 0 if unbounded
+	Unique        bool // Column-level UNIQUE constraint
 	NotNull       bool
 	PrimaryKey    bool
 	HasDefault    bool

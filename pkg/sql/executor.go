@@ -161,6 +161,8 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 		col := catalog.Column{
 			Name:          c.Name,
 			Type:          c.Type,
+			Length:        c.Length,
+			Unique:        c.Unique,
 			NotNull:       c.NotNull,
 			PrimaryKey:    c.PrimaryKey,
 			HasDefault:    c.HasDefault,
@@ -500,6 +502,11 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 			}
 
+			// Validate VARCHAR length constraints on updated row
+			if err := e.validateVarcharLength(meta.Schema, newRow); err != nil {
+				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+			}
+
 			// Check Foreign Key constraints
 			if err := e.checkForeignKeys(meta, newRow); err != nil {
 				return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
@@ -529,6 +536,16 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 
 		// Validate CHECK constraints
 		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
+		// Validate VARCHAR length constraints
+		if err := e.validateVarcharLength(meta.Schema, values); err != nil {
+			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
+		// Validate UNIQUE constraints
+		if err := e.validateUniqueConstraints(stmt.TableName, meta.Schema, values); err != nil {
 			return nil, fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
@@ -3470,6 +3487,21 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 			return false, err
 		}
 
+		// Validate VARCHAR length constraints
+		if err := e.validateVarcharLength(meta.Schema, newRow); err != nil {
+			return false, err
+		}
+
+		// Validate UNIQUE constraints
+		if err := e.validateUniqueConstraints(stmt.TableName, meta.Schema, newRow); err != nil {
+			return false, err
+		}
+
+		// Check Foreign Key constraints
+		if err := e.checkForeignKeys(meta, newRow); err != nil {
+			return false, err
+		}
+
 		ridsToUpdate = append(ridsToUpdate, rid)
 		newRows = append(newRows, newRow)
 		return true, nil
@@ -3565,6 +3597,21 @@ func (e *Executor) executeUpdateWithFrom(stmt *UpdateStmt, targetMeta *catalog.T
 
 			// Validate CHECK constraints
 			if err := e.validateCheckConstraints(targetMeta.Schema, newRow); err != nil {
+				return false, err
+			}
+
+			// Validate VARCHAR length constraints
+			if err := e.validateVarcharLength(targetMeta.Schema, newRow); err != nil {
+				return false, err
+			}
+
+			// Validate UNIQUE constraints
+			if err := e.validateUniqueConstraints(stmt.TableName, targetMeta.Schema, newRow); err != nil {
+				return false, err
+			}
+
+			// Check Foreign Key constraints
+			if err := e.checkForeignKeys(targetMeta, newRow); err != nil {
 				return false, err
 			}
 
@@ -4386,6 +4433,8 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 		newCol := catalog.Column{
 			Name:       stmt.ColumnDef.Name,
 			Type:       stmt.ColumnDef.Type,
+			Length:     stmt.ColumnDef.Length,
+			Unique:     stmt.ColumnDef.Unique,
 			NotNull:    stmt.ColumnDef.NotNull,
 			HasDefault: stmt.ColumnDef.HasDefault,
 		}
@@ -4404,6 +4453,31 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 			return nil, fmt.Errorf("failed to update table metadata: %w", err)
 		}
 		return &Result{Message: fmt.Sprintf("Column %q added to table %q.", stmt.ColumnDef.Name, stmt.TableName)}, nil
+
+	case "ADD CONSTRAINT":
+		if stmt.ConstraintType == "UNIQUE" {
+			// Mark the columns as unique
+			for _, colName := range stmt.ConstraintCols {
+				found := false
+				for i, col := range meta.Schema.Columns {
+					if strings.EqualFold(col.Name, colName) {
+						meta.Schema.Columns[i].Unique = true
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("column %q does not exist in table %q", colName, stmt.TableName)
+				}
+			}
+			meta.Columns = meta.Schema.Columns
+			// Persist updated metadata
+			if err := e.tm.UpdateTableMeta(meta); err != nil {
+				return nil, fmt.Errorf("failed to update table metadata: %w", err)
+			}
+			return &Result{Message: fmt.Sprintf("Unique constraint %q added to table %q.", stmt.ConstraintName, stmt.TableName)}, nil
+		}
+		return nil, fmt.Errorf("unsupported constraint type: %s", stmt.ConstraintType)
 
 	case "DROP COLUMN":
 		// Find and remove the column
@@ -5021,6 +5095,29 @@ func coerceValue(val catalog.Value, targetType catalog.DataType) (catalog.Value,
 			return catalog.NewInt32(int32(val.Int64)), nil
 		}
 		return catalog.Value{}, fmt.Errorf("value %d out of range for INT", val.Int64)
+	}
+
+	// String to DATE conversion
+	if val.Type == catalog.TypeText && targetType == catalog.TypeDate {
+		// Try to parse as YYYY-MM-DD
+		parsedDate, err := time.Parse("2006-01-02", val.Text)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("invalid date format: expected YYYY-MM-DD, got %q", val.Text)
+		}
+		return catalog.NewDate(parsedDate), nil
+	}
+
+	// String to TIMESTAMP conversion (if not already handled)
+	if val.Type == catalog.TypeText && targetType == catalog.TypeTimestamp {
+		// Try to parse as RFC3339
+		parsedTime, err := time.Parse(time.RFC3339, val.Text)
+		if err != nil {
+			// Try other common formats
+			if parsedTime, err = time.Parse("2006-01-02 15:04:05", val.Text); err != nil {
+				return catalog.Value{}, fmt.Errorf("invalid timestamp format: %w", err)
+			}
+		}
+		return catalog.NewTimestamp(parsedTime), nil
 	}
 
 	return catalog.Value{}, fmt.Errorf("cannot coerce %v to %v", val.Type, targetType)
@@ -6512,6 +6609,51 @@ func (e *Executor) validateCheckConstraints(schema *catalog.Schema, values []cat
 		}
 	}
 
+	return nil
+}
+
+// validateVarcharLength validates VARCHAR(n) length constraints for a row.
+func (e *Executor) validateVarcharLength(schema *catalog.Schema, values []catalog.Value) error {
+	for i, col := range schema.Columns {
+		if col.Type != catalog.TypeText || col.Length == 0 {
+			continue
+		}
+		val := values[i]
+		if !val.IsNull && len(val.Text) > col.Length {
+			return fmt.Errorf("value too long for type VARCHAR(%d): got %d characters", col.Length, len(val.Text))
+		}
+	}
+	return nil
+}
+
+// validateUniqueConstraints validates column-level UNIQUE constraints by scanning the table.
+func (e *Executor) validateUniqueConstraints(tableName string, schema *catalog.Schema, values []catalog.Value) error {
+	for i, col := range schema.Columns {
+		if !col.Unique {
+			continue
+		}
+		val := values[i]
+		if val.IsNull {
+			// NULLs are allowed in UNIQUE columns (multiple NULLs don't violate uniqueness)
+			continue
+		}
+
+		// Check if this value already exists in the table
+		found := false
+		err := e.scanTable(tableName, schema, func(rid storage.RID, row []catalog.Value) (bool, error) {
+			if row[i].Compare(val) == 0 {
+				found = true
+				return false, nil // Stop scanning
+			}
+			return true, nil // Continue
+		})
+		if err != nil {
+			return err
+		}
+		if found {
+			return fmt.Errorf("duplicate key violates unique constraint on column %q", col.Name)
+		}
+	}
 	return nil
 }
 

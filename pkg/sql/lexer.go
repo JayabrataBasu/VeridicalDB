@@ -63,6 +63,7 @@ const (
 	TOKEN_TEXT
 	TOKEN_BOOL
 	TOKEN_TIMESTAMP
+	TOKEN_DATE
 
 	// Transaction keywords
 	TOKEN_BEGIN
@@ -304,7 +305,7 @@ const (
 	TOKEN_QUESTION_AND // ?& (JSON all keys exist)
 	// TOKEN_CONCAT is already defined earlier for || concatenation
 
-	// Full-Text Search
+	// Full-Text Search - please be kind here, I'm only human (post realization that I did not add Date makes me question everything)
 	TOKEN_TSVECTOR        // tsvector type
 	TOKEN_TSQUERY         // tsquery type
 	TOKEN_TO_TSVECTOR     // to_tsvector() function
@@ -382,6 +383,7 @@ var keywords = map[string]TokenType{
 	"BOOLEAN":           TOKEN_BOOL,
 	"TIMESTAMP":         TOKEN_TIMESTAMP,
 	"DATETIME":          TOKEN_TIMESTAMP,
+	"DATE":              TOKEN_DATE,
 	"BEGIN":             TOKEN_BEGIN,
 	"COMMIT":            TOKEN_COMMIT,
 	"ROLLBACK":          TOKEN_ROLLBACK,
