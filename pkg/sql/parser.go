@@ -924,7 +924,7 @@ func (p *Parser) isIdentifierOrContextualKeyword() bool {
 	switch p.cur.Type {
 	case TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING,
 		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
-		TOKEN_DATE, // Allow "date" as column/table name
+		TOKEN_DATE,    // Allow "date" as column/table name
 		TOKEN_DEFAULT: // Allow "default" as database name
 		return true
 	}
