@@ -4433,6 +4433,8 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 		newCol := catalog.Column{
 			Name:       stmt.ColumnDef.Name,
 			Type:       stmt.ColumnDef.Type,
+			Length:     stmt.ColumnDef.Length,
+			Unique:     stmt.ColumnDef.Unique,
 			NotNull:    stmt.ColumnDef.NotNull,
 			HasDefault: stmt.ColumnDef.HasDefault,
 		}
@@ -4451,6 +4453,31 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 			return nil, fmt.Errorf("failed to update table metadata: %w", err)
 		}
 		return &Result{Message: fmt.Sprintf("Column %q added to table %q.", stmt.ColumnDef.Name, stmt.TableName)}, nil
+
+	case "ADD CONSTRAINT":
+		if stmt.ConstraintType == "UNIQUE" {
+			// Mark the columns as unique
+			for _, colName := range stmt.ConstraintCols {
+				found := false
+				for i, col := range meta.Schema.Columns {
+					if strings.EqualFold(col.Name, colName) {
+						meta.Schema.Columns[i].Unique = true
+						found = true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("column %q does not exist in table %q", colName, stmt.TableName)
+				}
+			}
+			meta.Columns = meta.Schema.Columns
+			// Persist updated metadata
+			if err := e.tm.UpdateTableMeta(meta); err != nil {
+				return nil, fmt.Errorf("failed to update table metadata: %w", err)
+			}
+			return &Result{Message: fmt.Sprintf("Unique constraint %q added to table %q.", stmt.ConstraintName, stmt.TableName)}, nil
+		}
+		return nil, fmt.Errorf("unsupported constraint type: %s", stmt.ConstraintType)
 
 	case "DROP COLUMN":
 		// Find and remove the column

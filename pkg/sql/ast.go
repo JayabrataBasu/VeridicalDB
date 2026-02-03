@@ -313,11 +313,14 @@ func (s *RollbackStmt) statementNode() {}
 
 // AlterTableStmt represents ALTER TABLE statement.
 type AlterTableStmt struct {
-	TableName  string
-	Action     string     // "ADD COLUMN", "DROP COLUMN", "RENAME TO", "RENAME COLUMN"
-	ColumnDef  *ColumnDef // for ADD COLUMN
-	ColumnName string     // for DROP COLUMN or RENAME COLUMN (old name)
-	NewName    string     // for RENAME TO or RENAME COLUMN (new name)
+	TableName      string
+	Action         string     // "ADD COLUMN", "DROP COLUMN", "RENAME TO", "RENAME COLUMN", "ADD CONSTRAINT"
+	ColumnDef      *ColumnDef // for ADD COLUMN
+	ColumnName     string     // for DROP COLUMN or RENAME COLUMN (old name)
+	NewName        string     // for RENAME TO or RENAME COLUMN (new name)
+	ConstraintName string     // for ADD CONSTRAINT (e.g., constraint name)
+	ConstraintType string     // for ADD CONSTRAINT (e.g., "UNIQUE")
+	ConstraintCols []string   // for ADD CONSTRAINT (columns involved)
 }
 
 func (s *AlterTableStmt) statementNode() {}

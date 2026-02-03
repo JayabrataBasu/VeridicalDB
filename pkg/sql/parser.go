@@ -2273,15 +2273,15 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			if err != nil {
 				return col, fmt.Errorf("invalid VARCHAR length: %w", err)
 			}
-			if length <= 0 {
-				return col, fmt.Errorf("VARCHAR length must be positive, got %d", length)
+			if length < 0 {
+				return col, fmt.Errorf("VARCHAR length must be non-negative, got %d", length)
 			}
+			// Length of 0 means unbounded (unlimited length)
 			col.Length = length
 			p.nextToken() // consume length
 			if err := p.expect(TOKEN_RPAREN); err != nil {
 				return col, fmt.Errorf("expected ) after VARCHAR length: %w", err)
 			}
-			p.nextToken() // move past )
 			goto parseModifiers
 		}
 	case TOKEN_BOOL:
@@ -3529,7 +3529,7 @@ func (p *Parser) parseExtractExpression() (Expression, error) {
 }
 
 // parseAlter parses: ALTER TABLE table_name action or ALTER USER username ...
-// Actions: ADD [COLUMN] col_def, DROP COLUMN col_name, RENAME TO new_name, RENAME COLUMN old TO new
+// Actions: ADD [COLUMN] col_def, DROP COLUMN col_name, RENAME TO new_name, RENAME COLUMN old TO new, ADD CONSTRAINT ... UNIQUE
 func (p *Parser) parseAlter() (Statement, error) {
 	p.nextToken() // consume ALTER
 
@@ -3556,17 +3556,61 @@ func (p *Parser) parseAlter() (Statement, error) {
 	switch {
 	case p.curTokenIs(TOKEN_ADD):
 		p.nextToken() // consume ADD
-		// Optional COLUMN keyword
-		if p.curTokenIs(TOKEN_COLUMN) {
+
+		// Check for ADD CONSTRAINT
+		if p.curTokenIs(TOKEN_CONSTRAINT) {
+			p.nextToken() // consume CONSTRAINT
+			// Constraint name (optional, but we'll require it)
+			if !p.isIdentifierOrContextualKeyword() {
+				return nil, fmt.Errorf("expected constraint name after CONSTRAINT")
+			}
+			constraintName := p.cur.Literal
 			p.nextToken()
+
+			// Expect UNIQUE
+			if !p.curTokenIs(TOKEN_UNIQUE) {
+				return nil, fmt.Errorf("expected UNIQUE in ADD CONSTRAINT, got %v", p.cur.Type)
+			}
+			p.nextToken() // consume UNIQUE
+
+			// Parse column list: (col1, col2, ...)
+			if err := p.expect(TOKEN_LPAREN); err != nil {
+				return nil, fmt.Errorf("expected ( after UNIQUE")
+			}
+			var cols []string
+			for {
+				if !p.isIdentifierOrContextualKeyword() {
+					return nil, fmt.Errorf("expected column name in UNIQUE constraint")
+				}
+				cols = append(cols, p.cur.Literal)
+				p.nextToken()
+				if !p.curTokenIs(TOKEN_COMMA) {
+					break
+				}
+				p.nextToken() // consume comma
+			}
+			if err := p.expect(TOKEN_RPAREN); err != nil {
+				return nil, fmt.Errorf("expected ) after column list in UNIQUE constraint")
+			}
+
+			stmt.Action = "ADD CONSTRAINT"
+			stmt.ConstraintName = constraintName
+			stmt.ConstraintType = "UNIQUE"
+			stmt.ConstraintCols = cols
+		} else {
+			// ADD COLUMN
+			// Optional COLUMN keyword
+			if p.curTokenIs(TOKEN_COLUMN) {
+				p.nextToken()
+			}
+			// Parse column definition
+			colDef, err := p.parseColumnDef()
+			if err != nil {
+				return nil, err
+			}
+			stmt.Action = "ADD COLUMN"
+			stmt.ColumnDef = &colDef
 		}
-		// Parse column definition
-		colDef, err := p.parseColumnDef()
-		if err != nil {
-			return nil, err
-		}
-		stmt.Action = "ADD COLUMN"
-		stmt.ColumnDef = &colDef
 
 	case p.curTokenIs(TOKEN_DROP):
 		p.nextToken() // consume DROP
