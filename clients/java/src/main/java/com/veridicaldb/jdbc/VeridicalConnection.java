@@ -33,6 +33,7 @@ import javax.net.ssl.SSLSocketFactory;
  * JDBC Connection implementation for VeridicalDB.
  * Manages a single connection to the database server using PostgreSQL wire protocol.
  */
+@SuppressWarnings("module")
 public class VeridicalConnection implements Connection {
 
     private static final int SSL_REQUEST_CODE = 80877103;
@@ -81,8 +82,8 @@ public class VeridicalConnection implements Connection {
             // Authenticate
             authenticate();
             
-            // Set initial auto-commit mode
-            setAutoCommit(props.isAutoCommit());
+            // Set initial auto-commit mode without invoking overridable methods in constructor
+            this.autoCommit = props.isAutoCommit();
             
         } catch (IOException e) {
             throw new SQLException("Failed to connect to " + props.getHost() + ":" + props.getPort(), "08001", e);
@@ -145,21 +146,23 @@ public class VeridicalConnection implements Connection {
         
         if (authMsg.type == 'R') { // Authentication request
             int authType = authMsg.getInt();
-            
-            if (authType == 0) {
-                // Auth OK
-                return;
-            } else if (authType == 3) {
-                // Clear text password required
-                protocol.sendPassword(props.getPassword());
-                
-                // Wait for auth response
-                WireProtocol.Message authResponse = protocol.receiveMessage();
-                if (authResponse.type != 'R' || authResponse.getInt() != 0) {
-                    throw new SQLException("Authentication failed", "28P01");
-                }
-            } else {
-                throw new SQLException("Unsupported authentication type: " + authType, "28000");
+
+            switch (authType) {
+                case 0:
+                    // Auth OK
+                    return;
+                case 3:
+                    // Clear text password required
+                    protocol.sendPassword(props.getPassword());
+
+                    // Wait for auth response
+                    WireProtocol.Message authResponse = protocol.receiveMessage();
+                    if (authResponse.type != 'R' || authResponse.getInt() != 0) {
+                        throw new SQLException("Authentication failed", "28P01");
+                    }
+                    break;
+                default:
+                    throw new SQLException("Unsupported authentication type: " + authType, "28000");
             }
         }
         
@@ -452,7 +455,7 @@ public class VeridicalConnection implements Connection {
             protocol.sendSimpleQuery("SELECT 1");
             protocol.waitForReady();
             return true;
-        } catch (Exception e) {
+        } catch (IOException e) {
             return false;
         }
     }

@@ -227,17 +227,17 @@ type Portal struct {
 func newConn(id uint64, conn net.Conn, server *Server) *Conn {
 	bufW := bufio.NewWriter(conn)
 	return &Conn{
-		id:         id,
-		conn:       conn,
-		server:     server,
-		reader:     NewMessageReader(conn),
-		writer:     NewMessageWriter(bufW),
-		bufW:       bufW,
+		id:           id,
+		conn:         conn,
+		server:       server,
+		reader:       NewMessageReader(conn),
+		writer:       NewMessageWriter(bufW),
+		bufW:         bufW,
 		cancelSecret: generateCancelSecret(id),
-		parameters: make(map[string]string),
-		txnStatus:  TxnStatusIdle,
-		statements: make(map[string]*PreparedStatement),
-		portals:    make(map[string]*Portal),
+		parameters:   make(map[string]string),
+		txnStatus:    TxnStatusIdle,
+		statements:   make(map[string]*PreparedStatement),
+		portals:      make(map[string]*Portal),
 	}
 }
 
@@ -420,8 +420,8 @@ func (c *Conn) processStartup(params []byte) error {
 
 	// Send BackendKeyData (process ID and secret key for cancellation)
 	buf.Reset()
-	buf.WriteInt32(int32(c.id))     // process ID
-	buf.WriteInt32(c.cancelSecret)  // secret key
+	buf.WriteInt32(int32(c.id))    // process ID
+	buf.WriteInt32(c.cancelSecret) // secret key
 	if err := c.writer.WriteMessage(MsgBackendKeyData, buf.Bytes()); err != nil {
 		return err
 	}

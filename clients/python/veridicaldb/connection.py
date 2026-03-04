@@ -147,8 +147,8 @@ class Connection:
             DatabaseError: If authentication fails
         """
         authenticated = False
-        
-        while not authenticated:
+
+        while True:
             msg_type, data = self.protocol.receive_message()
             
             if msg_type == MSG_AUTHENTICATION:
@@ -174,6 +174,8 @@ class Connection:
             
             elif msg_type == MSG_READY_FOR_QUERY:
                 # Connection is ready
+                if not authenticated:
+                    raise DatabaseError("Server became ready before authentication completed")
                 status = self.protocol.parse_ready_for_query(data)
                 self._in_transaction = (status == 'T')
                 break
