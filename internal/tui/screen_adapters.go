@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/screens"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -16,10 +17,10 @@ type DatabaseBrowserAdapter struct {
 func NewDatabaseBrowserAdapter(app *Model, width, height int) *DatabaseBrowserAdapter {
 	browser := screens.NewDatabaseBrowser(width, height, app.GetThemeManager())
 
-	// Wire up system catalog if available
-	// Note: SystemCatalog requires txn.Manager, lock.Manager, and catalog.Catalog
-	// which would need to be extracted from the session. For now, we leave it unwired
-	// and the browser will work with empty/mock data until proper wiring is implemented.
+	if app != nil && app.GetSession() != nil {
+		sc := observability.NewSystemCatalog(nil, nil, app.GetSession().Catalog())
+		browser.SetSystemCatalog(sc)
+	}
 
 	return &DatabaseBrowserAdapter{
 		browser: browser,
@@ -66,10 +67,10 @@ type DashboardAdapter struct {
 func NewDashboardAdapter(app *Model) *DashboardAdapter {
 	dashboard := screens.NewDashboard()
 
-	// Wire up system catalog if available
-	// Note: SystemCatalog requires txn.Manager, lock.Manager, and catalog.Catalog
-	// which would need to be extracted from the session. For now, we leave it unwired
-	// and the dashboard will display default/mock metrics until proper wiring is implemented.
+	if app != nil && app.GetSession() != nil {
+		sc := observability.NewSystemCatalog(nil, nil, app.GetSession().Catalog())
+		dashboard.SetSystemCatalog(sc)
+	}
 
 	return &DashboardAdapter{
 		dashboard: dashboard,

@@ -138,8 +138,8 @@ func New(session *sql.Session) *Model {
 	// Feature screens
 	m.screens["users"] = screens.NewUsersScreen(m)
 	m.screens["backup"] = screens.NewBackupScreen(m)
-	m.screens["settings"] = NewPlaceholderScreen(m, "Settings")
-	m.screens["about"] = NewPlaceholderScreen(m, "About")
+	m.screens["settings"] = NewSettingsScreen(m)
+	m.screens["about"] = NewAboutScreen(m)
 
 	m.screen = homeScreen
 
@@ -176,9 +176,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "ctrl+t":
 			// Cycle through themes
-			m.themeIndex = (m.themeIndex + 1) % len(m.themeNames)
-			themeName := m.themeNames[m.themeIndex]
-			m.themeManager.SetTheme(themeName)
+			themeName := m.CycleTheme()
 			m.statusMessage = "Theme: " + themeName
 			return m, nil
 
@@ -319,6 +317,17 @@ func (m *Model) GetTheme() *Theme {
 // GetThemeManager returns the theme manager.
 func (m *Model) GetThemeManager() *theme.Manager {
 	return m.themeManager
+}
+
+// CycleTheme advances to the next available theme and returns its name.
+func (m *Model) CycleTheme() string {
+	if len(m.themeNames) == 0 {
+		return ""
+	}
+	m.themeIndex = (m.themeIndex + 1) % len(m.themeNames)
+	themeName := m.themeNames[m.themeIndex]
+	m.themeManager.SetTheme(themeName)
+	return themeName
 }
 
 // GetStyles returns the shared style palette for screens.
