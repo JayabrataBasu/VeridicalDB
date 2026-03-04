@@ -43,6 +43,7 @@ test_data/
 testdata_sql/
 
 # Local documentation and notes (personal/working files)
+docs/engineering-handoff/
 errors.txt
 clients/java/IMPLEMENTATION_COMPLETE.md
 Roadmap.md
