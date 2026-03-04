@@ -51,6 +51,21 @@ func (tm *TableManager) Catalog() *Catalog {
 	return tm.catalog
 }
 
+// Storage returns the underlying storage engine.
+func (tm *TableManager) Storage() *storage.Storage {
+	return tm.storage
+}
+
+// DataDir returns the data directory path.
+func (tm *TableManager) DataDir() string {
+	return tm.dataDir
+}
+
+// PageSize returns the configured page size.
+func (tm *TableManager) PageSize() int {
+	return tm.pageSize
+}
+
 // CreateTable creates a new table with the given schema.
 func (tm *TableManager) CreateTable(name string, cols []Column, foreignKeys []ForeignKey) error {
 	return tm.CreateTableWithStorage(name, cols, foreignKeys, "row", nil)

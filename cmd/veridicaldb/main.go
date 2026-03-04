@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/vacuum"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -703,12 +705,6 @@ func runVacuum(table string, full bool) {
 	fmt.Println("Starting vacuum...")
 	start := time.Now()
 
-	if table != "" {
-		fmt.Printf("Vacuuming table: %s\n", table)
-	} else {
-		fmt.Println("Vacuuming all tables")
-	}
-
 	if full {
 		fmt.Println("Mode: FULL (aggressive compaction)")
 	} else {
@@ -717,24 +713,110 @@ func runVacuum(table string, full bool) {
 
 	fmt.Printf("Data directory: %s\n", cfg.Storage.DataDir)
 
-	// TODO: Wire up full vacuum integration with storage/catalog
-	// This requires access to the running database's transaction manager
-	// For CLI, we'd need to connect to the server or run standalone
+	// Initialize database components for standalone vacuum
+	pageSize := cfg.Storage.PageSize
+	if pageSize == 0 {
+		pageSize = 8192
+	}
 
+	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, pageSize, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing table manager: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build vacuum adapters using the real storage and catalog
+	storageAdapter := vacuum.NewStorageAdapter(tm.Storage(), tm.DataDir(), tm.PageSize())
+
+	// Determine table list
+	var tables []string
+	if table != "" {
+		// Verify the table exists
+		allTables := tm.Catalog().ListTables()
+		found := false
+		for _, t := range allTables {
+			if t == table {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "Error: table %q not found\n", table)
+			os.Exit(1)
+		}
+		tables = []string{table}
+	} else {
+		tables = tm.Catalog().ListTables()
+	}
+
+	if len(tables) == 0 {
+		fmt.Println("No tables found to vacuum.")
+		return
+	}
+
+	catalogAdapter := vacuum.NewSimpleCatalogAdapter(storageAdapter, tables)
+
+	// Create vacuum manager with a temporary transaction manager
+	txnMgr := txn.NewManager()
+	vacuumCfg := vacuum.DefaultConfig()
+	vacuumCfg.Enabled = false // We drive it manually, not as a daemon
+	vacuumMgr := vacuum.NewManager(vacuumCfg, txnMgr, storageAdapter, catalogAdapter)
+
+	ctx := context.Background()
+
+	if table != "" {
+		fmt.Printf("Vacuuming table: %s\n", table)
+		result := vacuumMgr.VacuumTable(ctx, table, full)
+		printVacuumResult(result)
+	} else {
+		fmt.Printf("Vacuuming %d table(s)...\n", len(tables))
+		results := vacuumMgr.VacuumAll(ctx, full)
+		for _, result := range results {
+			printVacuumResult(result)
+		}
+	}
+
+	// Print summary from metrics
+	metrics := vacuumMgr.GetMetrics()
+	fmt.Println()
 	fmt.Printf("Vacuum completed in %v\n", time.Since(start))
-	fmt.Println("\nNote: For full vacuum functionality, use the SQL command:")
-	fmt.Println("  VACUUM;          -- vacuum all tables")
-	fmt.Println("  VACUUM tablename; -- vacuum specific table")
-	fmt.Println("  VACUUM FULL;      -- full vacuum with compaction")
+	fmt.Printf("  Tables processed:  %d\n", metrics.VacuumRunsTotal.Load())
+	fmt.Printf("  Pages scanned:     %d\n", metrics.PagesScannedTotal.Load())
+	fmt.Printf("  Pages compacted:   %d\n", metrics.PagesCompactedTotal.Load())
+	fmt.Printf("  Tuples removed:    %d\n", metrics.TuplesRemovedTotal.Load())
+	fmt.Printf("  Bytes reclaimed:   %d\n", metrics.BytesReclaimedTotal.Load())
+	if metrics.ErrorsTotal.Load() > 0 {
+		fmt.Printf("  Errors:            %d\n", metrics.ErrorsTotal.Load())
+	}
+}
+
+// printVacuumResult displays a single table vacuum result.
+func printVacuumResult(result *vacuum.VacuumResult) {
+	if result.Error != nil {
+		fmt.Printf("  %-20s ERROR: %v\n", result.TableName, result.Error)
+		return
+	}
+	fmt.Printf("  %-20s %d pages scanned, %d compacted, %d tuples removed, %d bytes reclaimed (%v)\n",
+		result.TableName,
+		result.PagesScanned,
+		result.PagesCompacted,
+		result.TuplesRemoved,
+		result.BytesReclaimed,
+		result.Duration(),
+	)
 }
 
 // vacuumStatus shows vacuum statistics and configuration.
 func vacuumStatus(cmd *cobra.Command, args []string) {
+	_ = cmd
+	_ = args
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+
+	vacuumCfg := vacuum.DefaultConfig()
 
 	fmt.Println("Vacuum Configuration")
 	fmt.Println("====================")
@@ -742,16 +824,60 @@ func vacuumStatus(cmd *cobra.Command, args []string) {
 	fmt.Println()
 
 	fmt.Println("Default Thresholds:")
-	fmt.Println("  Dead tuple threshold: 50")
-	fmt.Println("  Dead tuple ratio:     20%")
-	fmt.Println("  Cost limit:           200")
-	fmt.Println("  Cost delay:           10ms")
+	fmt.Printf("  Dead tuple threshold: %d\n", vacuumCfg.DeadTupleThreshold)
+	fmt.Printf("  Dead tuple ratio:     %.0f%%\n", vacuumCfg.DeadTupleRatio*100)
+	fmt.Printf("  Cost limit:           %d\n", vacuumCfg.CostLimit)
+	fmt.Printf("  Cost delay:           %v\n", vacuumCfg.CostDelay)
 	fmt.Println()
 
-	fmt.Println("Vacuum Metrics:")
-	fmt.Println("  (Connect to running server for live metrics)")
-	fmt.Println()
+	// Initialize table manager to read live table stats
+	pageSize := cfg.Storage.PageSize
+	if pageSize == 0 {
+		pageSize = 8192
+	}
 
+	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, pageSize, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not open catalog: %v\n", err)
+		fmt.Println("Table Statistics: (unavailable)")
+		return
+	}
+
+	tables := tm.Catalog().ListTables()
+	if len(tables) == 0 {
+		fmt.Println("Table Statistics: (no tables)")
+		return
+	}
+
+	storageAdapter := vacuum.NewStorageAdapter(tm.Storage(), tm.DataDir(), tm.PageSize())
+	catalogAdapter := vacuum.NewSimpleCatalogAdapter(storageAdapter, tables)
+
+	fmt.Printf("Table Statistics (%d tables):\n", len(tables))
+	fmt.Printf("  %-20s %10s %10s %10s %10s\n", "TABLE", "TOTAL", "DEAD", "RATIO", "NEEDS VAC")
+	fmt.Printf("  %-20s %10s %10s %10s %10s\n", "─────", "─────", "────", "─────", "─────────")
+
+	for _, tbl := range tables {
+		stats, err := catalogAdapter.GetTableStats(tbl)
+		if err != nil {
+			fmt.Printf("  %-20s %10s\n", tbl, "(error)")
+			continue
+		}
+
+		needsVac := "no"
+		if stats.NeedsVacuum(vacuumCfg) {
+			needsVac = "YES"
+		}
+
+		fmt.Printf("  %-20s %10d %10d %9.1f%% %10s\n",
+			stats.TableName,
+			stats.TotalTuples,
+			stats.DeadTuples,
+			stats.DeadRatio()*100,
+			needsVac,
+		)
+	}
+
+	fmt.Println()
 	fmt.Println("To run vacuum:")
 	fmt.Println("  veridicaldb vacuum run")
 	fmt.Println("  veridicaldb vacuum run --table <name>")
