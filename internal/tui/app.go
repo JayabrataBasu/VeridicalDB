@@ -46,6 +46,9 @@ type Model struct {
 	// Status bar
 	statusBar *StatusBar
 
+	// Global help overlay
+	helpOverlay *screens.HelpOverlay
+
 	// Window dimensions
 	width  int
 	height int
@@ -118,6 +121,12 @@ func New(session *sql.Session) *Model {
 		sidebarCollapsed: false,
 		themeNames:       themeNames,
 		themeIndex:       0,
+		helpOverlay:      screens.NewHelpOverlay(),
+	}
+
+	// Prime overlay dimensions with initial viewport.
+	if m.helpOverlay != nil {
+		_ = m.helpOverlay.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	}
 
 	// Initialize screens
@@ -160,9 +169,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.layout.SetDimensions(msg.Width, msg.Height)
 		m.statusBar.SetWidth(msg.Width)
+		if m.helpOverlay != nil {
+			_ = m.helpOverlay.Update(msg)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
+		if m.helpOverlay != nil && m.helpOverlay.IsVisible() {
+			cmd := m.helpOverlay.Update(msg)
+			return m, cmd
+		}
+
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
 			m.quitting = true
@@ -184,9 +201,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Clear screen
 			return m, tea.ClearScreen
 
-		case "f1", "ctrl+h":
-			// Show help (TODO)
-			m.statusMessage = "Help not yet implemented"
+		case "f1", "ctrl+h", "?":
+			if m.helpOverlay != nil {
+				m.helpOverlay.Show()
+				m.statusMessage = ""
+			}
 			return m, nil
 		}
 
@@ -245,6 +264,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	if m.helpOverlay != nil && m.helpOverlay.IsVisible() {
+		return m.helpOverlay.View()
 	}
 
 	if m.screen == nil {

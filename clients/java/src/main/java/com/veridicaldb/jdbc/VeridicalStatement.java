@@ -20,6 +20,8 @@ public class VeridicalStatement implements Statement {
     
     protected final VeridicalConnection connection;
     protected final WireProtocol protocol;
+    protected final int resultSetType;
+    protected final int resultSetConcurrency;
     protected boolean closed = false;
     protected int fetchSize = 0;
     protected int maxRows = 0;
@@ -31,8 +33,14 @@ public class VeridicalStatement implements Statement {
     protected List<String> batchCommands = new ArrayList<>();
     
     public VeridicalStatement(VeridicalConnection connection, WireProtocol protocol) {
+        this(connection, protocol, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+    }
+
+    public VeridicalStatement(VeridicalConnection connection, WireProtocol protocol, int resultSetType, int resultSetConcurrency) {
         this.connection = connection;
         this.protocol = protocol;
+        this.resultSetType = resultSetType;
+        this.resultSetConcurrency = resultSetConcurrency;
     }
     
     @Override
@@ -56,14 +64,12 @@ public class VeridicalStatement implements Statement {
                         break;
                         
                     case WireProtocol.MessageType.DATA_ROW:
-                        if (rowDesc != null) {
-                            Object[] row = parseDataRow(msg, rowDesc);
-                            rows.add(row);
-                            if (maxRows > 0 && rows.size() >= maxRows) {
-                                // Skip remaining rows
-                                while (protocol.receiveMessage().type != WireProtocol.MessageType.COMMAND_COMPLETE) {
-                                    // Consume
-                                }
+                        Object[] row = parseDataRow(msg, rowDesc);
+                        rows.add(row);
+                        if (maxRows > 0 && rows.size() >= maxRows) {
+                            // Skip remaining rows
+                            while (protocol.receiveMessage().type != WireProtocol.MessageType.COMMAND_COMPLETE) {
+                                // Consume
                             }
                         }
                         break;
@@ -74,7 +80,7 @@ public class VeridicalStatement implements Statement {
                         
                     case WireProtocol.MessageType.READY_FOR_QUERY:
                         // Transaction state - done
-                        currentResultSet = new VeridicalResultSet(this, rowDesc, rows);
+                        currentResultSet = new VeridicalResultSet(this, rowDesc, rows, resultSetType, resultSetConcurrency);
                         updateCount = -1;
                         return currentResultSet;
                         
@@ -239,10 +245,8 @@ public class VeridicalStatement implements Statement {
                         break;
                         
                     case WireProtocol.MessageType.DATA_ROW:
-                        if (rowDesc != null) {
-                            Object[] row = parseDataRow(msg, rowDesc);
-                            rows.add(row);
-                        }
+                        Object[] row = parseDataRow(msg, rowDesc);
+                        rows.add(row);
                         break;
                         
                     case WireProtocol.MessageType.COMMAND_COMPLETE:
@@ -254,7 +258,7 @@ public class VeridicalStatement implements Statement {
                         
                     case WireProtocol.MessageType.READY_FOR_QUERY:
                         if (hasResultSet) {
-                            currentResultSet = new VeridicalResultSet(this, rowDesc, rows);
+                            currentResultSet = new VeridicalResultSet(this, rowDesc, rows, resultSetType, resultSetConcurrency);
                             updateCount = -1;
                         } else {
                             currentResultSet = null;
@@ -301,8 +305,8 @@ public class VeridicalStatement implements Statement {
     @Override
     public void setFetchDirection(int direction) throws SQLException {
         checkClosed();
-        if (direction != ResultSet.FETCH_FORWARD) {
-            throw new SQLFeatureNotSupportedException("Only FETCH_FORWARD supported");
+        if (direction != ResultSet.FETCH_FORWARD && direction != ResultSet.FETCH_REVERSE && direction != ResultSet.FETCH_UNKNOWN) {
+            throw new SQLFeatureNotSupportedException("Unsupported fetch direction");
         }
     }
     
@@ -330,13 +334,13 @@ public class VeridicalStatement implements Statement {
     @Override
     public int getResultSetConcurrency() throws SQLException {
         checkClosed();
-        return ResultSet.CONCUR_READ_ONLY;
+        return resultSetConcurrency;
     }
     
     @Override
     public int getResultSetType() throws SQLException {
         checkClosed();
-        return ResultSet.TYPE_FORWARD_ONLY;
+        return resultSetType;
     }
     
     @Override
@@ -509,10 +513,15 @@ public class VeridicalStatement implements Statement {
             } else {
                 byte[] data = new byte[length];
                 in.readFully(data);
-                
-                // Convert to appropriate Java type
-                WireProtocol.ColumnInfo col = rowDesc.getColumn(i);
-                row[i] = TypeMapper.decode(col.typeOid, data);
+
+                if (rowDesc != null && i < rowDesc.getColumnCount()) {
+                    // Convert to typed Java value when metadata is available.
+                    WireProtocol.ColumnInfo col = rowDesc.getColumn(i);
+                    row[i] = TypeMapper.decode(col.typeOid, data);
+                } else {
+                    // Metadata fallback: treat column data as text.
+                    row[i] = new String(data);
+                }
             }
         }
         

@@ -94,6 +94,11 @@ func (s *Session) HasDatabaseManager() bool {
 	return s.dbMgr != nil
 }
 
+// GetDatabaseManager returns the database manager for this session, if configured.
+func (s *Session) GetDatabaseManager() *catalog.DatabaseManager {
+	return s.dbMgr
+}
+
 // requireDatabaseSelected ensures a current database is selected and exists.
 func (s *Session) requireDatabaseSelected() error {
 	// If DatabaseManager is not configured (single-database/embedded mode), allow DDL

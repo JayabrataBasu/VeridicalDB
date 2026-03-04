@@ -38,7 +38,16 @@ public class VeridicalPreparedStatement extends VeridicalStatement implements Pr
     private final Map<Integer, Parameter> parameters = new HashMap<>();
     
     public VeridicalPreparedStatement(VeridicalConnection connection, WireProtocol protocol, String sql) {
-        super(connection, protocol);
+        this(connection, protocol, sql, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+    }
+
+    public VeridicalPreparedStatement(
+            VeridicalConnection connection,
+            WireProtocol protocol,
+            String sql,
+            int resultSetType,
+            int resultSetConcurrency) {
+        super(connection, protocol, resultSetType, resultSetConcurrency);
         this.sql = sql;
     }
     
@@ -89,17 +98,15 @@ public class VeridicalPreparedStatement extends VeridicalStatement implements Pr
                         break;
                         
                     case WireProtocol.MessageType.DATA_ROW:
-                        if (rowDesc != null) {
-                            Object[] row = parseDataRow(msg, rowDesc);
-                            rows.add(row);
-                        }
+                        Object[] row = parseDataRow(msg, rowDesc);
+                        rows.add(row);
                         break;
                         
                     case WireProtocol.MessageType.COMMAND_COMPLETE:
                         break;
                         
                     case WireProtocol.MessageType.READY_FOR_QUERY:
-                        currentResultSet = new VeridicalResultSet(this, rowDesc, rows);
+                        currentResultSet = new VeridicalResultSet(this, rowDesc, rows, resultSetType, resultSetConcurrency);
                         updateCount = -1;
                         return currentResultSet;
                         

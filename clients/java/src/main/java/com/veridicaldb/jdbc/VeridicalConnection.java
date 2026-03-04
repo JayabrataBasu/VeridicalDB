@@ -178,6 +178,15 @@ public class VeridicalConnection implements Connection {
         checkClosed();
         return new VeridicalPreparedStatement(this, protocol, sql);
     }
+
+    private void validateResultSetOptions(int resultSetType, int resultSetConcurrency) throws SQLException {
+        if (resultSetType != ResultSet.TYPE_FORWARD_ONLY && resultSetType != ResultSet.TYPE_SCROLL_INSENSITIVE) {
+            throw new SQLFeatureNotSupportedException("Only TYPE_FORWARD_ONLY and TYPE_SCROLL_INSENSITIVE supported");
+        }
+        if (resultSetConcurrency != ResultSet.CONCUR_READ_ONLY && resultSetConcurrency != ResultSet.CONCUR_UPDATABLE) {
+            throw new SQLFeatureNotSupportedException("Only CONCUR_READ_ONLY and CONCUR_UPDATABLE supported");
+        }
+    }
     
     @Override
     public CallableStatement prepareCall(String sql) throws SQLException {
@@ -319,24 +328,16 @@ public class VeridicalConnection implements Connection {
     
     @Override
     public Statement createStatement(int resultSetType, int resultSetConcurrency) throws SQLException {
-        if (resultSetType != ResultSet.TYPE_FORWARD_ONLY) {
-            throw new SQLFeatureNotSupportedException("Only TYPE_FORWARD_ONLY supported");
-        }
-        if (resultSetConcurrency != ResultSet.CONCUR_READ_ONLY) {
-            throw new SQLFeatureNotSupportedException("Only CONCUR_READ_ONLY supported");
-        }
-        return createStatement();
+        checkClosed();
+        validateResultSetOptions(resultSetType, resultSetConcurrency);
+        return new VeridicalStatement(this, protocol, resultSetType, resultSetConcurrency);
     }
     
     @Override
     public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency) throws SQLException {
-        if (resultSetType != ResultSet.TYPE_FORWARD_ONLY) {
-            throw new SQLFeatureNotSupportedException("Only TYPE_FORWARD_ONLY supported");
-        }
-        if (resultSetConcurrency != ResultSet.CONCUR_READ_ONLY) {
-            throw new SQLFeatureNotSupportedException("Only CONCUR_READ_ONLY supported");
-        }
-        return prepareStatement(sql);
+        checkClosed();
+        validateResultSetOptions(resultSetType, resultSetConcurrency);
+        return new VeridicalPreparedStatement(this, protocol, sql, resultSetType, resultSetConcurrency);
     }
     
     @Override

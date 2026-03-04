@@ -70,6 +70,11 @@ func NewDashboardAdapter(app *Model) *DashboardAdapter {
 	if app != nil && app.GetSession() != nil {
 		sc := observability.NewSystemCatalog(nil, nil, app.GetSession().Catalog())
 		dashboard.SetSystemCatalog(sc)
+
+		// Pass DatabaseManager if available for instance-level metrics
+		if dbMgr := app.GetSession().GetDatabaseManager(); dbMgr != nil {
+			dashboard.SetDatabaseManager(dbMgr)
+		}
 	}
 
 	return &DashboardAdapter{

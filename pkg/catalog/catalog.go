@@ -48,6 +48,11 @@ func (c *Catalog) catalogPath() string {
 	return filepath.Join(c.dataDir, "catalog.json")
 }
 
+// DataDir returns the data directory path for this catalog.
+func (c *Catalog) DataDir() string {
+	return c.dataDir
+}
+
 // load reads catalog from disk.
 func (c *Catalog) load() error {
 	data, err := os.ReadFile(c.catalogPath())

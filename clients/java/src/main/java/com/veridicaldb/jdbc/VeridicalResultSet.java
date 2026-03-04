@@ -21,31 +21,49 @@ import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.util.Calendar;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * JDBC ResultSet implementation for VeridicalDB.
- * Provides forward-only, read-only result set functionality.
+ * Provides forward-only/scroll-insensitive and read-only/updatable result set functionality.
  */
 public class VeridicalResultSet implements ResultSet {
     
     private final Statement statement;
     private final WireProtocol.RowDescription rowDesc;
     private final List<Object[]> rows;
+    private final int resultSetType;
+    private final int resultSetConcurrency;
     private int currentRow = -1; // Before first row
     private boolean closed = false;
     private boolean wasNull = false;
+    private final Map<Integer, Object> pendingUpdates = new HashMap<>();
+    private boolean updatedCurrentRow = false;
     
     public VeridicalResultSet(Statement statement, WireProtocol.RowDescription rowDesc, List<Object[]> rows) {
+        this(statement, rowDesc, rows, ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY);
+    }
+
+    public VeridicalResultSet(
+            Statement statement,
+            WireProtocol.RowDescription rowDesc,
+            List<Object[]> rows,
+            int resultSetType,
+            int resultSetConcurrency) {
         this.statement = statement;
         this.rowDesc = rowDesc;
         this.rows = rows;
+        this.resultSetType = resultSetType;
+        this.resultSetConcurrency = resultSetConcurrency;
     }
     
     @Override
     public boolean next() throws SQLException {
         checkClosed();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
         currentRow++;
         return currentRow < rows.size();
     }
@@ -354,22 +372,44 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void beforeFirst() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        currentRow = -1;
     }
     
     @Override
     public void afterLast() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        currentRow = rows.size();
     }
     
     @Override
     public boolean first() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        if (rows.isEmpty()) {
+            currentRow = rows.size();
+            return false;
+        }
+        currentRow = 0;
+        return true;
     }
     
     @Override
     public boolean last() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        if (rows.isEmpty()) {
+            currentRow = rows.size();
+            return false;
+        }
+        currentRow = rows.size() - 1;
+        return true;
     }
     
     @Override
@@ -380,17 +420,58 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public boolean absolute(int row) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        if (row == 0) {
+            currentRow = -1;
+            return false;
+        }
+
+        int target = row > 0 ? row - 1 : rows.size() + row;
+        if (target < 0) {
+            currentRow = -1;
+            return false;
+        }
+        if (target >= rows.size()) {
+            currentRow = rows.size();
+            return false;
+        }
+
+        currentRow = target;
+        return true;
     }
     
     @Override
-    public boolean relative(int rows) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+    public boolean relative(int offset) throws SQLException {
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        int target = currentRow + offset;
+        if (target < 0) {
+            currentRow = -1;
+            return false;
+        }
+        if (target >= this.rows.size()) {
+            currentRow = this.rows.size();
+            return false;
+        }
+
+        currentRow = target;
+        return true;
     }
     
     @Override
     public boolean previous() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        checkScrollable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
+        if (currentRow <= 0) {
+            currentRow = -1;
+            return false;
+        }
+        currentRow--;
+        return true;
     }
     
     @Override
@@ -422,18 +503,19 @@ public class VeridicalResultSet implements ResultSet {
     @Override
     public int getType() throws SQLException {
         checkClosed();
-        return TYPE_FORWARD_ONLY;
+        return resultSetType;
     }
     
     @Override
     public int getConcurrency() throws SQLException {
         checkClosed();
-        return CONCUR_READ_ONLY;
+        return resultSetConcurrency;
     }
     
     @Override
     public boolean rowUpdated() throws SQLException {
-        return false;
+        checkClosed();
+        return updatedCurrentRow;
     }
     
     @Override
@@ -448,72 +530,72 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void updateNull(int columnIndex) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, null);
     }
     
     @Override
     public void updateBoolean(int columnIndex, boolean x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateByte(int columnIndex, byte x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateShort(int columnIndex, short x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateInt(int columnIndex, int x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateLong(int columnIndex, long x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateFloat(int columnIndex, float x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateDouble(int columnIndex, double x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateBigDecimal(int columnIndex, BigDecimal x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateString(int columnIndex, String x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateBytes(int columnIndex, byte[] x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateDate(int columnIndex, Date x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateTime(int columnIndex, Time x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateTimestamp(int columnIndex, Timestamp x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
@@ -533,82 +615,82 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void updateObject(int columnIndex, Object x, int scaleOrLength) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateObject(int columnIndex, Object x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        stageUpdate(columnIndex, x);
     }
     
     @Override
     public void updateNull(String columnLabel) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateNull(findColumn(columnLabel));
     }
     
     @Override
     public void updateBoolean(String columnLabel, boolean x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateBoolean(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateByte(String columnLabel, byte x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateByte(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateShort(String columnLabel, short x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateShort(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateInt(String columnLabel, int x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateInt(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateLong(String columnLabel, long x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateLong(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateFloat(String columnLabel, float x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateFloat(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateDouble(String columnLabel, double x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateDouble(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateBigDecimal(String columnLabel, BigDecimal x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateBigDecimal(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateString(String columnLabel, String x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateString(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateBytes(String columnLabel, byte[] x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateBytes(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateDate(String columnLabel, Date x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateDate(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateTime(String columnLabel, Time x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateTime(findColumn(columnLabel), x);
     }
     
     @Override
     public void updateTimestamp(String columnLabel, Timestamp x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateTimestamp(findColumn(columnLabel), x);
     }
     
     @Override
@@ -628,12 +710,12 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void updateObject(String columnLabel, Object x, int scaleOrLength) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateObject(findColumn(columnLabel), x, scaleOrLength);
     }
     
     @Override
     public void updateObject(String columnLabel, Object x) throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        updateObject(findColumn(columnLabel), x);
     }
     
     @Override
@@ -643,7 +725,18 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void updateRow() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        checkUpdatable();
+        ensureValidCurrentRow();
+        if (pendingUpdates.isEmpty()) {
+            return;
+        }
+
+        Object[] row = rows.get(currentRow);
+        for (Map.Entry<Integer, Object> entry : pendingUpdates.entrySet()) {
+            row[entry.getKey() - 1] = entry.getValue();
+        }
+        pendingUpdates.clear();
+        updatedCurrentRow = true;
     }
     
     @Override
@@ -653,12 +746,16 @@ public class VeridicalResultSet implements ResultSet {
     
     @Override
     public void refreshRow() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        checkUpdatable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
     }
     
     @Override
     public void cancelRowUpdates() throws SQLException {
-        throw new SQLFeatureNotSupportedException("ResultSet is not updateable");
+        checkUpdatable();
+        pendingUpdates.clear();
+        updatedCurrentRow = false;
     }
     
     @Override
@@ -1084,20 +1181,51 @@ public class VeridicalResultSet implements ResultSet {
     public boolean isWrapperFor(Class<?> iface) throws SQLException {
         return iface.isAssignableFrom(getClass());
     }
+
+    private void checkScrollable() throws SQLException {
+        checkClosed();
+        if (resultSetType == TYPE_FORWARD_ONLY) {
+            throw new SQLFeatureNotSupportedException("ResultSet is TYPE_FORWARD_ONLY");
+        }
+    }
+
+    private void checkUpdatable() throws SQLException {
+        checkClosed();
+        if (resultSetConcurrency != CONCUR_UPDATABLE) {
+            throw new SQLFeatureNotSupportedException("ResultSet is CONCUR_READ_ONLY");
+        }
+    }
+
+    private void ensureValidCurrentRow() throws SQLException {
+        if (currentRow < 0 || currentRow >= rows.size()) {
+            throw new SQLException("No current row", "24000");
+        }
+    }
+
+    private void validateColumnIndex(int columnIndex) throws SQLException {
+        int columnCount = rowDesc != null
+                ? rowDesc.getColumnCount()
+                : (rows.isEmpty() ? 0 : rows.get(0).length);
+        if (columnIndex < 1 || columnIndex > columnCount) {
+            throw new SQLException("Invalid column index: " + columnIndex, "42S22");
+        }
+    }
+
+    private void stageUpdate(int columnIndex, Object value) throws SQLException {
+        checkUpdatable();
+        ensureValidCurrentRow();
+        validateColumnIndex(columnIndex);
+        pendingUpdates.put(columnIndex, value);
+    }
     
     /**
      * Gets value from current row at given column index (1-based).
      */
     private Object getValue(int columnIndex) throws SQLException {
         checkClosed();
-        
-        if (currentRow < 0 || currentRow >= rows.size()) {
-            throw new SQLException("No current row", "24000");
-        }
-        
-        if (columnIndex < 1 || columnIndex > rowDesc.getColumnCount()) {
-            throw new SQLException("Invalid column index: " + columnIndex, "42S22");
-        }
+
+        ensureValidCurrentRow();
+        validateColumnIndex(columnIndex);
         
         Object value = rows.get(currentRow)[columnIndex - 1];
         wasNull = (value == null);

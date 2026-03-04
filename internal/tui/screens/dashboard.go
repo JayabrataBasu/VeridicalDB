@@ -3,6 +3,8 @@ package screens
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,6 +32,9 @@ type Dashboard struct {
 
 	// System catalog for real metrics
 	sysCatalog *observability.SystemCatalog
+
+	// Database manager for instance-level metrics (optional)
+	databaseMgr *catalog.DatabaseManager
 
 	// Cyberpunk enhancements
 	heartbeat    components.HeartbeatModel
@@ -130,6 +136,11 @@ func NewDashboard() *Dashboard {
 // SetSystemCatalog sets the system catalog for real metrics.
 func (d *Dashboard) SetSystemCatalog(sc *observability.SystemCatalog) {
 	d.sysCatalog = sc
+}
+
+// SetDatabaseManager sets the database manager for instance-level metrics.
+func (d *Dashboard) SetDatabaseManager(dm *catalog.DatabaseManager) {
+	d.databaseMgr = dm
 }
 
 // Init initializes the dashboard. ticks gott synchronise
@@ -516,6 +527,75 @@ func (d *Dashboard) tickCmd() tea.Cmd {
 	})
 }
 
+// calculateTotalDataSize sums the sizes of all table files in the data directory
+func (d *Dashboard) calculateTotalDataSize() int64 {
+	if d.sysCatalog == nil {
+		return 0
+	}
+
+	// Get the catalog to find the data directory
+	cat := d.sysCatalog.GetCatalog()
+	if cat == nil {
+		return 0
+	}
+
+	// Walk through the tables directory and sum file sizes
+	tablesDir := filepath.Join(cat.DataDir(), "tables")
+	totalSize := int64(0)
+
+	entries, err := os.ReadDir(tablesDir)
+	if err != nil {
+		return 0 // Tables directory doesn't exist or can't be read
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".tbl") {
+			info, err := entry.Info()
+			if err == nil {
+				totalSize += info.Size()
+			}
+		}
+	}
+
+	return totalSize
+}
+
+// calculateCPUUsage returns the CPU usage percentage (0-100)
+// This is a simplified calculation based on active goroutines
+func (d *Dashboard) calculateCPUUsage() float64 {
+	// Estimate CPU usage based on active goroutines
+	// This is a heuristic: normalize goroutine count
+	numGoroutines := float64(runtime.NumGoroutine())
+
+	// Simple heuristic: goroutines up to 100 is 0%, 1000+ is 100%
+	cpuEstimate := (numGoroutines / 1000.0) * 100.0
+	if cpuEstimate > 100.0 {
+		cpuEstimate = 100.0
+	}
+
+	return cpuEstimate
+}
+
+// calculateDiskUsage returns the disk usage percentage (0-100) for table data
+func (d *Dashboard) calculateDiskUsage() float64 {
+	// For simplicity, we estimate disk usage as a percentage of reasonable limits
+	// In a real system, this would query the filesystem for available space
+	dataSize := d.calculateTotalDataSize()
+
+	// Assume a reasonable max database size of 10GB for estimation
+	const maxDatabaseSize = 10 * 1024 * 1024 * 1024 // 10GB
+	if maxDatabaseSize == 0 {
+		return 0
+	}
+
+	percentage := (float64(dataSize) / float64(maxDatabaseSize)) * 100.0
+	if percentage > 100.0 {
+		percentage = 100.0
+	}
+
+	return percentage
+}
+
 func (d *Dashboard) fetchMetrics() tea.Cmd {
 	return func() tea.Msg {
 		if d.sysCatalog == nil {
@@ -548,6 +628,12 @@ func (d *Dashboard) fetchMetrics() tea.Cmd {
 		activeTxns := d.sysCatalog.GetActiveTransactions()
 		tables := d.sysCatalog.GetTables()
 
+		// Get real database count from DatabaseManager if available
+		totalDatabases := 1 // default to 1 if no DatabaseManager
+		if d.databaseMgr != nil {
+			totalDatabases = len(d.databaseMgr.ListDatabases())
+		}
+
 		metrics := SystemMetrics{
 			ActiveConnections: 0,
 			TotalConnections:  0,
@@ -566,14 +652,14 @@ func (d *Dashboard) fetchMetrics() tea.Cmd {
 			CommittedTxns:      stats.TransactionsCommitted,
 			RolledBackTxns:     stats.TransactionsAborted,
 
-			TotalDatabases: 1, // TODO: pull real count from catalog/manager
+			TotalDatabases: totalDatabases,
 			TotalTables:    len(tables),
 			TotalRows:      stats.RowsInserted, // proxy until row stats wired
-			DataSize:       0,                  // TODO: disk usage tracking
+			DataSize:       d.calculateTotalDataSize(),
 
 			Uptime:        uptime,
-			CPUUsage:      0, // TODO: CPU tracking
-			DiskUsage:     0, // TODO: disk tracking
+			CPUUsage:      d.calculateCPUUsage(),
+			DiskUsage:     d.calculateDiskUsage(),
 			CacheHitRatio: cacheHitRatio,
 		}
 

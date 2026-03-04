@@ -162,6 +162,13 @@ type SystemTableRow struct {
 	Values  []interface{}
 }
 
+// GetCatalog returns the catalog reference for this system catalog.
+func (sc *SystemCatalog) GetCatalog() *catalog.Catalog {
+	sc.mu.RLock()
+	defer sc.mu.RUnlock()
+	return sc.cat
+}
+
 // GetActiveTransactions returns information about active transactions.
 func (sc *SystemCatalog) GetActiveTransactions() []SystemTableRow {
 	sc.mu.RLock()

@@ -321,6 +321,7 @@ See the `examples/` directory for complete working examples:
 - `BatchOperationExample.java` - Batch inserts
 - `ConnectionPoolExample.java` - HikariCP integration
 - `ResultSetExample.java` - Working with result sets
+- `ScrollableUpdatableResultSetDemo.java` - Scroll-insensitive/updatable ResultSet baseline + interoperability handoff for Python demo
 
 ## Testing
 
@@ -349,10 +350,10 @@ mvn test jacoco:report
 Current version (0.1.0) has the following limitations:
 
 - ❌ Stored procedures not yet supported
-- ❌ Scrollable result sets (TYPE_SCROLL_*) not supported
-- ❌ Updatable result sets (CONCUR_UPDATABLE) not supported
+- ⚠️ `TYPE_SCROLL_INSENSITIVE` is supported; `TYPE_SCROLL_SENSITIVE` is not supported
+- ⚠️ `CONCUR_UPDATABLE` is supported against the client-side result-set cache (use explicit SQL `UPDATE` for persisted server-side writes)
 - ❌ Array and custom types limited support
-- ❌ SSL/TLS connections not yet implemented
+- ⚠️ TLS baseline is implemented (`sslMode=disable|prefer|require`), but advanced TLS/cert lifecycle controls are still evolving
 
 These features are planned for future releases.
 
