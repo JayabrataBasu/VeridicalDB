@@ -128,6 +128,23 @@ with pool.acquire() as conn:
 pool.close()
 ```
 
+### TLS / SSL
+
+```python
+import ssl
+import veridicaldb
+
+# Opportunistic TLS: use TLS if server supports it, else fallback to plaintext
+conn = veridicaldb.connect(host='localhost', sslmode='prefer')
+
+# Strict TLS: fail if server does not support TLS
+conn = veridicaldb.connect(host='localhost', sslmode='require')
+
+# Custom SSL context
+ctx = ssl.create_default_context()
+conn = veridicaldb.connect(host='localhost', sslmode='require', ssl_context=ctx)
+```
+
 ## API Reference
 
 ### Connection
@@ -144,6 +161,8 @@ Create a connection to VeridicalDB.
 - `user` (str): Username (default: 'admin')
 - `password` (str): Password (default: '')
 - `connect_timeout` (int): Connection timeout in seconds (default: 10)
+- `sslmode` (str): TLS mode (`disable`, `prefer`, `require`) (default: `disable`)
+- `ssl_context` (`ssl.SSLContext`): Optional custom TLS context
 
 **Returns:** `Connection` object
 

@@ -42,6 +42,9 @@ MSG_QUERY = ord('Q')
 MSG_SYNC = ord('S')
 MSG_TERMINATE = ord('X')
 
+# Startup request codes
+SSL_REQUEST_CODE = 80877103
+
 
 class WireProtocol:
     """
@@ -95,6 +98,10 @@ class WireProtocol:
         # Send startup message (no message type byte for startup)
         message = struct.pack('>I', length) + struct.pack('>I', protocol_version) + param_bytes
         self.sock.sendall(message)
+
+    def send_ssl_request(self):
+        """Send SSLRequest startup packet."""
+        self.sock.sendall(struct.pack('>II', 8, SSL_REQUEST_CODE))
     
     def send_password_message(self, password: str):
         """

@@ -5,6 +5,7 @@ Implements the Connection class following PEP 249 (Python Database API).
 """
 
 import socket
+import ssl
 import threading
 from typing import Optional, Dict, Any
 from .protocol import (
@@ -58,6 +59,9 @@ class Connection:
         self.user = user
         self.password = password
         self.connect_timeout = connect_timeout
+        self.sslmode = str(kwargs.pop('sslmode', 'disable')).lower()
+        self.ssl_context = kwargs.pop('ssl_context', None)
+        self.server_hostname = kwargs.pop('server_hostname', self.host)
         
         self.sock: Optional[socket.socket] = None
         self.protocol: Optional[WireProtocol] = None
@@ -81,8 +85,9 @@ class Connection:
             self.sock.settimeout(self.connect_timeout)
             self.sock.connect((self.host, self.port))
             
-            # Initialize wire protocol
+            # Initialize wire protocol and optionally negotiate TLS
             self.protocol = WireProtocol(self.sock)
+            self._negotiate_tls_if_requested()
             
             # Send startup message
             self.protocol.send_startup_message(
@@ -102,6 +107,37 @@ class Connection:
         except Exception as e:
             self._cleanup()
             raise VeridicalConnectionError(f"Connection initialization failed: {e}")
+
+    def _negotiate_tls_if_requested(self):
+        """Negotiate PostgreSQL SSLRequest/TLS handshake based on sslmode."""
+        if self.sslmode not in ('disable', 'prefer', 'require'):
+            raise VeridicalConnectionError(
+                f"Invalid sslmode {self.sslmode!r}; expected disable|prefer|require"
+            )
+
+        if self.sslmode == 'disable':
+            return
+
+        self.protocol.send_ssl_request()
+        response = self.sock.recv(1)
+        if response == b'S':
+            context = self.ssl_context or ssl.create_default_context()
+            # For require mode without a custom context, don't require CA validation by default.
+            if self.ssl_context is None and self.sslmode == 'require':
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+
+            self.sock = context.wrap_socket(self.sock, server_hostname=self.server_hostname)
+            self.protocol = WireProtocol(self.sock)
+            return
+
+        if response == b'N':
+            if self.sslmode == 'require':
+                raise VeridicalConnectionError("Server does not support TLS but sslmode=require")
+            # sslmode=prefer: continue in plaintext
+            return
+
+        raise VeridicalConnectionError("Invalid response to SSLRequest during startup")
     
     def _handle_authentication(self):
         """

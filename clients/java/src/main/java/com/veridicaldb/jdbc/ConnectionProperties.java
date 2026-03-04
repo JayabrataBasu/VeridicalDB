@@ -17,6 +17,7 @@ public class ConnectionProperties {
     private String password = "";
     private int connectTimeout = 10; // seconds
     private int socketTimeout = 0; // 0 = no timeout
+    private String sslMode = "disable"; // disable|prefer|require
     private boolean autoCommit = true;
     private int fetchSize = 0; // 0 = use default
     
@@ -78,6 +79,14 @@ public class ConnectionProperties {
     public void setSocketTimeout(int socketTimeout) {
         this.socketTimeout = socketTimeout;
     }
+
+    public String getSslMode() {
+        return sslMode;
+    }
+
+    public void setSslMode(String sslMode) {
+        this.sslMode = sslMode;
+    }
     
     public boolean isAutoCommit() {
         return autoCommit;
@@ -105,6 +114,7 @@ public class ConnectionProperties {
                 ", user='" + user + '\'' +
                 ", connectTimeout=" + connectTimeout +
                 ", socketTimeout=" + socketTimeout +
+                ", sslMode='" + sslMode + '\'' +
                 ", autoCommit=" + autoCommit +
                 ", fetchSize=" + fetchSize +
                 '}';

@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/binary"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -22,6 +23,11 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
+
+type backendMessage struct {
+	msgType byte
+	payload []byte
+}
 
 // TestProtocolMessages tests the message encoding/decoding functions.
 func TestProtocolMessages(t *testing.T) {
@@ -699,6 +705,352 @@ func TestTLSWithoutRequest(t *testing.T) {
 	if !foundAuth {
 		t.Error("Did not receive AuthenticationOK for plaintext connection")
 	}
+}
+
+func TestExtendedQueryProtocolDescribeAndExecute(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_extended_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := startupAndDrainReady(conn); err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+	if _, err := sendSimpleQueryAndDrainReady(conn, "CREATE TABLE t_ext (id INT)"); err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	if _, err := sendSimpleQueryAndDrainReady(conn, "INSERT INTO t_ext VALUES (1)"); err != nil {
+		t.Fatalf("insert row failed: %v", err)
+	}
+
+	if err := sendFrontendMessage(conn, MsgParse, buildParsePayload("s1", "SELECT id AS one FROM t_ext", nil)); err != nil {
+		t.Fatalf("send parse failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgDescribe, buildDescribePayload('S', "s1")); err != nil {
+		t.Fatalf("send describe failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgSync, nil); err != nil {
+		t.Fatalf("send sync failed: %v", err)
+	}
+
+	msgs, err := readMessagesUntilReady(conn)
+	if err != nil {
+		t.Fatalf("read describe responses failed: %v", err)
+	}
+
+	if !containsMsgType(msgs, MsgParseComplete) {
+		t.Fatalf("missing ParseComplete")
+	}
+	if !containsMsgType(msgs, MsgParameterDesc) {
+		t.Fatalf("missing ParameterDescription")
+	}
+
+	rowDesc, ok := firstMessage(msgs, MsgRowDescription)
+	if !ok {
+		t.Fatalf("missing RowDescription")
+	}
+	colName, err := firstColumnName(rowDesc.payload)
+	if err != nil {
+		t.Fatalf("decode RowDescription failed: %v", err)
+	}
+	if colName != "one" {
+		t.Fatalf("expected described column 'one', got %q", colName)
+	}
+
+	if err := sendFrontendMessage(conn, MsgBind, buildBindPayload("", "s1", nil, nil, nil)); err != nil {
+		t.Fatalf("send bind failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgExecute, buildExecutePayload("", 0)); err != nil {
+		t.Fatalf("send execute failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgSync, nil); err != nil {
+		t.Fatalf("send sync failed: %v", err)
+	}
+
+	msgs, err = readMessagesUntilReady(conn)
+	if err != nil {
+		t.Fatalf("read execute responses failed: %v", err)
+	}
+
+	if !containsMsgType(msgs, MsgBindComplete) {
+		t.Fatalf("missing BindComplete")
+	}
+	if !containsMsgType(msgs, MsgDataRow) {
+		t.Fatalf("missing DataRow")
+	}
+	if !containsMsgType(msgs, MsgCommandComplete) {
+		t.Fatalf("missing CommandComplete")
+	}
+}
+
+func TestExtendedQueryProtocolInvalidTypedParam(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_extended_param_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := startupAndDrainReady(conn); err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+	if _, err := sendSimpleQueryAndDrainReady(conn, "CREATE TABLE t_ext (id INT)"); err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	if _, err := sendSimpleQueryAndDrainReady(conn, "INSERT INTO t_ext VALUES (1)"); err != nil {
+		t.Fatalf("insert row failed: %v", err)
+	}
+
+	if err := sendFrontendMessage(conn, MsgParse, buildParsePayload("sbad", "SELECT id FROM t_ext WHERE id = $1", []int32{OIDInt4})); err != nil {
+		t.Fatalf("send parse failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgBind, buildBindPayload("", "sbad", nil, [][]byte{[]byte("abc")}, nil)); err != nil {
+		t.Fatalf("send bind failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgExecute, buildExecutePayload("", 0)); err != nil {
+		t.Fatalf("send execute failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgSync, nil); err != nil {
+		t.Fatalf("send sync failed: %v", err)
+	}
+
+	msgs, err := readMessagesUntilReady(conn)
+	if err != nil {
+		t.Fatalf("read responses failed: %v", err)
+	}
+
+	errMsg, ok := firstMessage(msgs, MsgErrorResponse)
+	if !ok {
+		t.Fatalf("expected ErrorResponse for invalid int parameter")
+	}
+
+	code := readErrorField(errMsg.payload, FieldSQLStateCode)
+	if code != "22P02" {
+		t.Fatalf("expected SQLSTATE 22P02, got %q", code)
+	}
+}
+
+func startupAndDrainReady(conn net.Conn) ([]backendMessage, error) {
+	var startupBuf bytes.Buffer
+	startupBuf.Write([]byte{0, 0, 0, 0})
+	_ = binary.Write(&startupBuf, binary.BigEndian, int32(ProtocolVersionNumber))
+	startupBuf.WriteString("user")
+	startupBuf.WriteByte(0)
+	startupBuf.WriteString("test")
+	startupBuf.WriteByte(0)
+	startupBuf.WriteString("database")
+	startupBuf.WriteByte(0)
+	startupBuf.WriteString("test")
+	startupBuf.WriteByte(0)
+	startupBuf.WriteByte(0)
+
+	startupBytes := startupBuf.Bytes()
+	binary.BigEndian.PutUint32(startupBytes[0:4], uint32(len(startupBytes)))
+
+	if _, err := conn.Write(startupBytes); err != nil {
+		return nil, err
+	}
+
+	return readMessagesUntilReady(conn)
+}
+
+func sendSimpleQueryAndDrainReady(conn net.Conn, query string) ([]backendMessage, error) {
+	payload := append([]byte(query), 0)
+	if err := sendFrontendMessage(conn, MsgQuery, payload); err != nil {
+		return nil, err
+	}
+	return readMessagesUntilReady(conn)
+}
+
+func sendFrontendMessage(conn net.Conn, msgType byte, payload []byte) error {
+	msg := make([]byte, 1+4+len(payload))
+	msg[0] = msgType
+	binary.BigEndian.PutUint32(msg[1:5], uint32(4+len(payload)))
+	copy(msg[5:], payload)
+	_, err := conn.Write(msg)
+	return err
+}
+
+func readMessagesUntilReady(conn net.Conn) ([]backendMessage, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var out []backendMessage
+
+	for {
+		hdr := make([]byte, 5)
+		if _, err := io.ReadFull(conn, hdr); err != nil {
+			return nil, err
+		}
+		msgType := hdr[0]
+		msgLen := int(binary.BigEndian.Uint32(hdr[1:5]))
+		if msgLen < 4 {
+			return nil, fmt.Errorf("invalid backend message length: %d", msgLen)
+		}
+		payloadLen := msgLen - 4
+		payload := make([]byte, payloadLen)
+		if payloadLen > 0 {
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				return nil, err
+			}
+		}
+
+		out = append(out, backendMessage{msgType: msgType, payload: payload})
+		if msgType == MsgReadyForQuery {
+			return out, nil
+		}
+	}
+}
+
+func buildParsePayload(stmtName, query string, paramOIDs []int32) []byte {
+	buf := NewBuffer()
+	buf.WriteString(stmtName)
+	buf.WriteString(query)
+	buf.WriteInt16(int16(len(paramOIDs)))
+	for _, oid := range paramOIDs {
+		buf.WriteInt32(oid)
+	}
+	return buf.Bytes()
+}
+
+func buildDescribePayload(descType byte, name string) []byte {
+	buf := NewBuffer()
+	_ = buf.WriteByte(descType)
+	buf.WriteString(name)
+	return buf.Bytes()
+}
+
+func buildBindPayload(portalName, stmtName string, paramFormats []int16, params [][]byte, resultFormats []int16) []byte {
+	buf := NewBuffer()
+	buf.WriteString(portalName)
+	buf.WriteString(stmtName)
+
+	buf.WriteInt16(int16(len(paramFormats)))
+	for _, f := range paramFormats {
+		buf.WriteInt16(f)
+	}
+
+	buf.WriteInt16(int16(len(params)))
+	for _, p := range params {
+		if p == nil {
+			buf.WriteInt32(-1)
+			continue
+		}
+		buf.WriteInt32(int32(len(p)))
+		buf.WriteBytes(p)
+	}
+
+	buf.WriteInt16(int16(len(resultFormats)))
+	for _, f := range resultFormats {
+		buf.WriteInt16(f)
+	}
+
+	return buf.Bytes()
+}
+
+func buildExecutePayload(portalName string, maxRows int32) []byte {
+	buf := NewBuffer()
+	buf.WriteString(portalName)
+	buf.WriteInt32(maxRows)
+	return buf.Bytes()
+}
+
+func containsMsgType(msgs []backendMessage, msgType byte) bool {
+	for _, m := range msgs {
+		if m.msgType == msgType {
+			return true
+		}
+	}
+	return false
+}
+
+func firstMessage(msgs []backendMessage, msgType byte) (backendMessage, bool) {
+	for _, m := range msgs {
+		if m.msgType == msgType {
+			return m, true
+		}
+	}
+	return backendMessage{}, false
+}
+
+func firstColumnName(payload []byte) (string, error) {
+	if len(payload) < 2 {
+		return "", fmt.Errorf("row description payload too short")
+	}
+	n := ReadInt16(payload[:2])
+	if n < 1 {
+		return "", fmt.Errorf("no described columns")
+	}
+	name, consumed := ReadCString(payload[2:])
+	if consumed == 0 {
+		return "", fmt.Errorf("invalid described column name")
+	}
+	return name, nil
+}
+
+func readErrorField(payload []byte, field byte) string {
+	i := 0
+	for i < len(payload) {
+		if payload[i] == 0 {
+			break
+		}
+		f := payload[i]
+		i++
+		start := i
+		for i < len(payload) && payload[i] != 0 {
+			i++
+		}
+		if i >= len(payload) {
+			break
+		}
+		if f == field {
+			return string(payload[start:i])
+		}
+		i++ // skip terminator
+	}
+	return ""
 }
 
 // generateTestCerts creates self-signed certificates for testing.

@@ -215,6 +215,7 @@ type Portal struct {
 	Name      string
 	Statement *PreparedStatement
 	Params    [][]byte
+	Formats   []int16
 	MaxRows   int32
 }
 
@@ -633,6 +634,10 @@ func (c *Conn) sendError(severity, code, message string) error {
 // Extended Query Protocol handlers
 
 func (c *Conn) handleParse(payload []byte) error {
+	if len(payload) < 1 {
+		return fmt.Errorf("parse message payload too short")
+	}
+
 	offset := 0
 
 	// Statement name
@@ -643,9 +648,19 @@ func (c *Conn) handleParse(payload []byte) error {
 	query, n := ReadCString(payload[offset:])
 	offset += n
 
+	if offset+2 > len(payload) {
+		return fmt.Errorf("invalid parse payload: missing parameter count")
+	}
+
 	// Number of parameter types
 	numParams := ReadInt16(payload[offset:])
 	offset += 2
+	if numParams < 0 {
+		return fmt.Errorf("invalid parse payload: negative parameter count")
+	}
+	if offset+int(numParams)*4 > len(payload) {
+		return fmt.Errorf("invalid parse payload: truncated parameter OIDs")
+	}
 
 	paramOIDs := make([]int32, numParams)
 	for i := int16(0); i < numParams; i++ {
@@ -664,6 +679,10 @@ func (c *Conn) handleParse(payload []byte) error {
 }
 
 func (c *Conn) handleBind(payload []byte) error {
+	if len(payload) < 1 {
+		return fmt.Errorf("bind message payload too short")
+	}
+
 	offset := 0
 
 	// Portal name
@@ -679,42 +698,123 @@ func (c *Conn) handleBind(payload []byte) error {
 		return fmt.Errorf("prepared statement %q not found", stmtName)
 	}
 
+	if offset+2 > len(payload) {
+		return fmt.Errorf("invalid bind payload: missing parameter format count")
+	}
+
 	// Number of parameter format codes
 	numFormats := ReadInt16(payload[offset:])
 	offset += 2
-	offset += int(numFormats) * 2 // Skip format codes (we assume text)
+	if numFormats < 0 {
+		return fmt.Errorf("invalid bind payload: negative parameter format count")
+	}
+	if offset+int(numFormats)*2 > len(payload) {
+		return fmt.Errorf("invalid bind payload: truncated parameter formats")
+	}
+
+	formats := make([]int16, numFormats)
+	for i := int16(0); i < numFormats; i++ {
+		formats[i] = ReadInt16(payload[offset:])
+		offset += 2
+	}
+
+	if offset+2 > len(payload) {
+		return fmt.Errorf("invalid bind payload: missing parameter value count")
+	}
 
 	// Number of parameter values
 	numValues := ReadInt16(payload[offset:])
 	offset += 2
+	if numValues < 0 {
+		return fmt.Errorf("invalid bind payload: negative parameter value count")
+	}
+
+	if len(stmt.ParamOIDs) > 0 && int(numValues) != len(stmt.ParamOIDs) {
+		return fmt.Errorf("bind parameter count mismatch: statement expects %d, got %d", len(stmt.ParamOIDs), numValues)
+	}
 
 	params := make([][]byte, numValues)
 	for i := int16(0); i < numValues; i++ {
+		if offset+4 > len(payload) {
+			return fmt.Errorf("invalid bind payload: truncated parameter length")
+		}
 		length := ReadInt32(payload[offset:])
 		offset += 4
 		if length == -1 {
 			params[i] = nil // NULL
 		} else {
+			if length < 0 {
+				return fmt.Errorf("invalid bind payload: negative parameter length")
+			}
+			if offset+int(length) > len(payload) {
+				return fmt.Errorf("invalid bind payload: truncated parameter value")
+			}
 			params[i] = make([]byte, length)
 			copy(params[i], payload[offset:offset+int(length)])
 			offset += int(length)
 		}
 	}
 
-	// Number of result format codes (skip)
+	if offset+2 > len(payload) {
+		return fmt.Errorf("invalid bind payload: missing result format count")
+	}
+
+	// Number of result format codes (currently ignored by server response path)
 	numResultFormats := ReadInt16(payload[offset:])
-	_ = numResultFormats // result format codes not used yet
+	offset += 2
+	if numResultFormats < 0 {
+		return fmt.Errorf("invalid bind payload: negative result format count")
+	}
+	if offset+int(numResultFormats)*2 > len(payload) {
+		return fmt.Errorf("invalid bind payload: truncated result formats")
+	}
+	// Consume result formats for completeness.
+	offset += int(numResultFormats) * 2
+	if offset != len(payload) {
+		return fmt.Errorf("invalid bind payload: trailing bytes")
+	}
+
+	// Resolve actual parameter format per value:
+	// - 0 formats => all text (0)
+	// - 1 format => applies to all values
+	// - N formats => one per value
+	resolvedFormats := make([]int16, numValues)
+	switch {
+	case len(formats) == 0:
+		for i := range resolvedFormats {
+			resolvedFormats[i] = 0
+		}
+	case len(formats) == 1:
+		for i := range resolvedFormats {
+			resolvedFormats[i] = formats[0]
+		}
+	case len(formats) == int(numValues):
+		copy(resolvedFormats, formats)
+	default:
+		return fmt.Errorf("bind parameter format count mismatch: got %d formats for %d values", len(formats), numValues)
+	}
+
+	for _, f := range resolvedFormats {
+		if f != 0 && f != 1 {
+			return fmt.Errorf("unsupported parameter format code: %d", f)
+		}
+	}
 
 	c.portals[portalName] = &Portal{
 		Name:      portalName,
 		Statement: stmt,
 		Params:    params,
+		Formats:   resolvedFormats,
 	}
 
 	return c.writer.WriteMessage(MsgBindComplete, nil)
 }
 
 func (c *Conn) handleDescribe(payload []byte) error {
+	if len(payload) < 2 {
+		return fmt.Errorf("describe message payload too short")
+	}
+
 	descType := payload[0]
 	name, _ := ReadCString(payload[1:])
 
@@ -735,38 +835,95 @@ func (c *Conn) handleDescribe(payload []byte) error {
 			return err
 		}
 
-		// Send NoData or RowDescription (we'll send NoData for simplicity)
-		return c.writer.WriteMessage(MsgNoData, nil)
+		return c.sendDescribeResult(stmt.Query)
 
 	case 'P': // Portal
 		_, ok := c.portals[name]
 		if !ok {
 			return fmt.Errorf("portal %q not found", name)
 		}
-		// Send NoData (we don't know the result schema without executing)
-		return c.writer.WriteMessage(MsgNoData, nil)
+		return c.sendDescribeResult(c.portals[name].Statement.Query)
 
 	default:
 		return fmt.Errorf("unknown describe type: %c", descType)
 	}
 }
 
-func (c *Conn) decodeParam(data []byte, oid int32) (catalog.Value, error) {
+func (c *Conn) sendDescribeResult(query string) error {
+	cols, hasRows := describeResultColumns(query)
+	if !hasRows {
+		return c.writer.WriteMessage(MsgNoData, nil)
+	}
+	if len(cols) == 0 {
+		cols = []string{"?column?"}
+	}
+	return c.sendRowDescription(cols)
+}
+
+func describeResultColumns(query string) ([]string, bool) {
+	parser := sql.NewParser(query)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, false
+	}
+
+	sel, ok := stmt.(*sql.SelectStmt)
+	if !ok {
+		return nil, false
+	}
+
+	cols := make([]string, 0, len(sel.Columns))
+	for _, col := range sel.Columns {
+		switch {
+		case col.Alias != "":
+			cols = append(cols, col.Alias)
+		case col.Star:
+			cols = append(cols, "*")
+		case col.Name != "":
+			cols = append(cols, col.Name)
+		case col.Aggregate != nil && col.Aggregate.Function != "":
+			cols = append(cols, col.Aggregate.Function)
+		default:
+			cols = append(cols, "?column?")
+		}
+	}
+
+	return cols, true
+}
+
+func (c *Conn) decodeParam(data []byte, oid int32, format int16) (catalog.Value, error) {
 	if data == nil {
 		return catalog.Null(catalog.TypeUnknown), nil
 	}
+
+	if format == 1 {
+		return catalog.Value{}, fmt.Errorf("binary parameter format is not supported")
+	}
+
 	s := string(data)
 	switch oid {
 	case OIDInt4, OIDInt2:
-		v, _ := strconv.ParseInt(s, 10, 32)
+		v, err := strconv.ParseInt(s, 10, 32)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("invalid int value %q: %w", s, err)
+		}
 		return catalog.NewInt32(int32(v)), nil
 	case OIDInt8:
-		v, _ := strconv.ParseInt(s, 10, 64)
+		v, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("invalid bigint value %q: %w", s, err)
+		}
 		return catalog.NewInt64(v), nil
 	case OIDFloat4, OIDFloat8:
-		v, _ := strconv.ParseFloat(s, 64)
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("invalid float value %q: %w", s, err)
+		}
 		return catalog.NewFloat64(v), nil
 	case OIDBool:
+		if s != "t" && s != "true" && s != "1" && s != "f" && s != "false" && s != "0" {
+			return catalog.Value{}, fmt.Errorf("invalid bool value %q", s)
+		}
 		return catalog.NewBool(s == "t" || s == "true" || s == "1"), nil
 	case OIDText, OIDVarchar:
 		return catalog.NewText(s), nil
@@ -777,7 +934,14 @@ func (c *Conn) decodeParam(data []byte, oid int32) (catalog.Value, error) {
 }
 
 func (c *Conn) handleExecute(payload []byte) error {
+	if len(payload) < 1 {
+		return fmt.Errorf("execute message payload too short")
+	}
+
 	portalName, n := ReadCString(payload)
+	if n+4 > len(payload) {
+		return fmt.Errorf("invalid execute payload: missing maxRows")
+	}
 	maxRows := ReadInt32(payload[n:])
 
 	portal, ok := c.portals[portalName]
@@ -792,9 +956,13 @@ func (c *Conn) handleExecute(payload []byte) error {
 		if i < len(portal.Statement.ParamOIDs) {
 			oid = portal.Statement.ParamOIDs[i]
 		}
-		val, err := c.decodeParam(p, oid)
+		format := int16(0)
+		if i < len(portal.Formats) {
+			format = portal.Formats[i]
+		}
+		val, err := c.decodeParam(p, oid, format)
 		if err != nil {
-			return err
+			return c.sendError("ERROR", "22P02", err.Error())
 		}
 		params[i] = val
 	}
@@ -830,6 +998,10 @@ func (c *Conn) handleSync() error {
 }
 
 func (c *Conn) handleClose(payload []byte) error {
+	if len(payload) < 2 {
+		return fmt.Errorf("close message payload too short")
+	}
+
 	closeType := payload[0]
 	name, _ := ReadCString(payload[1:])
 
@@ -838,6 +1010,8 @@ func (c *Conn) handleClose(payload []byte) error {
 		delete(c.statements, name)
 	case 'P': // Portal
 		delete(c.portals, name)
+	default:
+		return fmt.Errorf("unknown close type: %c", closeType)
 	}
 
 	return c.writer.WriteMessage(MsgCloseComplete, nil)

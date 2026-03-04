@@ -1,18 +1,24 @@
 package com.veridicaldb.jdbc;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.sql.*;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Executor;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.SSLSocketFactory;
 
 /**
  * JDBC Connection implementation for VeridicalDB.
  * Manages a single connection to the database server using PostgreSQL wire protocol.
  */
 public class VeridicalConnection implements Connection {
+
+    private static final int SSL_REQUEST_CODE = 80877103;
     
     private final ConnectionProperties props;
     private final Socket socket;
@@ -35,20 +41,25 @@ public class VeridicalConnection implements Connection {
         
         try {
             // Create TCP socket
-            this.socket = new Socket();
-            socket.setTcpNoDelay(true);
-            socket.setKeepAlive(true);
+            Socket sock = new Socket();
+            sock.setTcpNoDelay(true);
+            sock.setKeepAlive(true);
             
             if (props.getSocketTimeout() > 0) {
-                socket.setSoTimeout(props.getSocketTimeout() * 1000);
+                sock.setSoTimeout(props.getSocketTimeout() * 1000);
             }
             
             // Connect to server
             InetSocketAddress address = new InetSocketAddress(props.getHost(), props.getPort());
-            socket.connect(address, props.getConnectTimeout() * 1000);
+            sock.connect(address, props.getConnectTimeout() * 1000);
+
+            // Optional TLS negotiation using PostgreSQL SSLRequest
+            sock = negotiateTlsIfRequested(sock);
+
+            this.socket = sock;
             
             // Initialize wire protocol
-            this.protocol = new WireProtocol(socket.getInputStream(), socket.getOutputStream());
+            this.protocol = new WireProtocol(sock.getInputStream(), sock.getOutputStream());
             
             // Authenticate
             authenticate();
@@ -59,6 +70,50 @@ public class VeridicalConnection implements Connection {
         } catch (IOException e) {
             throw new SQLException("Failed to connect to " + props.getHost() + ":" + props.getPort(), "08001", e);
         }
+    }
+
+    private Socket negotiateTlsIfRequested(Socket sock) throws SQLException, IOException {
+        String mode = props.getSslMode() == null ? "disable" : props.getSslMode().toLowerCase();
+        if (!mode.equals("disable") && !mode.equals("prefer") && !mode.equals("require")) {
+            throw new SQLException("Invalid sslMode: " + props.getSslMode(), "08001");
+        }
+
+        if (mode.equals("disable")) {
+            return sock;
+        }
+
+        OutputStream out = sock.getOutputStream();
+        InputStream in = sock.getInputStream();
+
+        // SSLRequest: length=8, code=80877103
+        byte[] request = new byte[8];
+        request[0] = 0;
+        request[1] = 0;
+        request[2] = 0;
+        request[3] = 8;
+        request[4] = (byte) ((SSL_REQUEST_CODE >> 24) & 0xFF);
+        request[5] = (byte) ((SSL_REQUEST_CODE >> 16) & 0xFF);
+        request[6] = (byte) ((SSL_REQUEST_CODE >> 8) & 0xFF);
+        request[7] = (byte) (SSL_REQUEST_CODE & 0xFF);
+        out.write(request);
+        out.flush();
+
+        int response = in.read();
+        if (response == 'S') {
+            SSLSocketFactory factory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket sslSocket = (SSLSocket) factory.createSocket(sock, props.getHost(), props.getPort(), true);
+            sslSocket.startHandshake();
+            return sslSocket;
+        }
+
+        if (response == 'N') {
+            if (mode.equals("require")) {
+                throw new SQLException("Server does not support TLS (sslMode=require)", "08001");
+            }
+            return sock; // prefer -> plaintext fallback
+        }
+
+        throw new SQLException("Invalid SSL negotiation response from server", "08001");
     }
     
     /**

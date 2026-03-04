@@ -152,6 +152,7 @@ jdbc:veridicaldb://host:port/database?param1=value1&param2=value2
 | `password` | String | Password | (empty) |
 | `connectTimeout` | int | Connection timeout (seconds) | 10 |
 | `socketTimeout` | int | Socket timeout (seconds) | 0 (no timeout) |
+| `sslMode` | String | TLS mode: `disable`, `prefer`, `require` | disable |
 
 ### Example URLs
 
@@ -164,6 +165,12 @@ jdbc:veridicaldb://host:port/database?param1=value1&param2=value2
 
 // Custom timeouts
 "jdbc:veridicaldb://localhost:5432/mydb?connectTimeout=5&socketTimeout=30"
+
+// Opportunistic TLS (fallback to plaintext if TLS unavailable)
+"jdbc:veridicaldb://localhost:5432/mydb?sslMode=prefer"
+
+// Strict TLS (fail if TLS unavailable)
+"jdbc:veridicaldb://localhost:5432/mydb?sslMode=require"
 
 // Remote server
 "jdbc:veridicaldb://db.example.com:5432/production"

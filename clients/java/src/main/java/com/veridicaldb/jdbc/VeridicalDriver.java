@@ -106,7 +106,9 @@ public class VeridicalDriver implements Driver {
             createPropertyInfo("connectTimeout", String.valueOf(props.getConnectTimeout()), 
                              "Connection timeout (seconds)", false),
             createPropertyInfo("socketTimeout", String.valueOf(props.getSocketTimeout()), 
-                             "Socket timeout (seconds)", false)
+                             "Socket timeout (seconds)", false),
+            createPropertyInfo("sslMode", props.getSslMode(),
+                             "TLS mode: disable|prefer|require", false)
         };
     }
     
@@ -150,6 +152,11 @@ public class VeridicalDriver implements Driver {
     private ConnectionProperties parseURL(String url, Properties info) throws SQLException {
         if (!acceptsURL(url)) {
             throw new SQLException("Invalid URL: " + url);
+        }
+
+        Properties merged = new Properties();
+        if (info != null) {
+            merged.putAll(info);
         }
         
         // Remove prefix: jdbc:veridicaldb://
@@ -206,26 +213,27 @@ public class VeridicalDriver implements Driver {
                 if (equalIndex >= 0) {
                     String key = param.substring(0, equalIndex);
                     String value = param.substring(equalIndex + 1);
-                    info.setProperty(key, value);
+                    merged.setProperty(key, value);
                 }
             }
         }
         
         // Apply properties from Properties object
-        if (info != null) {
-            if (info.containsKey("user")) {
-                props.setUser(info.getProperty("user"));
+        if (merged.containsKey("user")) {
+            props.setUser(merged.getProperty("user"));
             }
-            if (info.containsKey("password")) {
-                props.setPassword(info.getProperty("password"));
+        if (merged.containsKey("password")) {
+            props.setPassword(merged.getProperty("password"));
             }
-            if (info.containsKey("connectTimeout")) {
-                props.setConnectTimeout(Integer.parseInt(info.getProperty("connectTimeout")));
+        if (merged.containsKey("connectTimeout")) {
+            props.setConnectTimeout(Integer.parseInt(merged.getProperty("connectTimeout")));
             }
-            if (info.containsKey("socketTimeout")) {
-                props.setSocketTimeout(Integer.parseInt(info.getProperty("socketTimeout")));
+        if (merged.containsKey("socketTimeout")) {
+            props.setSocketTimeout(Integer.parseInt(merged.getProperty("socketTimeout")));
             }
-        }
+        if (merged.containsKey("sslMode")) {
+            props.setSslMode(merged.getProperty("sslMode"));
+            }
         
         return props;
     }
