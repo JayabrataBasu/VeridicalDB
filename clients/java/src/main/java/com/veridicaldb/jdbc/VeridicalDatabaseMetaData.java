@@ -1,6 +1,11 @@
 package com.veridicaldb.jdbc;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.RowIdLifetime;
+import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 
 /**
  * JDBC DatabaseMetaData implementation for VeridicalDB.
