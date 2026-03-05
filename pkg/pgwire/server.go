@@ -3,7 +3,9 @@ package pgwire
 import (
 	"bufio"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/tls"
+	stdbinary "encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -152,7 +154,7 @@ func (s *Server) cancelConnection(pid uint64, secret int32) {
 	conn, ok := s.conns[pid]
 	s.connsMu.Unlock()
 
-	if ok && int32(pid*7) == secret {
+	if ok && conn.cancelSecret == secret {
 		s.logger.Info("cancelling connection", "id", pid)
 		// In a real system, we would signal the session to cancel the current query.
 		// For now, we'll just close the connection to stop any ongoing work.
@@ -187,6 +189,9 @@ type Conn struct {
 	reader *MessageReader
 	writer *MessageWriter
 	bufW   *bufio.Writer
+
+	// BackendKeyData fields for CancelRequest.
+	cancelSecret int32
 
 	// Session state
 	session    *sql.Session
@@ -228,11 +233,29 @@ func newConn(id uint64, conn net.Conn, server *Server) *Conn {
 		reader:     NewMessageReader(conn),
 		writer:     NewMessageWriter(bufW),
 		bufW:       bufW,
+		cancelSecret: generateCancelSecret(id),
 		parameters: make(map[string]string),
 		txnStatus:  TxnStatusIdle,
 		statements: make(map[string]*PreparedStatement),
 		portals:    make(map[string]*Portal),
 	}
+}
+
+func generateCancelSecret(connID uint64) int32 {
+	var b [4]byte
+	if _, err := cryptorand.Read(b[:]); err == nil {
+		secret := int32(stdbinary.BigEndian.Uint32(b[:]))
+		if secret != 0 {
+			return secret
+		}
+	}
+
+	// Deterministic non-zero fallback if entropy source is unavailable.
+	fallback := int32((connID*1103515245 + 12345) & 0x7fffffff)
+	if fallback == 0 {
+		fallback = 1
+	}
+	return fallback
 }
 
 // Close closes the connection.
@@ -398,7 +421,7 @@ func (c *Conn) processStartup(params []byte) error {
 	// Send BackendKeyData (process ID and secret key for cancellation)
 	buf.Reset()
 	buf.WriteInt32(int32(c.id))     // process ID
-	buf.WriteInt32(int32(c.id * 7)) // secret key
+	buf.WriteInt32(c.cancelSecret)  // secret key
 	if err := c.writer.WriteMessage(MsgBackendKeyData, buf.Bytes()); err != nil {
 		return err
 	}

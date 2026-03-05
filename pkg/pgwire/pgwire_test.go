@@ -357,6 +357,124 @@ func TestSimpleConnection(t *testing.T) {
 	_, _ = conn.Write(terminate)
 }
 
+func TestCancelRequestInvalidSecretDoesNotCloseConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_cancel_invalid_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	msgs, err := startupAndDrainReady(conn)
+	if err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+
+	pid, secret, err := backendKeyDataFromMessages(msgs)
+	if err != nil {
+		t.Fatalf("missing BackendKeyData: %v", err)
+	}
+
+	cancelConn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to open cancel connection: %v", err)
+	}
+	_ = sendCancelRequest(cancelConn, pid, secret+1)
+	_ = cancelConn.Close()
+
+	msgs, err = sendSimpleQueryAndDrainReady(conn, "SELECT 1")
+	if err != nil {
+		t.Fatalf("connection should remain usable after invalid CancelRequest: %v", err)
+	}
+	if !containsMsgType(msgs, MsgReadyForQuery) {
+		t.Fatalf("expected ReadyForQuery after invalid CancelRequest")
+	}
+}
+
+func TestCancelRequestValidSecretClosesConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_cancel_valid_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	msgs, err := startupAndDrainReady(conn)
+	if err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+
+	pid, secret, err := backendKeyDataFromMessages(msgs)
+	if err != nil {
+		t.Fatalf("missing BackendKeyData: %v", err)
+	}
+
+	cancelConn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to open cancel connection: %v", err)
+	}
+	if err := sendCancelRequest(cancelConn, pid, secret); err != nil {
+		t.Fatalf("send cancel request failed: %v", err)
+	}
+	_ = cancelConn.Close()
+
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		_, lastErr = sendSimpleQueryAndDrainReady(conn, "SELECT 1")
+		if lastErr != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if lastErr == nil {
+		t.Fatalf("expected connection to be closed after valid CancelRequest")
+	}
+}
+
 // TestSSLRequest tests that the server correctly rejects SSL requests.
 func TestSSLRequest(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pgwire_ssl_test_*")
@@ -896,6 +1014,30 @@ func startupAndDrainReady(conn net.Conn) ([]backendMessage, error) {
 	}
 
 	return readMessagesUntilReady(conn)
+}
+
+func backendKeyDataFromMessages(msgs []backendMessage) (uint32, int32, error) {
+	msg, ok := firstMessage(msgs, MsgBackendKeyData)
+	if !ok {
+		return 0, 0, fmt.Errorf("BackendKeyData not found")
+	}
+	if len(msg.payload) < 8 {
+		return 0, 0, fmt.Errorf("BackendKeyData payload too short: %d", len(msg.payload))
+	}
+
+	pid := binary.BigEndian.Uint32(msg.payload[0:4])
+	secret := int32(binary.BigEndian.Uint32(msg.payload[4:8]))
+	return pid, secret, nil
+}
+
+func sendCancelRequest(conn net.Conn, pid uint32, secret int32) error {
+	buf := make([]byte, 16)
+	binary.BigEndian.PutUint32(buf[0:4], uint32(16))
+	binary.BigEndian.PutUint32(buf[4:8], uint32(CancelRequestCode))
+	binary.BigEndian.PutUint32(buf[8:12], pid)
+	binary.BigEndian.PutUint32(buf[12:16], uint32(secret))
+	_, err := conn.Write(buf)
+	return err
 }
 
 func sendSimpleQueryAndDrainReady(conn net.Conn, query string) ([]backendMessage, error) {
