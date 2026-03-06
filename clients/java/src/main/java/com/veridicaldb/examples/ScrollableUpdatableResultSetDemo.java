@@ -9,7 +9,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-@SuppressWarnings("module")
 public class ScrollableUpdatableResultSetDemo {
     public static void main(String[] args) throws Exception {
         Class.forName("com.veridicaldb.jdbc.VeridicalDriver");

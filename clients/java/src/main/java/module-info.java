@@ -3,7 +3,7 @@
  * This prevents module-path conflicts with the standard java.sql module.
  */
 module com.veridicaldb.jdbc {
-    requires java.sql;
+    requires transitive java.sql;
     requires java.base;
     
     exports com.veridicaldb.jdbc;

@@ -33,7 +33,6 @@ import javax.net.ssl.SSLSocketFactory;
  * JDBC Connection implementation for VeridicalDB.
  * Manages a single connection to the database server using PostgreSQL wire protocol.
  */
-@SuppressWarnings("module")
 public class VeridicalConnection implements Connection {
 
     private static final int SSL_REQUEST_CODE = 80877103;
