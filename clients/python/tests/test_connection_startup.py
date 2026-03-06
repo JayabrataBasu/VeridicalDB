@@ -3,9 +3,11 @@
 import struct
 
 from veridicaldb.connection import Connection
+from veridicaldb.exceptions import DatabaseError
 from veridicaldb.protocol import (
     MSG_AUTHENTICATION,
     MSG_BACKEND_KEY_DATA,
+    MSG_ERROR_RESPONSE,
     MSG_PARAMETER_STATUS,
     MSG_READY_FOR_QUERY,
 )
@@ -38,6 +40,9 @@ class _FakeProtocol:
     def parse_ready_for_query(self, data):
         return chr(data[0])
 
+    def parse_error_response(self, _data):
+        return {'M': 'auth failed'}
+
 
 class TestConnectionStartup:
     def test_authentication_drains_until_ready(self):
@@ -61,3 +66,51 @@ class TestConnectionStartup:
         assert fake.backend_pid == 1234
         assert fake.backend_secret == 5678
         assert conn.in_transaction is False
+
+    def test_unsupported_authentication_method_raises(self):
+        fake = _FakeProtocol([
+            (MSG_AUTHENTICATION, struct.pack('>I', 10)),
+        ])
+
+        conn = Connection.__new__(Connection)
+        conn.protocol = fake
+        conn.password = ''
+        conn._in_transaction = False
+
+        try:
+            conn._handle_authentication()
+            assert False, "expected DatabaseError for unsupported authentication method"
+        except DatabaseError as e:
+            assert "Unsupported authentication method" in str(e)
+
+    def test_ready_before_authentication_raises(self):
+        fake = _FakeProtocol([
+            (MSG_READY_FOR_QUERY, b'I'),
+        ])
+
+        conn = Connection.__new__(Connection)
+        conn.protocol = fake
+        conn.password = ''
+        conn._in_transaction = False
+
+        try:
+            conn._handle_authentication()
+            assert False, "expected DatabaseError when ReadyForQuery arrives before AuthenticationOk"
+        except DatabaseError as e:
+            assert "before authentication completed" in str(e)
+
+    def test_error_response_during_authentication_raises(self):
+        fake = _FakeProtocol([
+            (MSG_ERROR_RESPONSE, b''),
+        ])
+
+        conn = Connection.__new__(Connection)
+        conn.protocol = fake
+        conn.password = ''
+        conn._in_transaction = False
+
+        try:
+            conn._handle_authentication()
+            assert False, "expected DatabaseError for authentication error response"
+        except DatabaseError as e:
+            assert "Authentication failed" in str(e)

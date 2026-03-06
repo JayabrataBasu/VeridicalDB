@@ -14,36 +14,31 @@ public class VeridicalResultSetTest {
     
     private static final String PASS = "✓";
     private static final String FAIL = "✗";
+
+    @FunctionalInterface
+    private interface ThrowingTest {
+        void run() throws SQLException;
+    }
     
     public static void main(String[] args) {
         VeridicalResultSetTest test = new VeridicalResultSetTest();
-        
+
+        runTest("scrollInsensitiveNavigationWorks", test::scrollInsensitiveNavigationWorks);
+        runTest("forwardOnlyRejectsScrollableOperations", test::forwardOnlyRejectsScrollableOperations);
+        runTest("updatableResultSetStagesAndAppliesChanges", test::updatableResultSetStagesAndAppliesChanges);
+        runTest("readOnlyResultSetRejectsUpdates", test::readOnlyResultSetRejectsUpdates);
+        runTest("absoluteAndRelativeOutOfRangeBehaviors", test::absoluteAndRelativeOutOfRangeBehaviors);
+        runTest("findColumnCaseInsensitiveAndMissingColumn", test::findColumnCaseInsensitiveAndMissingColumn);
+        runTest("closedResultSetRejectsOperations", test::closedResultSetRejectsOperations);
+        runTest("wasNullTracksLastReadColumn", test::wasNullTracksLastReadColumn);
+    }
+
+    private static void runTest(String name, ThrowingTest test) {
         try {
-            test.scrollInsensitiveNavigationWorks();
-            System.out.println(PASS + " scrollInsensitiveNavigationWorks");
-        } catch (Exception e) {
-            System.out.println(FAIL + " scrollInsensitiveNavigationWorks: " + e.getMessage());
-        }
-        
-        try {
-            test.forwardOnlyRejectsScrollableOperations();
-            System.out.println(PASS + " forwardOnlyRejectsScrollableOperations");
-        } catch (Exception e) {
-            System.out.println(FAIL + " forwardOnlyRejectsScrollableOperations: " + e.getMessage());
-        }
-        
-        try {
-            test.updatableResultSetStagesAndAppliesChanges();
-            System.out.println(PASS + " updatableResultSetStagesAndAppliesChanges");
-        } catch (Exception e) {
-            System.out.println(FAIL + " updatableResultSetStagesAndAppliesChanges: " + e.getMessage());
-        }
-        
-        try {
-            test.readOnlyResultSetRejectsUpdates();
-            System.out.println(PASS + " readOnlyResultSetRejectsUpdates");
-        } catch (Exception e) {
-            System.out.println(FAIL + " readOnlyResultSetRejectsUpdates: " + e.getMessage());
+            test.run();
+            System.out.println(PASS + " " + name);
+        } catch (SQLException | AssertionError e) {
+            System.out.println(FAIL + " " + name + ": " + e.getMessage());
         }
     }
     
@@ -60,7 +55,7 @@ public class VeridicalResultSetTest {
     }
     
     private static void assertEquals(Object expected, Object actual) {
-        if (!expected.equals(actual)) {
+        if (expected == null ? actual != null : !expected.equals(actual)) {
             throw new AssertionError("Expected " + expected + ", got " + actual);
         }
     }
@@ -154,6 +149,82 @@ public class VeridicalResultSetTest {
         } catch (SQLFeatureNotSupportedException e) {
             // Expected
         }
+    }
+
+    public void absoluteAndRelativeOutOfRangeBehaviors() throws SQLException {
+        VeridicalResultSet rs = new VeridicalResultSet(
+                null,
+                rowDescription(),
+                sampleRows(),
+                ResultSet.TYPE_SCROLL_INSENSITIVE,
+                ResultSet.CONCUR_READ_ONLY);
+
+        assertFalse(rs.absolute(0));
+        assertTrue(rs.isBeforeFirst());
+
+        assertFalse(rs.absolute(99));
+        assertTrue(rs.isAfterLast());
+
+        assertFalse(rs.relative(-99));
+        assertTrue(rs.isBeforeFirst());
+    }
+
+    public void findColumnCaseInsensitiveAndMissingColumn() throws SQLException {
+        VeridicalResultSet rs = new VeridicalResultSet(
+                null,
+                rowDescription(),
+                sampleRows(),
+                ResultSet.TYPE_SCROLL_INSENSITIVE,
+                ResultSet.CONCUR_READ_ONLY);
+
+        assertEquals(1, rs.findColumn("ID"));
+        assertEquals(2, rs.findColumn("nAmE"));
+
+        try {
+            rs.findColumn("missing");
+            throw new AssertionError("Expected SQLException for missing column");
+        } catch (SQLException e) {
+            assertEquals("42S22", e.getSQLState());
+        }
+    }
+
+    public void closedResultSetRejectsOperations() throws SQLException {
+        VeridicalResultSet rs = new VeridicalResultSet(
+                null,
+                rowDescription(),
+                sampleRows(),
+                ResultSet.TYPE_SCROLL_INSENSITIVE,
+                ResultSet.CONCUR_READ_ONLY);
+
+        rs.close();
+
+        try {
+            rs.next();
+            throw new AssertionError("Expected SQLException from next() on closed ResultSet");
+        } catch (SQLException e) {
+            assertEquals("08003", e.getSQLState());
+        }
+    }
+
+    public void wasNullTracksLastReadColumn() throws SQLException {
+        List<Object[]> rowsWithNull = new ArrayList<>();
+        rowsWithNull.add(new Object[] {1, null});
+
+        VeridicalResultSet rs = new VeridicalResultSet(
+                null,
+                rowDescription(),
+                rowsWithNull,
+                ResultSet.TYPE_SCROLL_INSENSITIVE,
+                ResultSet.CONCUR_READ_ONLY);
+
+        assertTrue(rs.next());
+
+        assertEquals(1, rs.getInt("id"));
+        assertFalse(rs.wasNull());
+
+        String name = rs.getString("name");
+        assertEquals(null, name);
+        assertTrue(rs.wasNull());
     }
 
     private static WireProtocol.RowDescription rowDescription() {

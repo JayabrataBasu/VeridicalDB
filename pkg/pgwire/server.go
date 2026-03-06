@@ -531,7 +531,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, _query string, maxRows int32) (bool, error) {
+func (c *Conn) sendResult(result *sql.Result, query string, maxRows int32) (bool, error) {
 	if result == nil {
 		return false, c.sendCommandComplete("", 0)
 	}

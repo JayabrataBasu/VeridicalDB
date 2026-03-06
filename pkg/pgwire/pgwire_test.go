@@ -475,6 +475,155 @@ func TestCancelRequestValidSecretClosesConnection(t *testing.T) {
 	}
 }
 
+func TestCancelRequestUnknownPIDDoesNotCloseConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_cancel_unknown_pid_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	msgs, err := startupAndDrainReady(conn)
+	if err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+
+	pid, secret, err := backendKeyDataFromMessages(msgs)
+	if err != nil {
+		t.Fatalf("missing BackendKeyData: %v", err)
+	}
+
+	cancelConn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to open cancel connection: %v", err)
+	}
+	_ = sendCancelRequest(cancelConn, pid+12345, secret)
+	_ = cancelConn.Close()
+
+	msgs, err = sendSimpleQueryAndDrainReady(conn, "SELECT 1")
+	if err != nil {
+		t.Fatalf("connection should remain usable after unknown-PID CancelRequest: %v", err)
+	}
+	if !containsMsgType(msgs, MsgReadyForQuery) {
+		t.Fatalf("expected ReadyForQuery after unknown-PID CancelRequest")
+	}
+}
+
+func TestStartupUnsupportedProtocolClosesConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_startup_unsupported_protocol_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	startup := make([]byte, 8)
+	binary.BigEndian.PutUint32(startup[0:4], 8)
+	binary.BigEndian.PutUint32(startup[4:8], uint32(0x12345678))
+	if _, err := conn.Write(startup); err != nil {
+		t.Fatalf("failed to send startup with unsupported protocol: %v", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	b := make([]byte, 1)
+	_, err = conn.Read(b)
+	if err == nil {
+		t.Fatalf("expected connection to close for unsupported protocol startup")
+	}
+}
+
+func TestMalformedFrontendMessageLengthClosesConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_malformed_len_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := startupAndDrainReady(conn); err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+
+	// Invalid frontend frame: length must be >= 4, but this sends 3.
+	malformed := []byte{MsgQuery, 0, 0, 0, 3}
+	if _, err := conn.Write(malformed); err != nil {
+		t.Fatalf("failed to send malformed message: %v", err)
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	b := make([]byte, 1)
+	_, err = conn.Read(b)
+	if err == nil {
+		t.Fatalf("expected connection close after malformed frontend frame")
+	}
+}
+
 // TestSSLRequest tests that the server correctly rejects SSL requests.
 func TestSSLRequest(t *testing.T) {
 	dir, err := os.MkdirTemp("", "pgwire_ssl_test_*")

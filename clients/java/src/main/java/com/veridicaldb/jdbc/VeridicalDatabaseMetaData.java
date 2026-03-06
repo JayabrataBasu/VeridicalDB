@@ -13,7 +13,6 @@ import java.sql.SQLFeatureNotSupportedException;
  * 
  * Note: This is a minimal implementation. Full metadata support will be added in future versions.
  */
-@SuppressWarnings("module")
 public class VeridicalDatabaseMetaData implements DatabaseMetaData {
     
     private final VeridicalConnection connection;
