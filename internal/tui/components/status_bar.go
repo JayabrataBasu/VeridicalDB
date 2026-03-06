@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -31,26 +32,26 @@ const (
 	StatusStyleInfo
 )
 
-// Nerd Font status icons.
-const (
-	IconDatabase   = "" // nf-fa-database
-	IconConnection = "" // nf-cod-debug_disconnect / nf-md-lan_connect
-	IconBranch     = "" // nf-oct-git_branch
-	IconClock      = "" // nf-fa-clock_o
-	IconMemory     = "" // nf-fa-microchip
-	IconCPU        = "" // nf-oct-cpu
-	IconCheck      = "" // nf-fa-check
-	IconWarning    = "" // nf-fa-warning
-	IconError      = "" // nf-fa-times_circle
-	IconLoading    = "" // nf-fa-spinner
-	IconLocked     = "" // nf-fa-lock
-	IconUnlocked   = "" // nf-fa-unlock
-	IconUser       = "" // nf-fa-user
-	IconServer     = "" // nf-fa-server
-	IconQuery      = "" // nf-fa-search
-	IconEdit       = "" // nf-fa-pencil
-	IconSave       = "" // nf-fa-save
-	IconKey        = "" // nf-fa-key
+// Status icons map to the active global icon set.
+var (
+	IconDatabase   = types.Icons.Database
+	IconConnection = types.Icons.Connections
+	IconBranch     = types.Icons.Browser
+	IconClock      = types.Icons.Clock
+	IconMemory     = types.Icons.Memory
+	IconCPU        = types.Icons.CPU
+	IconCheck      = types.Icons.Success
+	IconWarning    = types.Icons.Warning
+	IconError      = types.Icons.Error
+	IconLoading    = types.Icons.Pending
+	IconLocked     = types.Icons.Key
+	IconUnlocked   = types.Icons.Key
+	IconUser       = types.Icons.Users
+	IconServer     = types.Icons.Database
+	IconQuery      = types.Icons.Query
+	IconEdit       = types.Icons.Edit
+	IconSave       = types.Icons.Export
+	IconKey        = types.Icons.Key
 )
 
 // StatusBar provides a feature-rich status bar with brand styling.

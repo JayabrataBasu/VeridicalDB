@@ -1,6 +1,7 @@
 package screens
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/components"
@@ -10,6 +11,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // just a few of the available ones
@@ -36,10 +38,13 @@ type EditorScreen struct {
 	// Autocomplete
 	autocomplete *components.AutocompleteManager
 	showHelp     bool
+	width        int
+	height       int
 }
 
 // NewEditorScreen creates a new SQL editor screen
 func NewEditorScreen(app types.StyleProvider) *EditorScreen {
+	SyncScreenIcons()
 	ta := textarea.New()
 	ta.Placeholder = "Enter SQL query here... (F5 or Ctrl+Enter to execute)"
 	ta.Focus()
@@ -59,6 +64,8 @@ func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 		lineOps:      syntax.NewLineOperations(""),
 		autocomplete: initializeAutocomplete(),
 		showHelp:     false,
+		width:        120,
+		height:       40,
 	}
 }
 
@@ -277,7 +284,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 			if len(e.history) > 0 && e.historyIdx > 0 {
 				e.historyIdx--
 				e.textarea.SetValue(e.history[e.historyIdx])
-				e.status = "History: " + string(rune(e.historyIdx+1)) + "/" + string(rune(len(e.history)))
+				e.status = fmt.Sprintf("History: %d/%d", e.historyIdx+1, len(e.history))
 			}
 			return e, nil
 
@@ -310,9 +317,11 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		return e, nil
 
 	case tea.WindowSizeMsg:
+		e.width = msg.Width
+		e.height = msg.Height
 		// Resize textarea to fit window with proper padding
-		editorWidth := msg.Width - 8    // Account for padding and borders
-		editorHeight := msg.Height - 12 // Account for header, status, help
+		editorWidth := int(float64(msg.Width)*0.56) - 8
+		editorHeight := msg.Height - 13 // Account for header, status, help, and pane borders
 		if editorWidth < 40 {           //adjusts minimum size same for 8
 			editorWidth = 40
 		}
@@ -332,15 +341,22 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 // View renders the editor screen with premium styling and proper spacing
 func (e *EditorScreen) View() string {
-	var b strings.Builder
+	width := e.width
+	height := e.height
+	if width <= 0 {
+		width = 120
+	}
+	if height <= 0 {
+		height = 40
+	}
 
 	// Brand palette colors - theme-aware with fallbacks
-	brandAccent := "#00D9FF"    // Neon Cyan
-	brandHighlight := "#FF006E" // Neon Magenta
-	brandWarning := "#FFB86C"   // Accent Orange
-	brandSuccess := "#55FF55"   // Bright Green
-	brandMuted := "#44475A"     // Steel Gray
-	brandPurple := "#BD00FF"    // Neon Purple
+	brandAccent := "#00D9FF"
+	brandHighlight := "#FF006E"
+	brandWarning := "#FFB86C"
+	brandSuccess := "#55FF55"
+	brandMuted := "#44475A"
+	brandBg := "#0A0E27"
 	if tp, ok := e.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
 			t := tm.Current()
@@ -349,64 +365,146 @@ func (e *EditorScreen) View() string {
 			brandWarning = t.BrandWarning
 			brandSuccess = t.BrandSuccess
 			brandMuted = t.BrandMuted
-			brandPurple = t.BrandGradientB
+			brandBg = t.Background
 		}
 	}
 
-	// Header with ANSI - no lipgloss blocks
-	header := styles.FromHexBold(NerdIcons.Query+"  SQL Editor", brandAccent)
-	b.WriteString(header)
-	b.WriteString("\n")
+	header := styles.FromHexBold(types.Icons.Query+"  SQL Editor", brandAccent)
+	breadcrumb := styles.FromHex(types.Icons.Pointer+" Home › ", brandMuted) + styles.FromHexBold("Editor", brandAccent)
 
-	// Breadcrumb navigation
-	bc := styles.FromHex(NerdIcons.Home+" Home › ", brandMuted) + styles.FromHexBold("Editor", brandAccent)
-	b.WriteString(bc)
-	b.WriteString("\n\n")
+	leftWidth := max(22, int(float64(width)*0.20))
+	rightWidth := max(28, int(float64(width)*0.24))
+	centerWidth := width - leftWidth - rightWidth - 6
+	if centerWidth < 46 {
+		centerWidth = 46
+		rightWidth = max(24, width-leftWidth-centerWidth-6)
+	}
+	if rightWidth < 24 {
+		rightWidth = 24
+	}
 
-	// Editor content - textarea is a bubble component, we can't fully control it
-	// But we can wrap minimally
-	b.WriteString(e.textarea.View())
-	b.WriteString("\n\n")
+	bodyHeight := max(10, height-9)
 
-	// Status bar with icon - pure ANSI
+	leftPane := lipgloss.NewStyle().
+		Width(leftWidth).
+		Height(bodyHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(brandMuted)).
+		Background(lipgloss.Color(brandBg)).
+		Padding(0, 1).
+		Render(e.renderContextPane(leftWidth-2, bodyHeight))
+
+	centerPane := lipgloss.NewStyle().
+		Width(centerWidth).
+		Height(bodyHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(brandAccent)).
+		Background(lipgloss.Color(brandBg)).
+		Padding(0, 1).
+		Render(e.renderEditorPane(centerWidth-2, bodyHeight))
+
+	rightPane := lipgloss.NewStyle().
+		Width(rightWidth).
+		Height(bodyHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color(brandHighlight)).
+		Background(lipgloss.Color(brandBg)).
+		Padding(0, 1).
+		Render(e.renderPreviewPane(rightWidth-2, bodyHeight, brandMuted))
+
+	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, centerPane, rightPane)
+
 	var statusIcon string
 	var statusColor string
-
 	if e.executing {
-		statusIcon = NerdIcons.Pending + " "
+		statusIcon = types.Icons.Running + " "
 		statusColor = brandWarning
 	} else if strings.HasPrefix(e.status, "Error") {
-		statusIcon = NerdIcons.Error + " "
+		statusIcon = types.Icons.Error + " "
 		statusColor = brandHighlight
-	} else if strings.Contains(e.status, "success") {
-		statusIcon = NerdIcons.Success + " "
+	} else if strings.Contains(strings.ToLower(e.status), "success") {
+		statusIcon = types.Icons.Success + " "
 		statusColor = brandSuccess
 	} else {
-		statusIcon = NerdIcons.Running + " "
+		statusIcon = types.Icons.Info + " "
 		statusColor = brandAccent
 	}
 
 	statusBar := styles.FromHexBold(statusIcon+e.status, statusColor)
-	b.WriteString(statusBar)
-	b.WriteString("\n\n")
+	helpText := styles.FromHexBold("F5", brandAccent) + styles.FromHex(" Run  ", brandMuted) +
+		styles.FromHexBold("Ctrl+D", brandAccent) + styles.FromHex(" Duplicate  ", brandMuted) +
+		styles.FromHexBold("Ctrl+Space", brandAccent) + styles.FromHex(" Complete  ", brandMuted) +
+		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
 
-	// Autocomplete popup if visible
+	return strings.Join([]string{
+		header,
+		breadcrumb,
+		"",
+		content,
+		"",
+		statusBar,
+		helpText,
+	}, "\n")
+}
+
+func (e *EditorScreen) renderContextPane(width, height int) string {
+	lines := []string{
+		styles.FromHexBold(types.Icons.Database+" Context", "#FFB86C"),
+		"",
+		fmt.Sprintf("Lines: %d", len(strings.Split(e.textarea.Value(), "\n"))),
+		fmt.Sprintf("History: %d", len(e.history)),
+		fmt.Sprintf("Mode: %s", strings.ToUpper(strings.TrimSpace(e.status))),
+		"",
+		styles.FromHexBold(types.Icons.Key+" Shortcuts", "#FFB86C"),
+		"F1 help",
+		"F5 execute",
+		"Ctrl+Enter execute",
+		"Ctrl+K clear",
+	}
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	content := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().Width(width).MaxHeight(height).Render(content)
+}
+
+func (e *EditorScreen) renderEditorPane(width, height int) string {
+	title := styles.FromHexBold(types.Icons.Edit+" SQL Buffer", "#00D9FF")
+	contentHeight := height - 2
+	if contentHeight < 3 {
+		contentHeight = 3
+	}
+	view := lipgloss.NewStyle().Width(width).MaxHeight(contentHeight).Render(e.textarea.View())
+	return lipgloss.JoinVertical(lipgloss.Left, title, view)
+}
+
+func (e *EditorScreen) renderPreviewPane(width, height int, muted string) string {
+	title := styles.FromHexBold(types.Icons.Query+" Syntax Preview", "#FF006E")
+	previewHeight := height - 2
+	if previewHeight < 3 {
+		previewHeight = 3
+	}
+	h := components.NewHighlightedTextView(e.textarea.Value(), e.highlighter)
+	h.SetDimensions(width, previewHeight)
+	h.SetLineNumbers(true)
+	highlighted := h.Render()
+
 	if e.autocomplete.IsVisible() {
-		autocompleteView := e.autocomplete.RenderSuggestions()
-		if autocompleteView != "" {
-			b.WriteString("  " + styles.FromHex(autocompleteView, brandPurple))
-			b.WriteString("\n")
+		suggestions := e.autocomplete.RenderSuggestions()
+		if suggestions != "" {
+			highlighted += "\n\n" + styles.FromHex(suggestions, muted)
 		}
 	}
 
-	// Help bar with keyboard shortcuts - pure ANSI
-	helpText := styles.FromHexBold("F5", brandAccent) + styles.FromHex(" Execute  ", brandMuted) +
-		styles.FromHexBold("Ctrl+D", brandAccent) + styles.FromHex(" Duplicate  ", brandMuted) +
-		styles.FromHexBold("Ctrl+Space", brandAccent) + styles.FromHex(" Autocomplete  ", brandMuted) +
-		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
-	b.WriteString(helpText)
+	view := lipgloss.NewStyle().Width(width).MaxHeight(previewHeight).Render(highlighted)
+	return lipgloss.JoinVertical(lipgloss.Left, title, view)
+}
 
-	return b.String()
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // isWordChar checks if a character can be part of a word for autocomplete, how nice, the entire modern keyboard

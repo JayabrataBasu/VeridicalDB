@@ -23,6 +23,7 @@ type ResultsScreen struct {
 
 // NewResultsScreen creates a new results viewer screen
 func NewResultsScreen(app types.StyleProvider) *ResultsScreen {
+	SyncScreenIcons()
 	return &ResultsScreen{
 		app:         app,
 		page:        0,

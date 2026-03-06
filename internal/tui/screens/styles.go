@@ -3,6 +3,7 @@ package screens
 
 import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
+	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -31,6 +32,7 @@ type ScreenStyles struct {
 
 // NewScreenStyles creates a new ScreenStyles with the given theme.
 func NewScreenStyles(t *theme.Theme) *ScreenStyles {
+	SyncScreenIcons()
 	s := &ScreenStyles{theme: t, width: 80}
 	s.updateStyles()
 	return s
@@ -238,51 +240,95 @@ var NerdIcons = struct {
 	Network string
 }{
 	// Navigation
-	Home:    "",
-	Back:    "",
-	Forward: "",
-	Up:      "",
-	Down:    "",
+	Home:    types.Icons.Pointer,
+	Back:    types.Icons.ArrowLeft,
+	Forward: types.Icons.ArrowRight,
+	Up:      types.Icons.ArrowUp,
+	Down:    types.Icons.ArrowDown,
 
 	// Status
-	Success: "",
-	Error:   "",
-	Warning: "",
-	Info:    "",
-	Pending: "",
-	Running: "",
+	Success: types.Icons.Success,
+	Error:   types.Icons.Error,
+	Warning: types.Icons.Warning,
+	Info:    types.Icons.Info,
+	Pending: types.Icons.Pending,
+	Running: types.Icons.Running,
 
 	// Database
-	Database: "",
-	Table:    "",
-	Index:    "",
-	Column:   "",
-	Key:      "",
+	Database: types.Icons.Database,
+	Table:    types.Icons.Table,
+	Index:    types.Icons.Index,
+	Column:   types.Icons.Column,
+	Key:      types.Icons.Key,
 
 	// Actions
-	Query:   "",
-	Execute: "",
-	Save:    "",
-	Delete:  "",
-	Edit:    "",
-	Copy:    "",
-	Refresh: "",
+	Query:   types.Icons.Query,
+	Execute: types.Icons.Execute,
+	Save:    types.Icons.Export,
+	Delete:  types.Icons.Delete,
+	Edit:    types.Icons.Edit,
+	Copy:    types.Icons.Import,
+	Refresh: types.Icons.Refresh,
 
 	// UI
-	Folder:   "",
-	File:     "",
-	Settings: "",
-	User:     "",
-	Lock:     "",
-	Unlock:   "",
-	Calendar: "",
-	Clock:    "",
+	Folder:   types.Icons.Folder,
+	File:     types.Icons.File,
+	Settings: types.Icons.Settings,
+	User:     types.Icons.Users,
+	Lock:     types.Icons.Key,
+	Unlock:   types.Icons.Key,
+	Calendar: types.Icons.Clock,
+	Clock:    types.Icons.Clock,
 
 	// Metrics
-	CPU:     "",
-	Memory:  "",
-	Disk:    "",
-	Network: "",
+	CPU:     types.Icons.CPU,
+	Memory:  types.Icons.Memory,
+	Disk:    types.Icons.Disk,
+	Network: types.Icons.Network,
+}
+
+// SyncScreenIcons refreshes icon aliases from the global icon set.
+func SyncScreenIcons() {
+	NerdIcons.Home = types.Icons.Pointer
+	NerdIcons.Back = types.Icons.ArrowLeft
+	NerdIcons.Forward = types.Icons.ArrowRight
+	NerdIcons.Up = types.Icons.ArrowUp
+	NerdIcons.Down = types.Icons.ArrowDown
+
+	NerdIcons.Success = types.Icons.Success
+	NerdIcons.Error = types.Icons.Error
+	NerdIcons.Warning = types.Icons.Warning
+	NerdIcons.Info = types.Icons.Info
+	NerdIcons.Pending = types.Icons.Pending
+	NerdIcons.Running = types.Icons.Running
+
+	NerdIcons.Database = types.Icons.Database
+	NerdIcons.Table = types.Icons.Table
+	NerdIcons.Index = types.Icons.Index
+	NerdIcons.Column = types.Icons.Column
+	NerdIcons.Key = types.Icons.Key
+
+	NerdIcons.Query = types.Icons.Query
+	NerdIcons.Execute = types.Icons.Execute
+	NerdIcons.Save = types.Icons.Export
+	NerdIcons.Delete = types.Icons.Delete
+	NerdIcons.Edit = types.Icons.Edit
+	NerdIcons.Copy = types.Icons.Import
+	NerdIcons.Refresh = types.Icons.Refresh
+
+	NerdIcons.Folder = types.Icons.Folder
+	NerdIcons.File = types.Icons.File
+	NerdIcons.Settings = types.Icons.Settings
+	NerdIcons.User = types.Icons.Users
+	NerdIcons.Lock = types.Icons.Key
+	NerdIcons.Unlock = types.Icons.Key
+	NerdIcons.Calendar = types.Icons.Clock
+	NerdIcons.Clock = types.Icons.Clock
+
+	NerdIcons.CPU = types.Icons.CPU
+	NerdIcons.Memory = types.Icons.Memory
+	NerdIcons.Disk = types.Icons.Disk
+	NerdIcons.Network = types.Icons.Network
 }
 
 // ============================================================================
