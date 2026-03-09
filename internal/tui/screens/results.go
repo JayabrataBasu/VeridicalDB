@@ -134,7 +134,6 @@ func (r *ResultsScreen) View() string {
 	brandWarning := "#FFB86C"
 	brandSuccess := "#55FF55"
 	brandMuted := "#44475A"
-	brandBg := "#0A0E27"
 	brandText := "#FFFFFF"
 	if tp, ok := r.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
@@ -143,7 +142,6 @@ func (r *ResultsScreen) View() string {
 			brandWarning = t.BrandWarning
 			brandSuccess = t.BrandSuccess
 			brandMuted = t.BrandMuted
-			brandBg = t.Background
 			brandText = t.Foreground
 		}
 	}
@@ -170,7 +168,6 @@ func (r *ResultsScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandMuted)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(r.renderMetadataPane(leftWidth-2, bodyHeight, brandWarning, brandMuted))
 
@@ -179,7 +176,6 @@ func (r *ResultsScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandAccent)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(r.renderTablePane(centerWidth-2, bodyHeight, brandAccent, brandMuted, brandText))
 
@@ -188,7 +184,6 @@ func (r *ResultsScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandSuccess)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(r.renderStatsPane(rightWidth-2, bodyHeight, brandSuccess, brandMuted))
 
@@ -203,7 +198,6 @@ func (r *ResultsScreen) View() string {
 			Height(mainHeight).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(brandAccent)).
-			Background(lipgloss.Color(brandBg)).
 			Padding(0, 1).
 			Render(r.renderTablePane(mainWidth-2, mainHeight, brandAccent, brandMuted, brandText))
 
@@ -212,7 +206,6 @@ func (r *ResultsScreen) View() string {
 			Height(auxHeight).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(brandSuccess)).
-			Background(lipgloss.Color(brandBg)).
 			Padding(0, 1).
 			Render(r.renderStatsPane(mainWidth-2, auxHeight, brandSuccess, brandMuted))
 

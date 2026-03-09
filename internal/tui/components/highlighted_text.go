@@ -103,18 +103,22 @@ func (h *HighlightedTextView) Render() string {
 				Width(lineNumWidth).
 				Render(strconv.Itoa(i + 1))
 
-			// Content with truncation
-			content := lipgloss.NewStyle().MaxWidth(contentWidth).Render(lines[i])
-			if lipgloss.Width(content) < contentWidth {
-				content += strings.Repeat(" ", contentWidth-lipgloss.Width(content))
+			// lines[i] already has ANSI codes from the Highlighter;
+			// measure visible width without re-rendering through lipgloss
+			content := lines[i]
+			visWidth := lipgloss.Width(content)
+			if visWidth < contentWidth {
+				content += strings.Repeat(" ", contentWidth-visWidth)
 			}
 
 			line = fmt.Sprintf("%s  %s", lineNum, content)
 		} else {
-			line = lipgloss.NewStyle().MaxWidth(h.width).Render(lines[i])
-			if lipgloss.Width(line) < h.width {
-				line += strings.Repeat(" ", h.width-lipgloss.Width(line))
+			content := lines[i]
+			visWidth := lipgloss.Width(content)
+			if visWidth < h.width {
+				content += strings.Repeat(" ", h.width-visWidth)
 			}
+			line = content
 		}
 
 		result = append(result, line)

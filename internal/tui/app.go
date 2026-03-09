@@ -172,6 +172,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOverlay != nil {
 			_ = m.helpOverlay.Update(msg)
 		}
+		// Forward adjusted size to the active screen (subtract sidebar + status bar)
+		sideW := 22
+		if m.sidebarCollapsed {
+			sideW = 0
+		}
+		screenMsg := tea.WindowSizeMsg{
+			Width:  msg.Width - sideW,
+			Height: msg.Height - 2, // reserve for status bar
+		}
+		if m.screen != nil {
+			newScreen, cmd := m.screen.Update(screenMsg)
+			m.screen = newScreen
+			return m, cmd
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -274,28 +288,16 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	// Calculate available space (reserve 1 line for status bar)
-	contentHeight := m.height - 1
-	sidebarWidth := 20
+	// Screen already renders at the correct width (set via WindowSizeMsg).
+	// Do NOT re-wrap with Width/Height/Background — that corrupts ANSI codes.
+	mainContent := m.screen.View()
+
+	// Render sidebar if not collapsed
+	sidebarWidth := 22
 	if m.sidebarCollapsed {
 		sidebarWidth = 0
 	}
 
-	// Main content with proper width constraint - NO BACKGROUND styling
-	mainWidth := m.width - sidebarWidth - 2
-	if mainWidth < 50 {
-		mainWidth = 50
-	}
-
-	// NO background on main content - let terminal handle it
-	mainContentStyle := lipgloss.NewStyle().
-		Width(mainWidth).
-		Height(contentHeight).
-		Padding(1, 2)
-
-	mainContent := mainContentStyle.Render(m.screen.View())
-
-	// Render sidebar if not collapsed
 	var layout string
 	if !m.sidebarCollapsed {
 		side := NewSidebar(m)

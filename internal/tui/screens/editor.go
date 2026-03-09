@@ -356,7 +356,6 @@ func (e *EditorScreen) View() string {
 	brandWarning := "#FFB86C"
 	brandSuccess := "#55FF55"
 	brandMuted := "#44475A"
-	brandBg := "#0A0E27"
 	if tp, ok := e.app.(interface{ GetThemeManager() *theme.Manager }); ok {
 		if tm := tp.GetThemeManager(); tm != nil {
 			t := tm.Current()
@@ -365,7 +364,6 @@ func (e *EditorScreen) View() string {
 			brandWarning = t.BrandWarning
 			brandSuccess = t.BrandSuccess
 			brandMuted = t.BrandMuted
-			brandBg = t.Background
 		}
 	}
 
@@ -391,7 +389,6 @@ func (e *EditorScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandMuted)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(e.renderContextPane(leftWidth-2, bodyHeight))
 
@@ -400,7 +397,6 @@ func (e *EditorScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandAccent)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(e.renderEditorPane(centerWidth-2, bodyHeight))
 
@@ -409,7 +405,6 @@ func (e *EditorScreen) View() string {
 		Height(bodyHeight).
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(brandHighlight)).
-		Background(lipgloss.Color(brandBg)).
 		Padding(0, 1).
 		Render(e.renderPreviewPane(rightWidth-2, bodyHeight, brandMuted))
 
@@ -424,7 +419,6 @@ func (e *EditorScreen) View() string {
 			Height(mainHeight).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(brandAccent)).
-			Background(lipgloss.Color(brandBg)).
 			Padding(0, 1).
 			Render(e.renderEditorPane(mainWidth-2, mainHeight))
 
@@ -433,7 +427,6 @@ func (e *EditorScreen) View() string {
 			Height(previewHeight).
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(brandHighlight)).
-			Background(lipgloss.Color(brandBg)).
 			Padding(0, 1).
 			Render(e.renderPreviewPane(mainWidth-2, previewHeight, brandMuted))
 
@@ -496,12 +489,8 @@ func (e *EditorScreen) renderContextPane(width, height int) string {
 
 func (e *EditorScreen) renderEditorPane(width, height int) string {
 	title := styles.FromHexBold(types.Icons.Edit+" SQL Buffer", "#00D9FF")
-	contentHeight := height - 2
-	if contentHeight < 3 {
-		contentHeight = 3
-	}
-	view := lipgloss.NewStyle().Width(width).MaxHeight(contentHeight).Render(e.textarea.View())
-	return lipgloss.JoinVertical(lipgloss.Left, title, view)
+	// textarea.View() already contains ANSI codes; avoid re-wrapping through lipgloss.Render()
+	return lipgloss.JoinVertical(lipgloss.Left, title, e.textarea.View())
 }
 
 func (e *EditorScreen) renderPreviewPane(width, height int, muted string) string {
@@ -522,8 +511,9 @@ func (e *EditorScreen) renderPreviewPane(width, height int, muted string) string
 		}
 	}
 
-	view := lipgloss.NewStyle().Width(width).MaxHeight(previewHeight).Render(highlighted)
-	return lipgloss.JoinVertical(lipgloss.Left, title, view)
+	// highlighted already contains ANSI codes from the syntax highlighter;
+	// avoid re-wrapping through lipgloss.Render() which corrupts escape sequences
+	return lipgloss.JoinVertical(lipgloss.Left, title, highlighted)
 }
 
 func max(a, b int) int {
