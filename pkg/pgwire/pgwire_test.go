@@ -1141,6 +1141,99 @@ func TestExtendedQueryProtocolInvalidTypedParam(t *testing.T) {
 	}
 }
 
+func TestExtendedQueryProtocolExecuteMaxRowsContinuation(t *testing.T) {
+	dir, err := os.MkdirTemp("", "pgwire_extended_maxrows_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dataDir := filepath.Join(dir, "data")
+	tm, err := catalog.NewTableManager(dataDir, 4096, nil)
+	if err != nil {
+		t.Fatalf("NewTableManager failed: %v", err)
+	}
+	txnMgr := txn.NewManager()
+	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
+	logger := log.New(io.Discard, log.LevelError, log.FormatText)
+
+	server := NewServer(ServerConfig{Logger: logger, MTM: mtm, TxnMgr: txnMgr})
+	if err := server.Start(0); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer func() { _ = server.Stop() }()
+
+	addr := server.listener.Addr().(*net.TCPAddr)
+	conn, err := net.DialTimeout("tcp", addr.String(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Failed to connect: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if _, err := startupAndDrainReady(conn); err != nil {
+		t.Fatalf("startup failed: %v", err)
+	}
+	if _, err := sendSimpleQueryAndDrainReady(conn, "CREATE TABLE t_lim (id INT)"); err != nil {
+		t.Fatalf("create table failed: %v", err)
+	}
+	for _, q := range []string{
+		"INSERT INTO t_lim VALUES (1)",
+		"INSERT INTO t_lim VALUES (2)",
+		"INSERT INTO t_lim VALUES (3)",
+	} {
+		if _, err := sendSimpleQueryAndDrainReady(conn, q); err != nil {
+			t.Fatalf("insert row failed: %v", err)
+		}
+	}
+
+	if err := sendFrontendMessage(conn, MsgParse, buildParsePayload("s_lim", "SELECT id FROM t_lim", nil)); err != nil {
+		t.Fatalf("send parse failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgBind, buildBindPayload("p_lim", "s_lim", nil, nil, nil)); err != nil {
+		t.Fatalf("send bind failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgExecute, buildExecutePayload("p_lim", 2)); err != nil {
+		t.Fatalf("send execute(2) failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgSync, nil); err != nil {
+		t.Fatalf("send sync failed: %v", err)
+	}
+
+	msgs, err := readMessagesUntilReady(conn)
+	if err != nil {
+		t.Fatalf("read first execute responses failed: %v", err)
+	}
+
+	if !containsMsgType(msgs, MsgPortalSuspended) {
+		t.Fatalf("expected PortalSuspended in first limited execute")
+	}
+	if containsMsgType(msgs, MsgCommandComplete) {
+		t.Fatalf("did not expect CommandComplete before portal exhaustion")
+	}
+	if got := countMsgType(msgs, MsgDataRow); got != 2 {
+		t.Fatalf("expected 2 DataRow messages in first execute, got %d", got)
+	}
+
+	if err := sendFrontendMessage(conn, MsgExecute, buildExecutePayload("p_lim", 0)); err != nil {
+		t.Fatalf("send execute(0) failed: %v", err)
+	}
+	if err := sendFrontendMessage(conn, MsgSync, nil); err != nil {
+		t.Fatalf("send sync failed: %v", err)
+	}
+
+	msgs, err = readMessagesUntilReady(conn)
+	if err != nil {
+		t.Fatalf("read second execute responses failed: %v", err)
+	}
+
+	if got := countMsgType(msgs, MsgDataRow); got != 1 {
+		t.Fatalf("expected 1 remaining DataRow in second execute, got %d", got)
+	}
+	if !containsMsgType(msgs, MsgCommandComplete) {
+		t.Fatalf("expected CommandComplete after portal completion")
+	}
+}
+
 func startupAndDrainReady(conn net.Conn) ([]backendMessage, error) {
 	var startupBuf bytes.Buffer
 	startupBuf.Write([]byte{0, 0, 0, 0})
@@ -1295,6 +1388,16 @@ func containsMsgType(msgs []backendMessage, msgType byte) bool {
 		}
 	}
 	return false
+}
+
+func countMsgType(msgs []backendMessage, msgType byte) int {
+	count := 0
+	for _, m := range msgs {
+		if m.msgType == msgType {
+			count++
+		}
+	}
+	return count
 }
 
 func firstMessage(msgs []backendMessage, msgType byte) (backendMessage, bool) {

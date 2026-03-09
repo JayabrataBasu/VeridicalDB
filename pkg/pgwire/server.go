@@ -222,6 +222,8 @@ type Portal struct {
 	Params    [][]byte
 	Formats   []int16
 	MaxRows   int32
+	Result    *sql.Result
+	RowOffset int
 }
 
 func newConn(id uint64, conn net.Conn, server *Server) *Conn {
@@ -520,7 +522,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	}
 
 	// Send results
-	if _, err := c.sendResult(result, query, 0); err != nil {
+	if _, _, err := c.sendResult(result, query, 0, 0); err != nil {
 		return err
 	}
 
@@ -531,30 +533,31 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, query string, maxRows int32) (bool, error) {
+func (c *Conn) sendResult(result *sql.Result, query string, maxRows int32, rowOffset int) (bool, int, error) {
 	if result == nil {
-		return false, c.sendCommandComplete("", 0)
+		return false, 0, c.sendCommandComplete("", 0)
 	}
 
 	// If there are columns, send RowDescription and DataRows
 	if len(result.Columns) > 0 {
 		if err := c.sendRowDescription(result.Columns); err != nil {
-			return false, err
+			return false, 0, err
 		}
 
 		count := 0
-		for _, row := range result.Rows {
+		for i := rowOffset; i < len(result.Rows); i++ {
+			row := result.Rows[i]
 			if maxRows > 0 && int32(count) >= maxRows {
 				// If we reached the limit, send PortalSuspended instead of CommandComplete
-				return true, c.writer.WriteMessage(MsgPortalSuspended, nil)
+				return true, count, c.writer.WriteMessage(MsgPortalSuspended, nil)
 			}
 			if err := c.sendDataRow(row); err != nil {
-				return false, err
+				return false, count, err
 			}
 			count++
 		}
 
-		return false, c.sendCommandComplete("SELECT", len(result.Rows))
+		return false, count, c.sendCommandComplete("SELECT", len(result.Rows))
 	}
 
 	// For commands without results
@@ -562,7 +565,7 @@ func (c *Conn) sendResult(result *sql.Result, query string, maxRows int32) (bool
 	if tag == "" {
 		tag = "OK"
 	}
-	return false, c.sendCommandComplete(tag, result.RowsAffected)
+	return false, 0, c.sendCommandComplete(tag, result.RowsAffected)
 }
 
 func (c *Conn) sendRowDescription(columns []string) error {
@@ -990,27 +993,43 @@ func (c *Conn) handleExecute(payload []byte) error {
 		params[i] = val
 	}
 
-	// Parse the query
-	parser := sql.NewParser(portal.Statement.Query)
-	stmt, err := parser.Parse()
-	if err != nil {
-		return c.sendError("ERROR", "42601", err.Error())
+	// Execute and cache portal result only once; subsequent Execute calls continue from RowOffset.
+	if portal.Result == nil {
+		// Parse the query
+		parser := sql.NewParser(portal.Statement.Query)
+		stmt, err := parser.Parse()
+		if err != nil {
+			return c.sendError("ERROR", "42601", err.Error())
+		}
+
+		// Substitute parameters into the AST
+		newStmt, err := sql.SubstituteParams(stmt, params)
+		if err != nil {
+			return c.sendError("ERROR", "42000", err.Error())
+		}
+
+		// Execute the substituted statement
+		result, err := c.session.Execute(newStmt)
+		if err != nil {
+			return c.sendError("ERROR", "42000", err.Error())
+		}
+		portal.Result = result
+		portal.RowOffset = 0
 	}
 
-	// Substitute parameters into the AST
-	newStmt, err := sql.SubstituteParams(stmt, params)
+	suspended, emitted, err := c.sendResult(portal.Result, portal.Statement.Query, maxRows, portal.RowOffset)
 	if err != nil {
-		return c.sendError("ERROR", "42000", err.Error())
+		return err
+	}
+	portal.RowOffset += emitted
+
+	if !suspended {
+		// Completed full portal consumption; reset cached result so a subsequent Execute starts fresh.
+		portal.Result = nil
+		portal.RowOffset = 0
 	}
 
-	// Execute the substituted statement
-	result, err := c.session.Execute(newStmt)
-	if err != nil {
-		return c.sendError("ERROR", "42000", err.Error())
-	}
-
-	_, err = c.sendResult(result, portal.Statement.Query, maxRows)
-	return err
+	return nil
 }
 
 func (c *Conn) handleSync() error {

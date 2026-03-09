@@ -139,34 +139,49 @@ public class VeridicalConnection implements Connection {
     private void authenticate() throws SQLException, IOException {
         // Send startup message
         protocol.sendStartup(props.getDatabase(), props.getUser());
-        
-        // Handle authentication exchange
-        WireProtocol.Message authMsg = protocol.receiveMessage();
-        
-        if (authMsg.type == 'R') { // Authentication request
-            int authType = authMsg.getInt();
 
-            switch (authType) {
-                case 0:
-                    // Auth OK
-                    return;
-                case 3:
-                    // Clear text password required
-                    protocol.sendPassword(props.getPassword());
+        boolean authenticated = false;
 
-                    // Wait for auth response
-                    WireProtocol.Message authResponse = protocol.receiveMessage();
-                    if (authResponse.type != 'R' || authResponse.getInt() != 0) {
-                        throw new SQLException("Authentication failed", "28P01");
+        // Drain startup/authentication message stream until ReadyForQuery.
+        // Server may emit Authentication, ParameterStatus, BackendKeyData, and notices.
+        while (true) {
+            WireProtocol.Message msg = protocol.receiveMessage();
+
+            switch (msg.type) {
+                case 'R': { // Authentication request/response
+                    int authType = msg.getInt();
+                    switch (authType) {
+                        case 0:
+                            // AuthenticationOk
+                            authenticated = true;
+                            break;
+                        case 3:
+                            // AuthenticationCleartextPassword
+                            protocol.sendPassword(props.getPassword());
+                            break;
+                        default:
+                            throw new SQLException("Unsupported authentication type: " + authType, "28000");
                     }
                     break;
+                }
+                case 'S': // ParameterStatus
+                case 'K': // BackendKeyData
+                case 'N': // NoticeResponse
+                    // Valid during startup; consume and continue.
+                    break;
+                case 'Z': // ReadyForQuery
+                    if (!authenticated) {
+                        throw new SQLException("Server became ready before authentication completed", "28000");
+                    }
+                    return;
                 default:
-                    throw new SQLException("Unsupported authentication type: " + authType, "28000");
+                    // Ignore other startup-time messages unless they violate authentication order.
+                    if (!authenticated) {
+                        throw new SQLException("Unexpected startup message before authentication: " + msg.type, "08P01");
+                    }
+                    break;
             }
         }
-        
-        // Read ready for query message
-        protocol.waitForReady();
     }
     
     @Override
