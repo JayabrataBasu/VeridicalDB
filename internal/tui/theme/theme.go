@@ -299,6 +299,28 @@ func (t *Theme) Styles() *StyleSet {
 			Foreground(lipgloss.Color(t.Foreground)).
 			Padding(0, 1),
 
+		BrandPanel: lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(t.BrandAccent)).
+			Background(lipgloss.Color(t.Background)).
+			Padding(0, 1),
+
+		BrandPanelAlt: lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(t.BrandMuted)).
+			Background(lipgloss.Color(t.Background)).
+			Padding(0, 1),
+
+		BrandKeycap: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(t.BrandAccent)).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color(t.BrandFocus)).
+			Padding(0, 1),
+
+		BrandSubtleBorder: lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderForeground(lipgloss.Color(t.BrandMuted)),
+
 		// Gradient colors
 		GradientStart: t.BrandGradientA,
 		GradientEnd:   t.BrandGradientB,
@@ -329,20 +351,24 @@ type StyleSet struct {
 	Subtitle      lipgloss.Style
 
 	// Brand styles - Bold tech aesthetic
-	BrandAccent      lipgloss.Style // Primary vibrant accent text
-	BrandHighlight   lipgloss.Style // Secondary vibrant accent text
-	BrandFocus       lipgloss.Style // Focus border style with glow effect
-	BrandSelection   lipgloss.Style // Strong contrast selection
-	BrandSuccess     lipgloss.Style // Vibrant success indicator
-	BrandWarning     lipgloss.Style // Vibrant warning indicator
-	BrandDanger      lipgloss.Style // Vibrant danger indicator
-	BrandMuted       lipgloss.Style // Muted/disabled style
-	BrandGlow        lipgloss.Style // Glow border effect for emphasis
-	BrandCard        lipgloss.Style // Card container with brand accent border
-	BrandActiveRow   lipgloss.Style // Active row in tables/lists
-	BrandInactiveRow lipgloss.Style // Inactive row style
-	BrandBadge       lipgloss.Style // Badge/pill style
-	BrandTag         lipgloss.Style // Tag style for labels
+	BrandAccent       lipgloss.Style // Primary vibrant accent text
+	BrandHighlight    lipgloss.Style // Secondary vibrant accent text
+	BrandFocus        lipgloss.Style // Focus border style with glow effect
+	BrandSelection    lipgloss.Style // Strong contrast selection
+	BrandSuccess      lipgloss.Style // Vibrant success indicator
+	BrandWarning      lipgloss.Style // Vibrant warning indicator
+	BrandDanger       lipgloss.Style // Vibrant danger indicator
+	BrandMuted        lipgloss.Style // Muted/disabled style
+	BrandGlow         lipgloss.Style // Glow border effect for emphasis
+	BrandCard         lipgloss.Style // Card container with brand accent border
+	BrandActiveRow    lipgloss.Style // Active row in tables/lists
+	BrandInactiveRow  lipgloss.Style // Inactive row style
+	BrandBadge        lipgloss.Style // Badge/pill style
+	BrandTag          lipgloss.Style // Tag style for labels
+	BrandPanel        lipgloss.Style // Primary panel container
+	BrandPanelAlt     lipgloss.Style // Secondary panel container
+	BrandKeycap       lipgloss.Style // Keyboard shortcut keycap
+	BrandSubtleBorder lipgloss.Style // Subtle border for separators/blocks
 
 	// Gradient colors for text effects
 	GradientStart string

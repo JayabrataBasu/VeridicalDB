@@ -523,10 +523,11 @@ func (db *DatabaseBrowser) renderBottomInfo() string {
 
 // formatDatabaseLine formats a database line with selection highlight
 func (db *DatabaseBrowser) formatDatabaseLine(database Database, selected bool, width int) string {
-	line := fmt.Sprintf("  %s", database.Name)
-	if len(line) > width {
-		line = line[:width-1] + "…"
+	if width <= 2 {
+		width = 2
 	}
+	line := fmt.Sprintf("  %s", database.Name)
+	line = dbTruncateLine(line, width)
 	line = dbPadRight(line, width)
 
 	p := db.palette()
@@ -543,14 +544,15 @@ func (db *DatabaseBrowser) formatDatabaseLine(database Database, selected bool, 
 
 // formatTableLine formats a table line with selection highlight
 func (db *DatabaseBrowser) formatTableLine(table Table, selected bool, width int) string {
+	if width <= 2 {
+		width = 2
+	}
 	icon := types.Icons.Table
 	if table.Type == "VIEW" {
 		icon = types.Icons.File
 	}
 	line := fmt.Sprintf("  %s %s (%d)", icon, table.Name, table.RowCount)
-	if len(line) > width {
-		line = line[:width-1] + "…"
-	}
+	line = dbTruncateLine(line, width)
 	line = dbPadRight(line, width)
 
 	p := db.palette()
@@ -567,6 +569,9 @@ func (db *DatabaseBrowser) formatTableLine(table Table, selected bool, width int
 
 // formatColumnLine formats a column line with selection highlight
 func (db *DatabaseBrowser) formatColumnLine(column Column, selected bool, width int) string {
+	if width <= 2 {
+		width = 2
+	}
 	// Build column indicators
 	indicators := ""
 	if column.IsPrimary {
@@ -581,9 +586,7 @@ func (db *DatabaseBrowser) formatColumnLine(column Column, selected bool, width 
 		nullable = " ?"
 	}
 	line := fmt.Sprintf("  %s%s: %s%s", indicators, column.Name, column.Type, nullable)
-	if len(line) > width {
-		line = line[:width-1] + "…"
-	}
+	line = dbTruncateLine(line, width)
 	line = dbPadRight(line, width)
 
 	p := db.palette()
@@ -709,10 +712,26 @@ func (db *DatabaseBrowser) resetSelection() {
 // Helper functions
 
 func dbPadRight(s string, length int) string {
+	if length <= 0 {
+		return ""
+	}
 	if len(s) >= length {
 		return s
 	}
 	return s + strings.Repeat(" ", length-len(s))
+}
+
+func dbTruncateLine(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if len(s) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	return s[:width-1] + "…"
 }
 
 func dbFormatBytes(b int64) string {

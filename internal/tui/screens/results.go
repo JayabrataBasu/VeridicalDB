@@ -163,6 +163,7 @@ func (r *ResultsScreen) View() string {
 	}
 
 	bodyHeight := max(10, height-9)
+	stacked := width < 120
 
 	leftPane := lipgloss.NewStyle().
 		Width(leftWidth).
@@ -192,6 +193,31 @@ func (r *ResultsScreen) View() string {
 		Render(r.renderStatsPane(rightWidth-2, bodyHeight, brandSuccess, brandMuted))
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, centerPane, rightPane)
+	if stacked {
+		mainWidth := max(42, width-4)
+		mainHeight := max(8, (bodyHeight*3)/4)
+		auxHeight := max(6, bodyHeight-mainHeight)
+
+		stackedMain := lipgloss.NewStyle().
+			Width(mainWidth).
+			Height(mainHeight).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(brandAccent)).
+			Background(lipgloss.Color(brandBg)).
+			Padding(0, 1).
+			Render(r.renderTablePane(mainWidth-2, mainHeight, brandAccent, brandMuted, brandText))
+
+		stackedAux := lipgloss.NewStyle().
+			Width(mainWidth).
+			Height(auxHeight).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(brandSuccess)).
+			Background(lipgloss.Color(brandBg)).
+			Padding(0, 1).
+			Render(r.renderStatsPane(mainWidth-2, auxHeight, brandSuccess, brandMuted))
+
+		content = lipgloss.JoinVertical(lipgloss.Left, stackedMain, stackedAux)
+	}
 
 	helpText := styles.FromHexBold("PgUp/Dn", brandAccent) + styles.FromHex(" Navigate  ", brandMuted) +
 		styles.FromHexBold("←→", brandAccent) + styles.FromHex(" Scroll  ", brandMuted) +
@@ -270,11 +296,12 @@ func (r *ResultsScreen) renderStatsPane(width, height int, success, muted string
 	if len(r.result.Columns) > 0 && len(r.result.Columns) <= 6 {
 		lines = append(lines, "")
 		lines = append(lines, styles.FromHexBold("Fields", success))
+		maxColWidth := max(4, width-4)
 		for _, col := range r.result.Columns {
-			if len(col) > width-4 {
-				col = col[:width-7] + "..."
+			if len(col) > maxColWidth {
+				col = truncateCell(col, maxColWidth)
 			}
-			lines = append(lines, " ○ "+col)
+			lines = append(lines, " "+types.Icons.Bullet+" "+col)
 		}
 	}
 
@@ -293,6 +320,15 @@ func (r *ResultsScreen) renderCompactTable(width, height int, accent, muted, tex
 	if r.result == nil || len(r.result.Rows) == 0 {
 		return ""
 	}
+	if width < 12 {
+		width = 12
+	}
+	if height < 3 {
+		height = 3
+	}
+	if len(r.result.Columns) == 0 {
+		return styles.FromHex(types.Icons.Info+" No columns", muted)
+	}
 
 	startCol := r.colOffset
 	endCol := min(startCol+r.displayCols, len(r.result.Columns))
@@ -300,16 +336,19 @@ func (r *ResultsScreen) renderCompactTable(width, height int, accent, muted, tex
 		endCol = startCol + 1
 	}
 	visibleCols := r.result.Columns[startCol:endCol]
+	if len(visibleCols) == 0 {
+		return styles.FromHex(types.Icons.Info+" No visible columns", muted)
+	}
 
 	colWidths := make([]int, len(visibleCols))
 	for i, col := range visibleCols {
-		colWidths[i] = min(len(col), width/max(1, len(visibleCols)))
+		colWidths[i] = max(4, min(len(col), width/max(1, len(visibleCols))))
 	}
 
 	startRow := r.page * r.pageSize
 	endRow := min(startRow+r.pageSize, len(r.result.Rows))
 
-if endRow > len(r.result.Rows) {
+	if endRow > len(r.result.Rows) {
 		endRow = len(r.result.Rows)
 	}
 	if startRow >= endRow {
@@ -334,9 +373,7 @@ if endRow > len(r.result.Rows) {
 		if i > 0 {
 			b.WriteString(" ")
 		}
-		if len(col) > colWidths[i] {
-			col = col[:colWidths[i]-1] + "…"
-		}
+		col = truncateCell(col, colWidths[i])
 		b.WriteString(headerStyle.Render(padRight(col, colWidths[i])))
 	}
 	b.WriteString("\n")
@@ -366,9 +403,7 @@ if endRow > len(r.result.Rows) {
 			if colIdx < len(row) {
 				valStr = fmt.Sprintf("%v", row[colIdx])
 			}
-			if len(valStr) > colWidths[i] {
-				valStr = valStr[:colWidths[i]-1] + "…"
-			}
+			valStr = truncateCell(valStr, colWidths[i])
 			if i > 0 {
 				b.WriteString(" ")
 			}
@@ -382,10 +417,26 @@ if endRow > len(r.result.Rows) {
 
 // Helper functions
 func padRight(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
 	if len(s) >= width {
 		return s
 	}
 	return s + strings.Repeat(" ", width-len(s))
+}
+
+func truncateCell(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if len(s) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+	return s[:width-1] + "…"
 }
 
 func min(a, b int) int {

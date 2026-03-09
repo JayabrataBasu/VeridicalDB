@@ -159,7 +159,7 @@ func (s *StatusBar) View() string {
 	}
 
 	// Help
-	rightParts = append(rightParts, styles.FromHex("? Help", t.BrandAccent))
+	rightParts = append(rightParts, styles.FromHex(Icons.Help+" Help", t.BrandAccent))
 
 	right := strings.Join(rightParts, styles.FromHex(" │ ", t.Border))
 

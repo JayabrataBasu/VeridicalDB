@@ -54,6 +54,27 @@ var (
 	IconKey        = types.Icons.Key
 )
 
+func syncStatusBarIcons() {
+	IconDatabase = types.Icons.Database
+	IconConnection = types.Icons.Connections
+	IconBranch = types.Icons.Browser
+	IconClock = types.Icons.Clock
+	IconMemory = types.Icons.Memory
+	IconCPU = types.Icons.CPU
+	IconCheck = types.Icons.Success
+	IconWarning = types.Icons.Warning
+	IconError = types.Icons.Error
+	IconLoading = types.Icons.Pending
+	IconLocked = types.Icons.Key
+	IconUnlocked = types.Icons.Key
+	IconUser = types.Icons.Users
+	IconServer = types.Icons.Database
+	IconQuery = types.Icons.Query
+	IconEdit = types.Icons.Edit
+	IconSave = types.Icons.Export
+	IconKey = types.Icons.Key
+}
+
 // StatusBar provides a feature-rich status bar with brand styling.
 type StatusBar struct {
 	leftSections   []StatusBarSection
@@ -84,6 +105,7 @@ type StatusBar struct {
 
 // NewStatusBar creates a new status bar.
 func NewStatusBar(t *theme.Theme) *StatusBar {
+	syncStatusBarIcons()
 	sb := &StatusBar{
 		theme:          t,
 		mode:           "NORMAL",

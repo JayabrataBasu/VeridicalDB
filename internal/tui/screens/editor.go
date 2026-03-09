@@ -384,6 +384,7 @@ func (e *EditorScreen) View() string {
 	}
 
 	bodyHeight := max(10, height-9)
+	stacked := width < 120
 
 	leftPane := lipgloss.NewStyle().
 		Width(leftWidth).
@@ -413,6 +414,31 @@ func (e *EditorScreen) View() string {
 		Render(e.renderPreviewPane(rightWidth-2, bodyHeight, brandMuted))
 
 	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, centerPane, rightPane)
+	if stacked {
+		mainWidth := max(40, width-4)
+		mainHeight := max(8, (bodyHeight*2)/3)
+		previewHeight := max(6, bodyHeight-mainHeight)
+
+		stackedMain := lipgloss.NewStyle().
+			Width(mainWidth).
+			Height(mainHeight).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(brandAccent)).
+			Background(lipgloss.Color(brandBg)).
+			Padding(0, 1).
+			Render(e.renderEditorPane(mainWidth-2, mainHeight))
+
+		stackedPreview := lipgloss.NewStyle().
+			Width(mainWidth).
+			Height(previewHeight).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color(brandHighlight)).
+			Background(lipgloss.Color(brandBg)).
+			Padding(0, 1).
+			Render(e.renderPreviewPane(mainWidth-2, previewHeight, brandMuted))
+
+		content = lipgloss.JoinVertical(lipgloss.Left, stackedMain, stackedPreview)
+	}
 
 	var statusIcon string
 	var statusColor string

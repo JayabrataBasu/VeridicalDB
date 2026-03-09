@@ -65,26 +65,26 @@ func (s *Sidebar) View(width int) string {
 	// LSP section
 	b.WriteString(styles.FromHexBold(types.Icons.Connected+" LSP", warning))
 	b.WriteString("\n")
-	b.WriteString(styles.FromHex("● Go", success) + styles.FromHex(" │ ", muted) + styles.FromHex("● Nix", success))
+	b.WriteString(styles.FromHex(types.Icons.Connected+" Go", success) + styles.FromHex(" │ ", muted) + styles.FromHex(types.Icons.Connected+" Nix", success))
 	b.WriteString("\n\n")
 
 	// MCP section
 	b.WriteString(styles.FromHexBold(types.Icons.Network+" MCP", warning))
 	b.WriteString("\n")
-	b.WriteString(styles.FromHex("○ None", dim))
+	b.WriteString(styles.FromHex(types.Icons.Disconnected+" None", dim))
 	b.WriteString("\n\n")
 
 	// Database section
 	b.WriteString(styles.FromHexBold(types.Icons.Database+" Database", warning))
 	b.WriteString("\n")
-	b.WriteString(styles.FromHex("● Connected", success))
+	b.WriteString(styles.FromHex(types.Icons.Connected+" Connected", success))
 	b.WriteString("\n")
 	b.WriteString(styles.FromHex("Tables: --", muted))
 	b.WriteString("\n\n")
 
 	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
 	b.WriteString("\n")
-	b.WriteString(styles.DimText("? Help"))
+	b.WriteString(styles.DimText(types.Icons.Help + " Help"))
 
 	return b.String()
 }
