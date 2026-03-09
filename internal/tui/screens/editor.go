@@ -136,7 +136,8 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 
 		// Global key handlers
 		switch msg.String() {
-		case "f1":
+		// Toggle help with F1 or ?
+		case "f1", "?":
 			e.showHelp = !e.showHelp
 			return e, nil
 
@@ -189,8 +190,8 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 				return ScreenChangeMsg{ScreenID: "home"}
 			}
 
-		// Both F5 and Ctrl+Enter execute queries (fixed execution modes - Task 9)
-		case "f5":
+		// Both Ctrl+R and Ctrl+Enter execute queries
+		case "ctrl+r", "ctrl+enter":
 			sql := strings.TrimSpace(e.textarea.Value())
 			if sql != "" && !e.executing {
 				e.executing = true
@@ -201,19 +202,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 					return ExecuteQueryMsg{SQL: sql}
 				}
 			}
-
-		case "ctrl+enter":
-			// Alternative execution trigger (fixed - was not working properly)
-			sql := strings.TrimSpace(e.textarea.Value())
-			if sql != "" && !e.executing {
-				e.executing = true
-				e.status = "Executing query..."
-				e.history = append(e.history, sql)
-				e.historyIdx = len(e.history)
-				return e, func() tea.Msg {
-					return ExecuteQueryMsg{SQL: sql}
-				}
-			}
+			return e, nil
 
 		// Line operations (Task 10)
 		case "ctrl+shift+k":
@@ -372,10 +361,10 @@ func (e *EditorScreen) View() string {
 
 	leftWidth := max(22, int(float64(width)*0.20))
 	rightWidth := max(28, int(float64(width)*0.24))
-	centerWidth := width - leftWidth - rightWidth - 6
+	centerWidth := width - leftWidth - rightWidth - 12
 	if centerWidth < 46 {
 		centerWidth = 46
-		rightWidth = max(24, width-leftWidth-centerWidth-6)
+		rightWidth = max(24, width-leftWidth-centerWidth-12)
 	}
 	if rightWidth < 24 {
 		rightWidth = 24
@@ -450,9 +439,9 @@ func (e *EditorScreen) View() string {
 	}
 
 	statusBar := styles.FromHexBold(statusIcon+e.status, statusColor)
-	helpText := styles.FromHexBold("F5", brandAccent) + styles.FromHex(" Run  ", brandMuted) +
-		styles.FromHexBold("Ctrl+D", brandAccent) + styles.FromHex(" Duplicate  ", brandMuted) +
-		styles.FromHexBold("Ctrl+Space", brandAccent) + styles.FromHex(" Complete  ", brandMuted) +
+	helpText := styles.FromHexBold("Ctrl+R", brandAccent) + styles.FromHex(" or ", brandMuted) +
+		styles.FromHexBold("Ctrl+Enter", brandAccent) + styles.FromHex(" Run  ", brandMuted) +
+		styles.FromHexBold("?", brandAccent) + styles.FromHex(" Help  ", brandMuted) +
 		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
 
 	return strings.Join([]string{

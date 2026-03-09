@@ -56,35 +56,18 @@ func (s *Sidebar) View(width int) string {
 	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
 	b.WriteString("\n\n")
 
-	// Context section
-	b.WriteString(styles.FromHexBold(types.Icons.Table+" Context", warning))
-	b.WriteString("\n")
-	b.WriteString(styles.FromHex("Files: 0 │ Unsaved: 0", muted))
-	b.WriteString("\n\n")
-
-	// LSP section
-	b.WriteString(styles.FromHexBold(types.Icons.Connected+" LSP", warning))
-	b.WriteString("\n")
-	b.WriteString(styles.FromHex(types.Icons.Connected+" Go", success) + styles.FromHex(" │ ", muted) + styles.FromHex(types.Icons.Connected+" Nix", success))
-	b.WriteString("\n\n")
-
-	// MCP section
-	b.WriteString(styles.FromHexBold(types.Icons.Network+" MCP", warning))
-	b.WriteString("\n")
-	b.WriteString(styles.FromHex(types.Icons.Disconnected+" None", dim))
-	b.WriteString("\n\n")
-
+	// Context section - removed placeholder data, will add real implementation
 	// Database section
 	b.WriteString(styles.FromHexBold(types.Icons.Database+" Database", warning))
 	b.WriteString("\n")
 	b.WriteString(styles.FromHex(types.Icons.Connected+" Connected", success))
 	b.WriteString("\n")
-	b.WriteString(styles.FromHex("Tables: --", muted))
+	b.WriteString(styles.FromHex("DB: default", muted))
 	b.WriteString("\n\n")
 
 	b.WriteString(styles.FromHex(strings.Repeat("─", w-4), border))
 	b.WriteString("\n")
-	b.WriteString(styles.DimText(types.Icons.Help + " Help"))
+	b.WriteString(styles.FromHexBold(types.Icons.Help+" Press ? for Help", accent))
 
 	return b.String()
 }

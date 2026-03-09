@@ -193,10 +193,12 @@ func (h *HomeScreen) View() string {
 
 	// Footer with keybindings - pure ANSI
 	buf.WriteString("\n")
-	footer := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Theme  %s  %s Quit",
+	footer := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Help  %s  %s Theme  %s  %s Quit",
 		styles.FromHexBold("j/k", success),
 		Icons.Separator,
 		styles.FromHexBold("Enter", accent),
+		Icons.Separator,
+		styles.FromHexBold("?", highlight),
 		Icons.Separator,
 		styles.FromHexBold("Ctrl+T", highlight),
 		Icons.Separator,

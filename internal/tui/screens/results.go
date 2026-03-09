@@ -151,10 +151,10 @@ func (r *ResultsScreen) View() string {
 
 	leftWidth := max(20, int(float64(width)*0.18))
 	rightWidth := max(24, int(float64(width)*0.22))
-	centerWidth := width - leftWidth - rightWidth - 6
+	centerWidth := width - leftWidth - rightWidth - 12
 	if centerWidth < 50 {
 		centerWidth = 50
-		rightWidth = max(20, width-leftWidth-centerWidth-6)
+		rightWidth = max(20, width-leftWidth-centerWidth-12)
 	}
 	if rightWidth < 20 {
 		rightWidth = 20
