@@ -275,10 +275,12 @@ func (sc *SystemCatalog) GetStatistics() []SystemTableRow {
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"queries_executed", stats.QueriesExecuted}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"queries_succeeded", stats.QueriesSucceeded}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"queries_failed", stats.QueriesFailed}},
+		{Columns: []string{"metric", "value"}, Values: []interface{}{"query_failure_ratio", queryFailureRatio(&stats)}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"avg_query_time_ms", avgQueryTime(&stats)}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"transactions_started", stats.TransactionsStarted}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"transactions_committed", stats.TransactionsCommitted}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"transactions_aborted", stats.TransactionsAborted}},
+		{Columns: []string{"metric", "value"}, Values: []interface{}{"transaction_abort_ratio", transactionAbortRatio(&stats)}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"rows_inserted", stats.RowsInserted}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"rows_updated", stats.RowsUpdated}},
 		{Columns: []string{"metric", "value"}, Values: []interface{}{"rows_deleted", stats.RowsDeleted}},
@@ -300,6 +302,20 @@ func indexHitRate(stats *Statistics) float64 {
 		return 0
 	}
 	return float64(stats.IndexHits) / float64(stats.IndexScans) * 100
+}
+
+func queryFailureRatio(stats *Statistics) float64 {
+	if stats.QueriesExecuted == 0 {
+		return 0
+	}
+	return float64(stats.QueriesFailed) / float64(stats.QueriesExecuted)
+}
+
+func transactionAbortRatio(stats *Statistics) float64 {
+	if stats.TransactionsStarted == 0 {
+		return 0
+	}
+	return float64(stats.TransactionsAborted) / float64(stats.TransactionsStarted)
 }
 
 // GetMemoryStats returns memory statistics.
@@ -326,16 +342,33 @@ func (sc *SystemCatalog) PrometheusMetrics() string {
 	stats := sc.stats.Snapshot()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
+	tableCount := 0
+	if sc.cat != nil {
+		tableCount = len(sc.cat.ListTables())
+	}
 
 	return fmt.Sprintf(`# HELP veridicaldb_queries_total Total number of queries executed
 # TYPE veridicaldb_queries_total counter
 veridicaldb_queries_total{status="success"} %d
 veridicaldb_queries_total{status="failed"} %d
 
+# HELP veridicaldb_query_duration_seconds Total query execution time in seconds
+# TYPE veridicaldb_query_duration_seconds summary
+veridicaldb_query_duration_seconds_sum %f
+veridicaldb_query_duration_seconds_count %d
+
+# HELP veridicaldb_query_failure_ratio Failed queries / total queries (0..1)
+# TYPE veridicaldb_query_failure_ratio gauge
+veridicaldb_query_failure_ratio %f
+
 # HELP veridicaldb_transactions_total Total number of transactions
 # TYPE veridicaldb_transactions_total counter
 veridicaldb_transactions_total{status="committed"} %d
 veridicaldb_transactions_total{status="aborted"} %d
+
+# HELP veridicaldb_transaction_abort_ratio Aborted transactions / started transactions (0..1)
+# TYPE veridicaldb_transaction_abort_ratio gauge
+veridicaldb_transaction_abort_ratio %f
 
 # HELP veridicaldb_rows_total Total number of row operations
 # TYPE veridicaldb_rows_total counter
@@ -343,6 +376,10 @@ veridicaldb_rows_total{op="insert"} %d
 veridicaldb_rows_total{op="update"} %d
 veridicaldb_rows_total{op="delete"} %d
 veridicaldb_rows_total{op="scan"} %d
+
+# HELP veridicaldb_tables_total Total number of tables
+# TYPE veridicaldb_tables_total gauge
+veridicaldb_tables_total %d
 
 # HELP veridicaldb_heap_bytes Current heap memory usage in bytes
 # TYPE veridicaldb_heap_bytes gauge
@@ -357,8 +394,12 @@ veridicaldb_goroutines %d
 veridicaldb_uptime_seconds %d
 `,
 		stats.QueriesSucceeded, stats.QueriesFailed,
+		float64(stats.TotalQueryTimeNs)/1e9, stats.QueriesExecuted,
+		queryFailureRatio(&stats),
 		stats.TransactionsCommitted, stats.TransactionsAborted,
+		transactionAbortRatio(&stats),
 		stats.RowsInserted, stats.RowsUpdated, stats.RowsDeleted, stats.RowsScanned,
+		tableCount,
 		m.HeapAlloc,
 		runtime.NumGoroutine(),
 		int64(time.Since(stats.StartTime).Seconds()),

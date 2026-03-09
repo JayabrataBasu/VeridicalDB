@@ -364,8 +364,13 @@ func TestPrometheusMetrics(t *testing.T) {
 
 	expectedLines := []string{
 		"veridicaldb_queries_total",
+		"veridicaldb_query_duration_seconds_sum",
+		"veridicaldb_query_duration_seconds_count",
+		"veridicaldb_query_failure_ratio",
 		"veridicaldb_transactions_total",
+		"veridicaldb_transaction_abort_ratio",
 		"veridicaldb_rows_total",
+		"veridicaldb_tables_total",
 		"veridicaldb_heap_bytes",
 		"veridicaldb_goroutines",
 		"veridicaldb_uptime_seconds",
@@ -375,6 +380,29 @@ func TestPrometheusMetrics(t *testing.T) {
 		if !strings.Contains(metrics, expected) {
 			t.Errorf("Missing metric: %s", expected)
 		}
+	}
+}
+
+func TestRatioHelpers(t *testing.T) {
+	stats := &Statistics{}
+
+	if got := queryFailureRatio(stats); got != 0 {
+		t.Errorf("queryFailureRatio zero denominator: got %f, want 0", got)
+	}
+	if got := transactionAbortRatio(stats); got != 0 {
+		t.Errorf("transactionAbortRatio zero denominator: got %f, want 0", got)
+	}
+
+	stats.QueriesExecuted = 10
+	stats.QueriesFailed = 3
+	if got := queryFailureRatio(stats); got != 0.3 {
+		t.Errorf("queryFailureRatio: got %f, want 0.3", got)
+	}
+
+	stats.TransactionsStarted = 8
+	stats.TransactionsAborted = 2
+	if got := transactionAbortRatio(stats); got != 0.25 {
+		t.Errorf("transactionAbortRatio: got %f, want 0.25", got)
 	}
 }
 
