@@ -190,8 +190,8 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 				return ScreenChangeMsg{ScreenID: "home"}
 			}
 
-		// Both Ctrl+R and Ctrl+Enter execute queries
-		case "ctrl+r", "ctrl+enter":
+		// Execute query with Ctrl+R, Ctrl+Enter, or Ctrl+M (some terminals send Ctrl+M for Ctrl+Enter)
+		case "ctrl+r", "ctrl+enter", "ctrl+m":
 			sql := strings.TrimSpace(e.textarea.Value())
 			if sql != "" && !e.executing {
 				e.executing = true
@@ -464,9 +464,8 @@ func (e *EditorScreen) renderContextPane(width, height int) string {
 		fmt.Sprintf("Mode: %s", strings.ToUpper(strings.TrimSpace(e.status))),
 		"",
 		styles.FromHexBold(types.Icons.Key+" Shortcuts", "#FFB86C"),
-		"F1 help",
-		"F5 execute",
-		"Ctrl+Enter execute",
+		"? help",
+		"Ctrl+R execute",
 		"Ctrl+K clear",
 	}
 	if len(lines) > height {

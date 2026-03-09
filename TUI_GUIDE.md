@@ -35,8 +35,9 @@ go build -o build/veridicaldb ./cmd/veridicaldb && ./build/veridicaldb --tui
 
 **SQL Editor Screen:**
 
-- `F5` or `Ctrl+Enter` - Execute query
-- `Ctrl+K` or `Ctrl+L` - Clear editor
+- `Ctrl+R` or `Ctrl+Enter` - Execute query
+- `Ctrl+K` - Clear editor
+- `?` - Toggle help
 - `Ctrl+↑` / `Ctrl+↓` - Navigate query history
 - `Esc` - Return to menu
 
@@ -68,7 +69,7 @@ go build -o build/veridicaldb ./cmd/veridicaldb && ./build/veridicaldb --tui
    SELECT 1 as test;
    ```
   
-4. Press `F5` to execute
+4. Press `Ctrl+R` to execute
 5. Navigate results with arrow keys
 6. Press `Esc` to return to editor for next query
 
