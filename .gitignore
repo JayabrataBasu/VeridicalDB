@@ -189,3 +189,6 @@ dependency-reduced-pom.xml
 buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
+
+# Local benchmark artifacts (Phase 3)
+.benchmarks/

@@ -29,7 +29,7 @@ docker:
 # VeridicalDB Makefile
 # Build, test, and manage the database
 
-.PHONY: test clean install run init fmt lint help smoke-test stress-test
+.PHONY: test clean install run init fmt lint help smoke-test stress-test phase3-benchmark phase3-benchmark-quick phase3-regression-gate phase3-regression-gate-quick
 
 # Build variables
 VERSION?=v2.0.0
@@ -73,6 +73,38 @@ stress-test-quick: build
 stress-test-full: build
 	@echo "Running full stress tests..."
 	./scripts/stress_test.sh --full
+
+# Run Phase 3 benchmark baseline harness (Week 1)
+phase3-benchmark: build
+	@echo "Running Phase 3 benchmark harness..."
+	./scripts/phase3_benchmark.sh
+
+# Fast local benchmark sanity run
+phase3-benchmark-quick: build
+	@echo "Running quick Phase 3 benchmark harness..."
+	./scripts/phase3_benchmark.sh --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360
+
+# Run Phase 3 regression gate against baseline summary
+# Usage:
+#   make phase3-regression-gate BASELINE=.benchmarks/phase3/<ts>/summary.csv THRESHOLD=5
+phase3-regression-gate: build
+	@if [ -z "$(BASELINE)" ]; then \
+		echo "Provide BASELINE path. Example:"; \
+		echo "  make phase3-regression-gate BASELINE=.benchmarks/phase3/<ts>/summary.csv THRESHOLD=5"; \
+		exit 1; \
+	fi
+	@echo "Running Phase 3 regression gate..."
+	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),5)"
+
+# Fast local regression gate with smaller run profile
+phase3-regression-gate-quick: build
+	@if [ -z "$(BASELINE)" ]; then \
+		echo "Provide BASELINE path. Example:"; \
+		echo "  make phase3-regression-gate-quick BASELINE=.benchmarks/phase3/<ts>/summary.csv THRESHOLD=10"; \
+		exit 1; \
+	fi
+	@echo "Running quick Phase 3 regression gate..."
+	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),10)" --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360
 
 # Clean build artifacts
 clean:
@@ -184,4 +216,8 @@ help:
 	@echo "  deps          Download dependencies"
 	@echo "  dev-setup     Set up development environment"
 	@echo "  dev           Format, test, and build (development cycle)"
+	@echo "  phase3-benchmark        Run full Week 1 Phase 3 baseline benchmark"
+	@echo "  phase3-benchmark-quick  Run quick local Phase 3 benchmark sanity check"
+	@echo "  phase3-regression-gate       Compare current benchmark p95 against a baseline"
+	@echo "  phase3-regression-gate-quick Quick regression gate with smaller run profile"
 	@echo "  help          Show this help"
