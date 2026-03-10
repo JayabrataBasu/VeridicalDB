@@ -257,3 +257,40 @@ func TestQueryCacheWithPlan(t *testing.T) {
 		t.Errorf("expected plan %s, got %s", plan, entry.PreparedPlan)
 	}
 }
+
+func TestQueryCacheNormalizationWhitespaceAndSemicolon(t *testing.T) {
+	cache := NewQueryCache(10)
+	original := "SELECT   id,   name   FROM users WHERE id = 42;"
+	variant := "  SELECT id, name FROM users WHERE id = 42   "
+
+	err := cache.Put(original, &SelectStmt{TableName: "users"})
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	_, found := cache.Get(variant)
+	if !found {
+		t.Fatal("expected cache hit for semantically equivalent SQL variant")
+	}
+
+	stats := cache.Stats()
+	if stats.Hits != 1 {
+		t.Fatalf("expected 1 cache hit, got %d", stats.Hits)
+	}
+}
+
+func TestQueryCacheNormalizationPreservesLiteralCase(t *testing.T) {
+	cache := NewQueryCache(10)
+	queryA := "SELECT * FROM users WHERE name = 'ABC'"
+	queryB := "SELECT * FROM users WHERE name = 'abc'"
+
+	err := cache.Put(queryA, &SelectStmt{TableName: "users"})
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	_, found := cache.Get(queryB)
+	if found {
+		t.Fatal("expected cache miss for query with different string literal content")
+	}
+}

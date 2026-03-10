@@ -4,8 +4,10 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // QueryCache caches parsed SQL queries and their execution plans.
@@ -219,13 +221,59 @@ func (qc *QueryCache) evictLRU() {
 	qc.evictions++
 }
 
-// normalizeSQL creates a consistent cache key from SQL string.
-// Uses SHA-256 hash for consistent key length.
+// normalizeSQL creates a consistent cache key from SQL text.
+// It canonicalizes non-semantic formatting differences (whitespace/trailing semicolon)
+// while preserving quoted literal content to avoid incorrect cache collisions.
 func (qc *QueryCache) normalizeSQL(sql string) string {
-	// For now, simple hash-based key
-	// Could enhance with parameterization (replace literals with placeholders)
-	hash := sha256.Sum256([]byte(sql))
+	canonical := canonicalizeSQL(sql)
+	hash := sha256.Sum256([]byte(canonical))
 	return fmt.Sprintf("%x", hash)
+}
+
+// canonicalizeSQL collapses whitespace outside quoted strings and strips
+// trailing semicolons/space that are not semantically meaningful.
+func canonicalizeSQL(sql string) string {
+	trimmed := strings.TrimSpace(sql)
+	trimmed = strings.TrimSuffix(trimmed, ";")
+	trimmed = strings.TrimSpace(trimmed)
+
+	var b strings.Builder
+	b.Grow(len(trimmed))
+
+	inSingle := false
+	inDouble := false
+	lastWasSpace := false
+
+	for i := 0; i < len(trimmed); i++ {
+		ch := rune(trimmed[i])
+
+		if !inDouble && ch == '\'' {
+			inSingle = !inSingle
+			b.WriteByte(trimmed[i])
+			lastWasSpace = false
+			continue
+		}
+
+		if !inSingle && ch == '"' {
+			inDouble = !inDouble
+			b.WriteByte(trimmed[i])
+			lastWasSpace = false
+			continue
+		}
+
+		if !inSingle && !inDouble && unicode.IsSpace(ch) {
+			if !lastWasSpace {
+				b.WriteByte(' ')
+				lastWasSpace = true
+			}
+			continue
+		}
+
+		b.WriteByte(trimmed[i])
+		lastWasSpace = false
+	}
+
+	return strings.TrimSpace(b.String())
 }
 
 // referencesTable checks if a statement references a given table.

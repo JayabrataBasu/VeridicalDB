@@ -96,8 +96,13 @@ if [[ -z "$BASELINE_SUMMARY" ]]; then
 fi
 
 if [[ ! -f "$BASELINE_SUMMARY" ]]; then
-    echo "Baseline summary not found: $BASELINE_SUMMARY" >&2
-    exit 1
+    # Try resolving relative to project dir for convenience in CI/scripts.
+    if [[ "$BASELINE_SUMMARY" != /* ]] && [[ -f "$PROJECT_DIR/$BASELINE_SUMMARY" ]]; then
+        BASELINE_SUMMARY="$PROJECT_DIR/$BASELINE_SUMMARY"
+    else
+        echo "Baseline summary not found: $BASELINE_SUMMARY" >&2
+        exit 1
+    fi
 fi
 
 if [[ -z "$OUTDIR" ]]; then
