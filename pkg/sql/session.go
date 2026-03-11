@@ -20,6 +20,7 @@ type Session struct {
 	txnMgr     *txn.Manager
 	lockMgr    *lock.Manager             // Optional, can be nil for single-threaded mode
 	idxMgr     *btree.IndexManager       // Optional, can be nil if indexes not used
+	queryCache *QueryCache               // Parsed SQL cache for repeated statements
 	userCat    *auth.UserCatalog         // Optional, can be nil if auth disabled
 	dbMgr      *catalog.DatabaseManager  // Optional, for multi-database support
 	triggerCat *catalog.TriggerCatalog   // Optional, for trigger support
@@ -49,6 +50,7 @@ func NewSession(mtm *catalog.MVCCTableManager) *Session {
 		txnMgr:        mtm.TxnManager(),
 		lockMgr:       nil, // No locking by default
 		idxMgr:        nil, // No indexes by default
+		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
 		preparedStmts: make(map[string]Statement),
 	}
@@ -62,6 +64,7 @@ func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *
 		txnMgr:        mtm.TxnManager(),
 		lockMgr:       lockMgr,
 		idxMgr:        nil, // No indexes by default
+		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
 		preparedStmts: make(map[string]Statement),
 	}
@@ -183,12 +186,36 @@ func (s *Session) Authenticate(username, password string) error {
 
 // ExecuteSQL parses and executes a SQL string.
 func (s *Session) ExecuteSQL(input string) (*Result, error) {
-	parser := NewParser(input)
-	stmt, err := parser.Parse()
-	if err != nil {
-		return nil, fmt.Errorf("syntax error: %w", err)
+	var stmt Statement
+	if s.queryCache != nil {
+		if cached, found := s.queryCache.Get(input); found && cached.ParsedAST != nil {
+			stmt = cached.ParsedAST
+		} else {
+			parser := NewParser(input)
+			parsed, err := parser.Parse()
+			if err != nil {
+				return nil, fmt.Errorf("syntax error: %w", err)
+			}
+			stmt = parsed
+			_ = s.queryCache.Put(input, stmt)
+		}
+	} else {
+		parser := NewParser(input)
+		parsed, err := parser.Parse()
+		if err != nil {
+			return nil, fmt.Errorf("syntax error: %w", err)
+		}
+		stmt = parsed
 	}
 	return s.Execute(stmt)
+}
+
+// QueryCacheStats exposes parsed-SQL cache stats for tests and performance checks.
+func (s *Session) QueryCacheStats() QueryCacheStats {
+	if s.queryCache == nil {
+		return QueryCacheStats{}
+	}
+	return s.queryCache.Stats()
 }
 
 // Execute executes a SQL statement and returns the result.

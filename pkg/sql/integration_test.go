@@ -184,3 +184,76 @@ func TestIntegration_BufferPoolPerformance(t *testing.T) {
 
 	t.Log("Buffer pool performance test completed")
 }
+
+func TestIntegration_SessionQueryCacheRepeatedSQL(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	var err error
+
+	_, err = session.ExecuteSQL("CREATE TABLE users (id INT, name TEXT)")
+	if err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO users VALUES (1, 'alice')")
+	if err != nil {
+		t.Fatalf("failed to insert row: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("SELECT * FROM users")
+	if err != nil {
+		t.Fatalf("first select failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("SELECT * FROM users")
+	if err != nil {
+		t.Fatalf("second select failed: %v", err)
+	}
+
+	stats := session.QueryCacheStats()
+	if stats.Hits < 1 {
+		t.Fatalf("expected at least one session query cache hit, got %d", stats.Hits)
+	}
+	if stats.CurrentEntries == 0 {
+		t.Fatal("expected session query cache to contain entries")
+	}
+	if stats.HitRate <= 0 {
+		t.Fatalf("expected positive hit rate, got %.2f", stats.HitRate)
+	}
+
+	t.Logf("session cache stats: hits=%d misses=%d entries=%d hitrate=%.2f%%",
+		stats.Hits, stats.Misses, stats.CurrentEntries, stats.HitRate)
+}
+
+func TestIntegration_SessionQueryCacheNormalization(t *testing.T) {
+	session, cleanup := setupMVCCTestSession(t)
+	defer cleanup()
+
+	var err error
+
+	_, err = session.ExecuteSQL("CREATE TABLE users (id INT, name TEXT)")
+	if err != nil {
+		t.Fatalf("failed to create table: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("INSERT INTO users VALUES (1, 'alice')")
+	if err != nil {
+		t.Fatalf("failed to insert row: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("SELECT   *   FROM users WHERE id = 1;")
+	if err != nil {
+		t.Fatalf("first normalized select failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("  SELECT * FROM users WHERE id = 1  ")
+	if err != nil {
+		t.Fatalf("second normalized select failed: %v", err)
+	}
+
+	stats := session.QueryCacheStats()
+	if stats.Hits < 1 {
+		t.Fatalf("expected normalized SQL variant to hit session cache, got hits=%d", stats.Hits)
+	}
+}

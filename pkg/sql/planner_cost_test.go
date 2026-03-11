@@ -561,3 +561,166 @@ func TestPlanner_CostComparison(t *testing.T) {
 		t.Errorf("Expected planner to choose IndexScan, got %v", finalPlan.Type)
 	}
 }
+
+func TestPlanner_PlanSelectionMatrix(t *testing.T) {
+	idxMgr, _ := btree.NewIndexManager(":memory:", 4096)
+	planner := NewPlanner(idxMgr)
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "age", Type: catalog.TypeInt32},
+			{Name: "status", Type: catalog.TypeText},
+		},
+	}
+
+	tableMeta := &catalog.TableMeta{
+		Name:   "users",
+		Schema: schema,
+	}
+
+	_ = idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_users_age",
+		TableName: "users",
+		Columns:   []string{"age"},
+		Unique:    false,
+		Type:      btree.IndexTypeBTree,
+	})
+
+	_ = planner.statsMgr.SetTableStats(&stats.TableStats{
+		TableName: "users",
+		RowCount:  50000,
+		PageCount: 5000,
+		Columns: map[string]*stats.ColumnStats{
+			"age": {
+				ColumnName:    "age",
+				DataType:      catalog.TypeInt32,
+				DistinctCount: 100,
+				NullCount:     0,
+			},
+			"status": {
+				ColumnName:      "status",
+				DataType:        catalog.TypeText,
+				DistinctCount:   4,
+				NullCount:       0,
+				MostCommonVals:  []stats.Value{{Type: catalog.TypeText, StringVal: "active"}},
+				MostCommonFreqs: []float64{0.15},
+			},
+		},
+	})
+
+	tests := []struct {
+		name              string
+		stmt              *SelectStmt
+		expectedType      PlanType
+		expectedIndexName string
+		minSelectivity    float64
+		maxSelectivity    float64
+	}{
+		{
+			name: "no where uses table scan",
+			stmt: &SelectStmt{TableName: "users", Columns: []SelectColumn{{Star: true}}},
+			expectedType:   PlanTableScan,
+			minSelectivity: 1.0,
+			maxSelectivity: 1.0,
+		},
+		{
+			name: "indexed equality uses index scan",
+			stmt: &SelectStmt{
+				TableName: "users",
+				Columns:   []SelectColumn{{Star: true}},
+				Where: &BinaryExpr{
+					Op:    TOKEN_EQ,
+					Left:  &ColumnRef{Name: "age"},
+					Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+				},
+			},
+			expectedType:      PlanIndexScan,
+			expectedIndexName: "idx_users_age",
+			minSelectivity:    0.009,
+			maxSelectivity:    0.011,
+		},
+		{
+			name: "mcv equality remains selective",
+			stmt: &SelectStmt{
+				TableName: "users",
+				Columns:   []SelectColumn{{Star: true}},
+				Where: &BinaryExpr{
+					Op:    TOKEN_EQ,
+					Left:  &ColumnRef{Name: "status"},
+					Right: &LiteralExpr{Value: catalog.NewText("active")},
+				},
+			},
+			expectedType:   PlanTableScan,
+			minSelectivity: 0.14,
+			maxSelectivity: 0.16,
+		},
+		{
+			name: "compound predicate reduces selectivity",
+			stmt: &SelectStmt{
+				TableName: "users",
+				Columns:   []SelectColumn{{Star: true}},
+				Where: &BinaryExpr{
+					Op: TOKEN_AND,
+					Left: &BinaryExpr{
+						Op:    TOKEN_EQ,
+						Left:  &ColumnRef{Name: "age"},
+						Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+					},
+					Right: &BinaryExpr{
+						Op:    TOKEN_EQ,
+						Left:  &ColumnRef{Name: "status"},
+						Right: &LiteralExpr{Value: catalog.NewText("active")},
+					},
+				},
+			},
+			expectedType:      PlanIndexScan,
+			expectedIndexName: "idx_users_age",
+			minSelectivity:    0.001,
+			maxSelectivity:    0.002,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := planner.Plan(tt.stmt, tableMeta)
+
+			if plan == nil {
+				t.Fatal("expected non-nil plan")
+			}
+			if plan.Type != tt.expectedType {
+				t.Fatalf("expected plan type %v, got %v", tt.expectedType, plan.Type)
+			}
+			if tt.expectedIndexName != "" && plan.IndexName != tt.expectedIndexName {
+				t.Fatalf("expected index %q, got %q", tt.expectedIndexName, plan.IndexName)
+			}
+			if plan.Cost <= 0 {
+				t.Fatalf("expected positive cost, got %f", plan.Cost)
+			}
+			if plan.Selectivity < tt.minSelectivity || plan.Selectivity > tt.maxSelectivity {
+				t.Fatalf("expected selectivity in [%f, %f], got %f", tt.minSelectivity, tt.maxSelectivity, plan.Selectivity)
+			}
+			if plan.EstimatedRows <= 0 {
+				t.Fatalf("expected positive estimated rows, got %d", plan.EstimatedRows)
+			}
+		})
+	}
+
+	planner.SetStatsManager(nil)
+	ruleBasedPlan := planner.Plan(&SelectStmt{
+		TableName: "users",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op:    TOKEN_EQ,
+			Left:  &ColumnRef{Name: "age"},
+			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		},
+	}, tableMeta)
+
+	if ruleBasedPlan == nil {
+		t.Fatal("expected non-nil rule-based plan")
+	}
+	if ruleBasedPlan.Type != PlanTableScan {
+		t.Fatalf("expected rule-based fallback to return first candidate TableScan, got %v", ruleBasedPlan.Type)
+	}
+}

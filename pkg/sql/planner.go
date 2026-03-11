@@ -176,6 +176,11 @@ type IndexInfo struct {
 
 // estimateCost calculates the estimated cost for an execution plan.
 func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where Expression) {
+	if p.statsMgr == nil {
+		p.estimateCostWithoutStats(plan, tableMeta, where)
+		return
+	}
+
 	// Get table statistics if available
 	tableStats, err := p.statsMgr.GetTableStats(plan.TableName)
 	if err != nil {
