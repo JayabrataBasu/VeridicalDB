@@ -74,6 +74,7 @@ type ExecutionPlan struct {
 
 	// For IndexScan plans
 	IndexName string
+	IndexCol  string
 	ScanKey   []byte    // For equality scans
 	ScanOp    TokenType // =, <, >, <=, >=
 
@@ -155,6 +156,7 @@ func (p *Planner) generateIndexPlans(stmt *SelectStmt, tableMeta *catalog.TableM
 			Type:           PlanIndexScan,
 			TableName:      stmt.TableName,
 			IndexName:      indexInfo.IndexName,
+			IndexCol:       indexInfo.Column,
 			ScanKey:        indexInfo.Key,
 			ScanOp:         indexInfo.Op,
 			RemainingWhere: stmt.Where,
@@ -191,8 +193,14 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 
 	// Calculate selectivity of WHERE clause
 	selectivity := p.estimateSelectivity(where, tableStats, tableMeta.Schema)
+	if uniqueSel, ok := p.uniqueEqualitySelectivity(plan, where, tableMeta.Schema, tableStats.RowCount); ok {
+		selectivity = uniqueSel
+	}
 	plan.Selectivity = selectivity
 	plan.EstimatedRows = int64(float64(tableStats.RowCount) * selectivity)
+	if selectivity > 0 && plan.EstimatedRows < 1 {
+		plan.EstimatedRows = 1
+	}
 
 	switch plan.Type {
 	case PlanTableScan:
@@ -228,6 +236,62 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 
 		plan.Cost = indexLookupCost + cacheAdjustedScanCost + rowProcessCost + conditionCost
 	}
+}
+
+func (p *Planner) uniqueEqualitySelectivity(plan *ExecutionPlan, where Expression, schema *catalog.Schema, rowCount int64) (float64, bool) {
+	if plan == nil || plan.Type != PlanIndexScan || plan.ScanOp != TOKEN_EQ {
+		return 0, false
+	}
+	if schema == nil || plan.IndexCol == "" {
+		return 0, false
+	}
+	if !isLiteralEqualityOnColumn(where, plan.IndexCol) {
+		return 0, false
+	}
+	if !isUniqueSchemaColumn(schema, plan.IndexCol) {
+		return 0, false
+	}
+	if rowCount <= 0 {
+		return 0.001, true
+	}
+	return 1.0 / float64(rowCount), true
+}
+
+func isUniqueSchemaColumn(schema *catalog.Schema, colName string) bool {
+	col, _ := schema.ColumnByName(colName)
+	if col == nil {
+		return false
+	}
+	return col.PrimaryKey || col.Unique
+}
+
+func isLiteralEqualityOnColumn(where Expression, colName string) bool {
+	if where == nil {
+		return false
+	}
+
+	switch expr := where.(type) {
+	case *BinaryExpr:
+		if expr.Op == TOKEN_AND {
+			return isLiteralEqualityOnColumn(expr.Left, colName) || isLiteralEqualityOnColumn(expr.Right, colName)
+		}
+		if expr.Op != TOKEN_EQ {
+			return false
+		}
+
+		if colRef, ok := expr.Left.(*ColumnRef); ok {
+			if _, ok := expr.Right.(*LiteralExpr); ok {
+				return strings.EqualFold(colRef.Name, colName)
+			}
+		}
+		if colRef, ok := expr.Right.(*ColumnRef); ok {
+			if _, ok := expr.Left.(*LiteralExpr); ok {
+				return strings.EqualFold(colRef.Name, colName)
+			}
+		}
+	}
+
+	return false
 }
 
 // estimateCostWithoutStats provides fallback cost estimation when statistics are unavailable.

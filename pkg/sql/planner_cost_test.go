@@ -755,3 +755,79 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 		t.Fatalf("expected rule-based fallback to return first candidate TableScan, got %v", ruleBasedPlan.Type)
 	}
 }
+
+func TestPlanner_UniqueEqualityPrefersIndexWithLiteral(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() {
+		if closeErr := idxMgr.Close(); closeErr != nil {
+			t.Fatalf("failed to close index manager: %v", closeErr)
+		}
+	}()
+
+	planner := NewPlanner(idxMgr)
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "status", Type: catalog.TypeText},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "users", Schema: schema}
+
+	if err := idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_users_id",
+		TableName: "users",
+		Columns:   []string{"id"},
+		Unique:    true,
+		Type:      btree.IndexTypeBTree,
+	}); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	// Intentionally misleading stats on id to ensure unique-equality shortcut wins.
+	if err := planner.statsMgr.SetTableStats(&stats.TableStats{
+		TableName: "users",
+		RowCount:  10000,
+		PageCount: 1000,
+		Columns: map[string]*stats.ColumnStats{
+			"id": {
+				ColumnName:    "id",
+				DataType:      catalog.TypeInt32,
+				DistinctCount: 2,
+				NullCount:     0,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
+
+	stmt := &SelectStmt{
+		TableName: "users",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op:    TOKEN_EQ,
+			Left:  &ColumnRef{Name: "id"},
+			Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+		},
+	}
+
+	plan := planner.Plan(stmt, tableMeta)
+	if plan == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	if plan.Type != PlanIndexScan {
+		t.Fatalf("expected index scan for PK equality literal, got %v", plan.Type)
+	}
+	if plan.IndexName != "idx_users_id" {
+		t.Fatalf("expected idx_users_id, got %s", plan.IndexName)
+	}
+	if plan.EstimatedRows != 1 {
+		t.Fatalf("expected estimated rows = 1 for unique equality, got %d", plan.EstimatedRows)
+	}
+	if plan.Selectivity > 0.001 {
+		t.Fatalf("expected selectivity to be near 1/row_count, got %f", plan.Selectivity)
+	}
+}

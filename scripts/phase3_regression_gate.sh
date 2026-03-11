@@ -11,6 +11,9 @@ BENCH_SCRIPT="$PROJECT_DIR/scripts/phase3_benchmark.sh"
 
 BASELINE_SUMMARY=""
 THRESHOLD_PERCENT=5
+WORKLOAD_THRESHOLDS=""
+MAX_CV_PERCENT=15
+CV_MARGIN_PERCENT=3
 RUNS=5
 ROWS=2000
 LOOKUPS=1000
@@ -29,6 +32,10 @@ Required:
 
 Optional:
   --threshold-percent N     Allowed p95 regression percentage (default: 5)
+    --workload-thresholds S   Per-workload thresholds, e.g.
+                                                        point_lookup=5,range_scan=5,mixed_oltp=10,parse_cache=8
+    --max-cv-percent N        Maximum allowed current CV%% before failing (default: 15)
+    --cv-margin-percent N     Allowed CV%% increase vs baseline before failing (default: 3)
   --runs N                  Benchmark runs per workload (default: 5)
   --rows N                  Seed rows (default: 2000)
   --lookups N               Point lookups per run (default: 1000)
@@ -49,6 +56,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --threshold-percent)
             THRESHOLD_PERCENT="$2"
+            shift 2
+            ;;
+        --workload-thresholds)
+            WORKLOAD_THRESHOLDS="$2"
+            shift 2
+            ;;
+        --max-cv-percent)
+            MAX_CV_PERCENT="$2"
+            shift 2
+            ;;
+        --cv-margin-percent)
+            CV_MARGIN_PERCENT="$2"
             shift 2
             ;;
         --runs)
@@ -121,6 +140,10 @@ mkdir -p "$OUTDIR"
 echo "[phase3-gate] baseline: $BASELINE_SUMMARY"
 echo "[phase3-gate] outdir:   $OUTDIR"
 echo "[phase3-gate] threshold: ${THRESHOLD_PERCENT}%"
+if [[ -n "$WORKLOAD_THRESHOLDS" ]]; then
+    echo "[phase3-gate] workload thresholds: $WORKLOAD_THRESHOLDS"
+fi
+echo "[phase3-gate] variance guard: max_cv=${MAX_CV_PERCENT}% cv_margin=${CV_MARGIN_PERCENT}%"
 
 "$BENCH_SCRIPT" \
     --runs "$RUNS" \
@@ -140,18 +163,37 @@ fi
 
 RESULT_CSV="$OUTDIR/regression_comparison.csv"
 {
-    echo "workload,baseline_p95,current_p95,p95_delta_percent,baseline_qps,current_qps,qps_delta_percent,status"
-    awk -F, 'NR>1 {print $1","$4","$9}' "$BASELINE_SUMMARY" | sort > "$OUTDIR/.baseline_metrics.tmp"
-    awk -F, 'NR>1 {print $1","$4","$9}' "$CURRENT_SUMMARY" | sort > "$OUTDIR/.current_metrics.tmp"
+    echo "workload,threshold_percent,baseline_p95,current_p95,p95_delta_percent,baseline_qps,current_qps,qps_delta_percent,baseline_cv,current_cv,cv_delta_percent,status,reason"
+    awk -F, 'NR>1 {print $1","$4","$9","$6}' "$BASELINE_SUMMARY" | sort > "$OUTDIR/.baseline_metrics.tmp"
+    awk -F, 'NR>1 {print $1","$4","$9","$6}' "$CURRENT_SUMMARY" | sort > "$OUTDIR/.current_metrics.tmp"
 
     join -t, -1 1 -2 1 "$OUTDIR/.baseline_metrics.tmp" "$OUTDIR/.current_metrics.tmp" |
-    awk -F, -v threshold="$THRESHOLD_PERCENT" '
+    awk -F, -v threshold="$THRESHOLD_PERCENT" -v thresholds="$WORKLOAD_THRESHOLDS" -v maxCV="$MAX_CV_PERCENT" -v cvMargin="$CV_MARGIN_PERCENT" '
+        BEGIN {
+            n = split(thresholds, arr, /[,;]/)
+            for (i = 1; i <= n; i++) {
+                if (arr[i] == "") {
+                    continue
+                }
+                split(arr[i], kv, "=")
+                if (length(kv[1]) > 0 && length(kv[2]) > 0) {
+                    perThreshold[kv[1]] = kv[2] + 0
+                }
+            }
+        }
         {
             workload = $1
             base = $2 + 0
             baseQPS = $3 + 0
-            cur = $4 + 0
-            curQPS = $5 + 0
+            baseCV = $4 + 0
+            cur = $5 + 0
+            curQPS = $6 + 0
+            curCV = $7 + 0
+
+            workloadThreshold = threshold + 0
+            if (workload in perThreshold) {
+                workloadThreshold = perThreshold[workload]
+            }
 
             if (base <= 0) {
                 p95Delta = 0
@@ -165,14 +207,33 @@ RESULT_CSV="$OUTDIR/regression_comparison.csv"
                 qpsDelta = ((curQPS - baseQPS) / baseQPS) * 100
             }
 
+            cvDelta = curCV - baseCV
+
+            reason = ""
+            failed = 0
+
             # Fail if p95 increases beyond threshold OR if QPS drops beyond threshold.
-            if (p95Delta > threshold || qpsDelta < (-1 * threshold)) {
-                status = "FAIL"
-            } else {
-                status = "PASS"
+            if (p95Delta > workloadThreshold) {
+                failed = 1
+                reason = reason "p95_regression;"
+            }
+            if (qpsDelta < (-1 * workloadThreshold)) {
+                failed = 1
+                reason = reason "qps_regression;"
             }
 
-            printf "%s,%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%s\n", workload, base, cur, p95Delta, baseQPS, curQPS, qpsDelta, status
+            # Fail on high-variance runs only when the run is both noisy and meaningfully noisier than baseline.
+            if (curCV > maxCV && cvDelta > cvMargin) {
+                failed = 1
+                reason = reason "variance_high;"
+            }
+
+            status = (failed ? "FAIL" : "PASS")
+            if (reason == "") {
+                reason = "ok"
+            }
+
+            printf "%s,%.2f,%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%s,%s\n", workload, workloadThreshold, base, cur, p95Delta, baseQPS, curQPS, qpsDelta, baseCV, curCV, cvDelta, status, reason
         }
     '
 } > "$RESULT_CSV"
@@ -182,10 +243,10 @@ rm -f "$OUTDIR/.baseline_metrics.tmp" "$OUTDIR/.current_metrics.tmp"
 echo "[phase3-gate] comparison report: $RESULT_CSV"
 cat "$RESULT_CSV"
 
-FAIL_COUNT="$(awk -F, 'NR>1 && $8 == "FAIL" {c++} END {print c+0}' "$RESULT_CSV")"
+FAIL_COUNT="$(awk -F, 'NR>1 && $12 == "FAIL" {c++} END {print c+0}' "$RESULT_CSV")"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
-    echo "[phase3-gate] FAILED: $FAIL_COUNT workload(s) exceeded ${THRESHOLD_PERCENT}% regression threshold (p95 up or QPS down)" >&2
+    echo "[phase3-gate] FAILED: $FAIL_COUNT workload(s) exceeded regression or variance thresholds" >&2
     exit 2
 fi
 
-echo "[phase3-gate] PASSED: no workload exceeded ${THRESHOLD_PERCENT}% regression threshold (p95 up or QPS down)"
+echo "[phase3-gate] PASSED: no workload exceeded regression or variance thresholds"

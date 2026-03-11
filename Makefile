@@ -94,7 +94,12 @@ phase3-regression-gate: build
 		exit 1; \
 	fi
 	@echo "Running Phase 3 regression gate..."
-	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),5)"
+	./scripts/phase3_regression_gate.sh \
+		--baseline-summary "$(BASELINE)" \
+		--threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),5)" \
+		$(if $(WORKLOAD_THRESHOLDS),--workload-thresholds "$(WORKLOAD_THRESHOLDS)") \
+		$(if $(MAX_CV),--max-cv-percent "$(MAX_CV)") \
+		$(if $(CV_MARGIN),--cv-margin-percent "$(CV_MARGIN)")
 
 # Fast local regression gate with smaller run profile
 phase3-regression-gate-quick: build
@@ -104,7 +109,13 @@ phase3-regression-gate-quick: build
 		exit 1; \
 	fi
 	@echo "Running quick Phase 3 regression gate..."
-	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),10)" --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360 --parse-ops 360
+	./scripts/phase3_regression_gate.sh \
+		--baseline-summary "$(BASELINE)" \
+		--threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),10)" \
+		$(if $(WORKLOAD_THRESHOLDS),--workload-thresholds "$(WORKLOAD_THRESHOLDS)") \
+		$(if $(MAX_CV),--max-cv-percent "$(MAX_CV)") \
+		$(if $(CV_MARGIN),--cv-margin-percent "$(CV_MARGIN)") \
+		--runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360 --parse-ops 360
 
 # Clean build artifacts
 clean:
