@@ -195,6 +195,8 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 	selectivity := p.estimateSelectivity(where, tableStats, tableMeta.Schema)
 	if uniqueSel, ok := p.uniqueEqualitySelectivity(plan, where, tableMeta.Schema, tableStats.RowCount); ok {
 		selectivity = uniqueSel
+	} else if rangeCap, ok := p.rangeIndexSelectivityCap(plan, where); ok && selectivity > rangeCap {
+		selectivity = rangeCap
 	}
 	plan.Selectivity = selectivity
 	plan.EstimatedRows = int64(float64(tableStats.RowCount) * selectivity)
@@ -292,6 +294,80 @@ func isLiteralEqualityOnColumn(where Expression, colName string) bool {
 	}
 
 	return false
+}
+
+func (p *Planner) rangeIndexSelectivityCap(plan *ExecutionPlan, where Expression) (float64, bool) {
+	if plan == nil || plan.Type != PlanIndexScan || plan.IndexCol == "" {
+		return 0, false
+	}
+
+	hasRange, hasLower, hasUpper, hasStrict := collectIndexedRangePredicates(where, plan.IndexCol)
+	if !hasRange {
+		return 0, false
+	}
+
+	// Cap selectivity for indexed range predicates to avoid overly pessimistic estimates
+	// from sparse or noisy stats and to keep range index plans competitive.
+	if hasLower && hasUpper {
+		return 0.20, true
+	}
+	if hasStrict {
+		return 0.35, true
+	}
+	return 0.45, true
+}
+
+func collectIndexedRangePredicates(where Expression, colName string) (hasRange bool, hasLower bool, hasUpper bool, hasStrict bool) {
+	if where == nil {
+		return false, false, false, false
+	}
+
+	switch expr := where.(type) {
+	case *BinaryExpr:
+		if expr.Op == TOKEN_AND {
+			lHasRange, lHasLower, lHasUpper, lHasStrict := collectIndexedRangePredicates(expr.Left, colName)
+			rHasRange, rHasLower, rHasUpper, rHasStrict := collectIndexedRangePredicates(expr.Right, colName)
+			return lHasRange || rHasRange, lHasLower || rHasLower, lHasUpper || rHasUpper, lHasStrict || rHasStrict
+		}
+
+		refCol, op, ok := comparisonOnColumnLiteral(expr)
+		if !ok || !strings.EqualFold(refCol, colName) {
+			return false, false, false, false
+		}
+
+		switch op {
+		case TOKEN_GT:
+			return true, true, false, true
+		case TOKEN_GE:
+			return true, true, false, false
+		case TOKEN_LT:
+			return true, false, true, true
+		case TOKEN_LE:
+			return true, false, true, false
+		}
+	}
+
+	return false, false, false, false
+}
+
+func comparisonOnColumnLiteral(expr *BinaryExpr) (colName string, op TokenType, ok bool) {
+	if expr == nil {
+		return "", TOKEN_ILLEGAL, false
+	}
+
+	if col, isCol := expr.Left.(*ColumnRef); isCol {
+		if _, isLit := expr.Right.(*LiteralExpr); isLit {
+			return col.Name, expr.Op, true
+		}
+	}
+
+	if col, isCol := expr.Right.(*ColumnRef); isCol {
+		if _, isLit := expr.Left.(*LiteralExpr); isLit {
+			return col.Name, flipComparisonOp(expr.Op), true
+		}
+	}
+
+	return "", TOKEN_ILLEGAL, false
 }
 
 // estimateCostWithoutStats provides fallback cost estimation when statistics are unavailable.

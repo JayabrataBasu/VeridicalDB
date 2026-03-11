@@ -831,3 +831,150 @@ func TestPlanner_UniqueEqualityPrefersIndexWithLiteral(t *testing.T) {
 		t.Fatalf("expected selectivity to be near 1/row_count, got %f", plan.Selectivity)
 	}
 }
+
+func TestPlanner_IndexedRangeSelectivityCap_SingleSided(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() {
+		if closeErr := idxMgr.Close(); closeErr != nil {
+			t.Fatalf("failed to close index manager: %v", closeErr)
+		}
+	}()
+
+	planner := NewPlanner(idxMgr)
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "age", Type: catalog.TypeInt32},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "users", Schema: schema}
+
+	if err := idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_users_age",
+		TableName: "users",
+		Columns:   []string{"age"},
+		Type:      btree.IndexTypeBTree,
+	}); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	// Histogram produces selectivity near 1.0 for age <= 100.
+	if err := planner.statsMgr.SetTableStats(&stats.TableStats{
+		TableName: "users",
+		RowCount:  100000,
+		PageCount: 10000,
+		Columns: map[string]*stats.ColumnStats{
+			"age": {
+				ColumnName:    "age",
+				DataType:      catalog.TypeInt32,
+				DistinctCount: 100000,
+				Histogram: &stats.Histogram{
+					Bounds:      []stats.Value{{Type: catalog.TypeInt32, IntVal: 100}},
+					Frequencies: []int64{100000},
+					NumBuckets:  1,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
+
+	stmt := &SelectStmt{
+		TableName: "users",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op:    TOKEN_LE,
+			Left:  &ColumnRef{Name: "age"},
+			Right: &LiteralExpr{Value: catalog.NewInt32(100)},
+		},
+	}
+
+	plan := planner.Plan(stmt, tableMeta)
+	if plan.Type != PlanIndexScan {
+		t.Fatalf("expected index scan, got %v", plan.Type)
+	}
+	if plan.Selectivity > 0.45 {
+		t.Fatalf("expected capped selectivity <= 0.45 for single-sided inclusive range, got %f", plan.Selectivity)
+	}
+}
+
+func TestPlanner_IndexedRangeSelectivityCap_BoundedRange(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() {
+		if closeErr := idxMgr.Close(); closeErr != nil {
+			t.Fatalf("failed to close index manager: %v", closeErr)
+		}
+	}()
+
+	planner := NewPlanner(idxMgr)
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "age", Type: catalog.TypeInt32},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "users", Schema: schema}
+
+	if err := idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_users_age",
+		TableName: "users",
+		Columns:   []string{"age"},
+		Type:      btree.IndexTypeBTree,
+	}); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	if err := planner.statsMgr.SetTableStats(&stats.TableStats{
+		TableName: "users",
+		RowCount:  50000,
+		PageCount: 5000,
+		Columns: map[string]*stats.ColumnStats{
+			"age": {
+				ColumnName:    "age",
+				DataType:      catalog.TypeInt32,
+				DistinctCount: 50000,
+				Histogram: &stats.Histogram{
+					Bounds:      []stats.Value{{Type: catalog.TypeInt32, IntVal: 100}},
+					Frequencies: []int64{50000},
+					NumBuckets:  1,
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
+
+	stmt := &SelectStmt{
+		TableName: "users",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op: TOKEN_AND,
+			Left: &BinaryExpr{
+				Op:    TOKEN_GE,
+				Left:  &ColumnRef{Name: "age"},
+				Right: &LiteralExpr{Value: catalog.NewInt32(10)},
+			},
+			Right: &BinaryExpr{
+				Op:    TOKEN_LT,
+				Left:  &ColumnRef{Name: "age"},
+				Right: &LiteralExpr{Value: catalog.NewInt32(90)},
+			},
+		},
+	}
+
+	plan := planner.Plan(stmt, tableMeta)
+	if plan.Type != PlanIndexScan {
+		t.Fatalf("expected index scan, got %v", plan.Type)
+	}
+	if plan.Selectivity > 0.20 {
+		t.Fatalf("expected capped selectivity <= 0.20 for bounded range, got %f", plan.Selectivity)
+	}
+}
