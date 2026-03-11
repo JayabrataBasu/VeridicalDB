@@ -633,8 +633,51 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		}
 	}
 
+	visibleColumnCount := len(colIndices)
+	hiddenOrderByIndices := make([]int, len(stmt.OrderBy))
+	for i := range hiddenOrderByIndices {
+		hiddenOrderByIndices[i] = -1
+	}
+	if len(stmt.OrderBy) > 0 {
+		for i, ob := range stmt.OrderBy {
+			found := false
+			for _, col := range outCols {
+				if strings.EqualFold(col, ob.Column) {
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+
+			_, idx := meta.Schema.ColumnByName(ob.Column)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+
+			hiddenOrderByIndices[i] = len(colIndices)
+			colIndices = append(colIndices, idx)
+			colExpressions = append(colExpressions, nil)
+		}
+	}
+
 	// Scan and filter using MVCC visibility
 	var rows [][]catalog.Value
+	streamingLimitFastPath := len(stmt.OrderBy) == 0 && !stmt.Distinct
+	stopAfterFirstMatch := len(stmt.OrderBy) == 0 && !stmt.Distinct && isUniqueEqualityFilterMVCC(stmt.Where, meta.Schema)
+	offsetRemaining := 0
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		offsetRemaining = int(*stmt.Offset)
+	}
+	limitValue := -1
+	if stmt.Limit != nil {
+		limitValue = int(*stmt.Limit)
+	}
+
+	if streamingLimitFastPath && limitValue == 0 {
+		return &Result{Columns: outCols, Rows: nil}, nil
+	}
 
 	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
 		// Apply WHERE filter
@@ -646,6 +689,11 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 			if !match {
 				return true, nil // Continue scanning
 			}
+		}
+
+		if streamingLimitFastPath && offsetRemaining > 0 {
+			offsetRemaining--
+			return true, nil
 		}
 
 		// Project columns (including expressions)
@@ -664,6 +712,15 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 			}
 		}
 		rows = append(rows, outRow)
+
+		if stopAfterFirstMatch {
+			return false, nil
+		}
+
+		if streamingLimitFastPath && limitValue >= 0 && len(rows) >= limitValue {
+			return false, nil
+		}
+
 		return true, nil
 	})
 
@@ -675,22 +732,22 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	if len(stmt.OrderBy) > 0 {
 		orderByIndices := make([]int, len(stmt.OrderBy))
 		for i, ob := range stmt.OrderBy {
-			_, idx := meta.Schema.ColumnByName(ob.Column)
-			if idx < 0 {
-				// Try to find in output columns
-				found := false
-				for j, col := range outCols {
-					if strings.EqualFold(col, ob.Column) {
-						orderByIndices[i] = j
-						found = true
-						break
-					}
+			found := false
+			for j, col := range outCols {
+				if strings.EqualFold(col, ob.Column) {
+					orderByIndices[i] = j
+					found = true
+					break
 				}
-				if !found {
-					return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
-				}
-			} else {
-				orderByIndices[i] = idx
+			}
+
+			if !found && hiddenOrderByIndices[i] >= 0 {
+				orderByIndices[i] = hiddenOrderByIndices[i]
+				found = true
+			}
+
+			if !found {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
 			}
 		}
 		sortRowsMVCC(rows, stmt.OrderBy, orderByIndices)
@@ -710,21 +767,28 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		rows = distinctRows
 	}
 
-	// Apply OFFSET
-	if stmt.Offset != nil && *stmt.Offset > 0 {
-		offset := int(*stmt.Offset)
-		if offset >= len(rows) {
-			rows = nil
-		} else {
-			rows = rows[offset:]
+	// Apply OFFSET/LIMIT if not already handled during the scan.
+	if !streamingLimitFastPath {
+		if stmt.Offset != nil && *stmt.Offset > 0 {
+			offset := int(*stmt.Offset)
+			if offset >= len(rows) {
+				rows = nil
+			} else {
+				rows = rows[offset:]
+			}
+		}
+
+		if stmt.Limit != nil {
+			limit := int(*stmt.Limit)
+			if limit >= 0 && limit < len(rows) {
+				rows = rows[:limit]
+			}
 		}
 	}
 
-	// Apply LIMIT
-	if stmt.Limit != nil {
-		limit := int(*stmt.Limit)
-		if limit >= 0 && limit < len(rows) {
-			rows = rows[:limit]
+	if len(colIndices) != visibleColumnCount {
+		for i := range rows {
+			rows[i] = rows[i][:visibleColumnCount]
 		}
 	}
 
@@ -732,6 +796,39 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		Columns: outCols,
 		Rows:    rows,
 	}, nil
+}
+
+func isUniqueEqualityFilterMVCC(where Expression, schema *catalog.Schema) bool {
+	if where == nil || schema == nil {
+		return false
+	}
+
+	binExpr, ok := where.(*BinaryExpr)
+	if !ok || binExpr.Op != TOKEN_EQ {
+		return false
+	}
+
+	var colName string
+	if col, ok := binExpr.Left.(*ColumnRef); ok {
+		if _, ok := binExpr.Right.(*LiteralExpr); ok {
+			colName = col.Name
+		}
+	} else if col, ok := binExpr.Right.(*ColumnRef); ok {
+		if _, ok := binExpr.Left.(*LiteralExpr); ok {
+			colName = col.Name
+		}
+	}
+
+	if colName == "" {
+		return false
+	}
+
+	column, _ := schema.ColumnByName(colName)
+	if column == nil {
+		return false
+	}
+
+	return column.PrimaryKey || column.Unique
 }
 
 // executeSelectWithAggregatesMVCC handles simple aggregate queries (no GROUP BY or global aggregates)
@@ -2654,6 +2751,10 @@ func (e *MVCCExecutor) evalJoinExprMVCC(expr Expression, _ *catalog.Schema, row 
 
 // executeSelectWithIndex performs a SELECT using an index scan when possible.
 func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transaction) (*Result, bool, error) {
+	if !canUseIndexExecutionFastPathMVCC(stmt) {
+		return nil, false, nil
+	}
+
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
@@ -2687,13 +2788,29 @@ func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transact
 			if col == nil {
 				return nil, false, fmt.Errorf("unknown column: %s", sc.Name)
 			}
-			outCols = append(outCols, sc.Name)
+			if sc.Alias != "" {
+				outCols = append(outCols, sc.Alias)
+			} else {
+				outCols = append(outCols, sc.Name)
+			}
 			colIndices = append(colIndices, idx)
 		}
 	}
 
 	// Fetch and filter rows by RID
 	var rows [][]catalog.Value
+	offsetRemaining := 0
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		offsetRemaining = int(*stmt.Offset)
+	}
+	limitValue := -1
+	if stmt.Limit != nil {
+		limitValue = int(*stmt.Limit)
+	}
+	if limitValue == 0 {
+		return &Result{Columns: outCols, Rows: nil}, true, nil
+	}
+
 	for _, rid := range rids {
 		// Fetch the row using MVCC visibility
 		row, err := e.mtm.FetchWithMVCC(stmt.TableName, rid)
@@ -2718,18 +2835,42 @@ func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transact
 			}
 		}
 
+		if offsetRemaining > 0 {
+			offsetRemaining--
+			continue
+		}
+
 		// Project columns
 		outRow := make([]catalog.Value, len(colIndices))
 		for i, idx := range colIndices {
 			outRow[i] = row.Values[idx]
 		}
 		rows = append(rows, outRow)
+
+		if limitValue >= 0 && len(rows) >= limitValue {
+			break
+		}
 	}
 
 	return &Result{
 		Columns: outCols,
 		Rows:    rows,
 	}, true, nil
+}
+
+func canUseIndexExecutionFastPathMVCC(stmt *SelectStmt) bool {
+	if stmt == nil {
+		return false
+	}
+	if len(stmt.OrderBy) > 0 || stmt.Distinct || stmt.LimitExpr != nil || len(stmt.DistinctOn) > 0 {
+		return false
+	}
+	for _, sc := range stmt.Columns {
+		if sc.Expression != nil || sc.Aggregate != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // executeAlter handles ALTER TABLE statements.

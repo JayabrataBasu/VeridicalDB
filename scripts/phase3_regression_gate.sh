@@ -16,6 +16,7 @@ ROWS=2000
 LOOKUPS=1000
 RANGES=400
 MIXED_OPS=1200
+PARSE_OPS=1200
 SEED=1337
 OUTDIR=""
 
@@ -33,6 +34,7 @@ Optional:
   --lookups N               Point lookups per run (default: 1000)
   --ranges N                Range queries per run (default: 400)
   --mixed-ops N             Mixed workload operations per run (default: 1200)
+    --parse-ops N             Parse-cache workload operations per run (default: 1200)
   --seed N                  Deterministic seed (default: 1337)
   --outdir PATH             Output directory for this gate run
   --help                    Show help
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mixed-ops)
             MIXED_OPS="$2"
+            shift 2
+            ;;
+        --parse-ops)
+            PARSE_OPS="$2"
             shift 2
             ;;
         --seed)
@@ -122,6 +128,7 @@ echo "[phase3-gate] threshold: ${THRESHOLD_PERCENT}%"
     --lookups "$LOOKUPS" \
     --ranges "$RANGES" \
     --mixed-ops "$MIXED_OPS" \
+    --parse-ops "$PARSE_OPS" \
     --seed "$SEED" \
     --outdir "$OUTDIR"
 
@@ -175,7 +182,7 @@ rm -f "$OUTDIR/.baseline_metrics.tmp" "$OUTDIR/.current_metrics.tmp"
 echo "[phase3-gate] comparison report: $RESULT_CSV"
 cat "$RESULT_CSV"
 
-FAIL_COUNT="$(awk -F, 'NR>1 && $5 == "FAIL" {c++} END {print c+0}' "$RESULT_CSV")"
+FAIL_COUNT="$(awk -F, 'NR>1 && $8 == "FAIL" {c++} END {print c+0}' "$RESULT_CSV")"
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
     echo "[phase3-gate] FAILED: $FAIL_COUNT workload(s) exceeded ${THRESHOLD_PERCENT}% regression threshold (p95 up or QPS down)" >&2
     exit 2

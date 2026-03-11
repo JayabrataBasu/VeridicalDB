@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -314,6 +315,67 @@ func TestIndexMaintenanceOnDML(t *testing.T) {
 	}
 
 	t.Log("Index maintenance on DML test passed")
+}
+
+func TestIndexedSelectLimitOffsetSemantics(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE users (id INT PRIMARY KEY, email TEXT, age INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("CREATE INDEX idx_users_age ON users (age)")
+	if err != nil {
+		t.Fatalf("CREATE INDEX failed: %v", err)
+	}
+
+	for i := 1; i <= 5; i++ {
+		_, err = session.ExecuteSQL(fmt.Sprintf("INSERT INTO users VALUES (%d, 'u%d@test', %d)", i, i, 30))
+		if err != nil {
+			t.Fatalf("INSERT %d failed: %v", i, err)
+		}
+	}
+
+	result, err := session.ExecuteSQL("SELECT id FROM users WHERE age = 30 LIMIT 2 OFFSET 1")
+	if err != nil {
+		t.Fatalf("indexed select with limit/offset failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
+	}
+}
+
+func TestIndexedSelectOrderByFallsBackCorrectly(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE users (id INT PRIMARY KEY, age INT, name TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = session.ExecuteSQL("CREATE INDEX idx_users_age ON users (age)")
+	if err != nil {
+		t.Fatalf("CREATE INDEX failed: %v", err)
+	}
+
+	_, _ = session.ExecuteSQL("INSERT INTO users VALUES (1, 30, 'c')")
+	_, _ = session.ExecuteSQL("INSERT INTO users VALUES (2, 30, 'a')")
+	_, _ = session.ExecuteSQL("INSERT INTO users VALUES (3, 30, 'b')")
+
+	result, err := session.ExecuteSQL("SELECT name FROM users WHERE age = 30 ORDER BY name")
+	if err != nil {
+		t.Fatalf("ordered indexed select failed: %v", err)
+	}
+	if len(result.Rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(result.Rows))
+	}
+	if result.Rows[0][0].Text != "a" || result.Rows[1][0].Text != "b" || result.Rows[2][0].Text != "c" {
+		t.Fatalf("expected sorted names [a b c], got [%s %s %s]",
+			result.Rows[0][0].Text, result.Rows[1][0].Text, result.Rows[2][0].Text)
+	}
 }
 
 // TestCompositeIndexMaintenance tests maintenance of multi-column indexes.

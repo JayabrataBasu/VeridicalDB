@@ -6,6 +6,7 @@ set -euo pipefail
 # - point lookup
 # - range scan
 # - mixed OLTP (70% read / 30% write)
+# - parse cache / normalized repeated SQL
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -17,6 +18,7 @@ ROWS=2000
 LOOKUPS=1000
 RANGES=400
 MIXED_OPS=1200
+PARSE_OPS=1200
 SEED=1337
 
 usage() {
@@ -29,6 +31,7 @@ Options:
   --lookups N       Point lookup statements per run (default: 1000)
   --ranges N        Range scan statements per run (default: 400)
   --mixed-ops N     Mixed workload statements per run (default: 1200)
+    --parse-ops N     Parse-cache statements per run (default: 1200)
   --seed N          Deterministic seed value used for query generation (default: 1337)
     --outdir PATH     Output directory (default: .benchmarks/phase3/<timestamp>)
   --help            Show this help
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mixed-ops)
             MIXED_OPS="$2"
+            shift 2
+            ;;
+        --parse-ops)
+            PARSE_OPS="$2"
             shift 2
             ;;
         --seed)
@@ -159,6 +166,32 @@ generate_mixed_workload() {
             printf "INSERT INTO kv VALUES (%d, 'payload_new_%d', %d, '2026-03-10T00:00:00Z');\n" "$id" "$id" "$value" >>"$file"
             inserted=$((inserted + 1))
         fi
+    done
+}
+
+generate_parse_cache_workload() {
+    local file="$1"
+    local setup="$WORKLOAD_DIR/setup.sql"
+    cat "$setup" >"$file"
+
+    for ((i = 1; i <= PARSE_OPS; i++)); do
+        local id=$(( ((i * 97 + SEED) % ROWS) + 1 ))
+        local lane=$((i % 4))
+
+        case "$lane" in
+            0)
+                printf "SELECT * FROM kv WHERE id = %d;\n" "$id" >>"$file"
+                ;;
+            1)
+                printf "  SELECT * FROM kv WHERE id = %d  \n" "$id" >>"$file"
+                ;;
+            2)
+                printf "SELECT   *   FROM kv   WHERE   id = %d;\n" "$id" >>"$file"
+                ;;
+            *)
+                printf "SELECT * FROM kv WHERE id=%d;\n" "$id" >>"$file"
+                ;;
+        esac
     done
 }
 
@@ -285,17 +318,20 @@ make_setup_sql "$WORKLOAD_DIR/setup.sql"
 generate_point_workload "$WORKLOAD_DIR/point_lookup.sql"
 generate_range_workload "$WORKLOAD_DIR/range_scan.sql"
 generate_mixed_workload "$WORKLOAD_DIR/mixed_oltp.sql"
+generate_parse_cache_workload "$WORKLOAD_DIR/parse_cache.sql"
 
 # Run workloads
 echo "workload,run,statement_count,elapsed_seconds,qps,max_rss_kb" >"$RAW_CSV"
 run_workload "point_lookup" "$WORKLOAD_DIR/point_lookup.sql"
 run_workload "range_scan" "$WORKLOAD_DIR/range_scan.sql"
 run_workload "mixed_oltp" "$WORKLOAD_DIR/mixed_oltp.sql"
+run_workload "parse_cache" "$WORKLOAD_DIR/parse_cache.sql"
 
 echo "workload,runs,mean_seconds,p95_seconds,stddev_seconds,cv_percent,min_seconds,max_seconds,avg_qps,avg_rss_kb" >"$SUMMARY_CSV"
 write_summary_for_workload "point_lookup"
 write_summary_for_workload "range_scan"
 write_summary_for_workload "mixed_oltp"
+write_summary_for_workload "parse_cache"
 
 {
     echo "# Phase 3 Baseline Report"
@@ -309,6 +345,7 @@ write_summary_for_workload "mixed_oltp"
     echo "- point_lookups: $LOOKUPS"
     echo "- range_queries: $RANGES"
     echo "- mixed_ops: $MIXED_OPS"
+    echo "- parse_ops: $PARSE_OPS"
     echo "- seed: $SEED"
     echo
     echo "## Workload Summary"

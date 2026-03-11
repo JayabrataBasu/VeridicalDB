@@ -11,7 +11,11 @@ import (
 // TestPlanner_CostBasedIndexSelection tests that the planner chooses IndexScan when cost is lower.
 func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 	// Setup
-	idxMgr, _ := btree.NewIndexManager(":memory:", 4096)
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer idxMgr.Close()
 	planner := NewPlanner(idxMgr)
 
 	schema := &catalog.Schema{
@@ -34,7 +38,9 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 		Columns:   []string{"age"},
 		Unique:    false,
 	}
-	_ = idxMgr.CreateIndex(*ageIndex)
+	if err := idxMgr.CreateIndex(*ageIndex); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
 
 	// Set up statistics that favor IndexScan (high selectivity)
 	tableStats := &stats.TableStats{
@@ -50,7 +56,9 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 			},
 		},
 	}
-	_ = planner.statsMgr.SetTableStats(tableStats)
+	if err := planner.statsMgr.SetTableStats(tableStats); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
 
 	// Query with high selectivity: age = 25 (should prefer IndexScan)
 	stmt := &SelectStmt{
@@ -89,7 +97,11 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 // TestPlanner_CostBasedTableScanSelection tests that the planner chooses TableScan when cost is lower.
 func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 	// Setup
-	idxMgr, _ := btree.NewIndexManager(":memory:", 4096)
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer idxMgr.Close()
 	planner := NewPlanner(idxMgr)
 
 	schema := &catalog.Schema{
@@ -112,7 +124,9 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 		Columns:   []string{"age"},
 		Unique:    false,
 	}
-	_ = idxMgr.CreateIndex(*ageIndex)
+	if err := idxMgr.CreateIndex(*ageIndex); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
 
 	// Set up statistics that favor TableScan (low selectivity)
 	tableStats := &stats.TableStats{
@@ -128,7 +142,9 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 			},
 		},
 	}
-	_ = planner.statsMgr.SetTableStats(tableStats)
+	if err := planner.statsMgr.SetTableStats(tableStats); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
 
 	// Query with low selectivity: age > 10 (most rows match)
 	stmt := &SelectStmt{
@@ -563,7 +579,11 @@ func TestPlanner_CostComparison(t *testing.T) {
 }
 
 func TestPlanner_PlanSelectionMatrix(t *testing.T) {
-	idxMgr, _ := btree.NewIndexManager(":memory:", 4096)
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() { _ = idxMgr.Close() }()
 	planner := NewPlanner(idxMgr)
 
 	schema := &catalog.Schema{
@@ -579,13 +599,16 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 		Schema: schema,
 	}
 
-	_ = idxMgr.CreateIndex(btree.IndexMeta{
+	err = idxMgr.CreateIndex(btree.IndexMeta{
 		Name:      "idx_users_age",
 		TableName: "users",
 		Columns:   []string{"age"},
 		Unique:    false,
 		Type:      btree.IndexTypeBTree,
 	})
+	if err != nil {
+		t.Fatalf("failed to create test index: %v", err)
+	}
 
 	_ = planner.statsMgr.SetTableStats(&stats.TableStats{
 		TableName: "users",
@@ -618,8 +641,8 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 		maxSelectivity    float64
 	}{
 		{
-			name: "no where uses table scan",
-			stmt: &SelectStmt{TableName: "users", Columns: []SelectColumn{{Star: true}}},
+			name:           "no where uses table scan",
+			stmt:           &SelectStmt{TableName: "users", Columns: []SelectColumn{{Star: true}}},
 			expectedType:   PlanTableScan,
 			minSelectivity: 1.0,
 			maxSelectivity: 1.0,

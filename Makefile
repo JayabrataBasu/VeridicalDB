@@ -82,7 +82,7 @@ phase3-benchmark: build
 # Fast local benchmark sanity run
 phase3-benchmark-quick: build
 	@echo "Running quick Phase 3 benchmark harness..."
-	./scripts/phase3_benchmark.sh --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360
+	./scripts/phase3_benchmark.sh --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360 --parse-ops 360
 
 # Run Phase 3 regression gate against baseline summary
 # Usage:
@@ -104,7 +104,7 @@ phase3-regression-gate-quick: build
 		exit 1; \
 	fi
 	@echo "Running quick Phase 3 regression gate..."
-	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),10)" --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360
+	./scripts/phase3_regression_gate.sh --baseline-summary "$(BASELINE)" --threshold-percent "$(if $(THRESHOLD),$(THRESHOLD),10)" --runs 3 --rows 800 --lookups 300 --ranges 120 --mixed-ops 360 --parse-ops 360
 
 # Clean build artifacts
 clean:
