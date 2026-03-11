@@ -378,6 +378,85 @@ func TestIndexedSelectOrderByFallsBackCorrectly(t *testing.T) {
 	}
 }
 
+func TestIndexedUpdatePrimaryKeyPredicate(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE accounts (id INT PRIMARY KEY, balance INT, account_name TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	for i := 1; i <= 6; i++ {
+		_, err = session.ExecuteSQL(fmt.Sprintf("INSERT INTO accounts VALUES (%d, %d, 'owner_%d')", i, i*100, i))
+		if err != nil {
+			t.Fatalf("INSERT %d failed: %v", i, err)
+		}
+	}
+
+	result, err := session.ExecuteSQL("UPDATE accounts SET balance = 999 WHERE id = 4")
+	if err != nil {
+		t.Fatalf("UPDATE failed: %v", err)
+	}
+	if result.RowsAffected != 1 {
+		t.Fatalf("expected 1 affected row, got %d", result.RowsAffected)
+	}
+
+	result, err = session.ExecuteSQL("SELECT balance FROM accounts WHERE id = 4")
+	if err != nil {
+		t.Fatalf("SELECT updated row failed: %v", err)
+	}
+	if len(result.Rows) != 1 || result.Rows[0][0].Int32 != 999 {
+		t.Fatalf("expected updated balance 999, got %+v", result.Rows)
+	}
+
+	result, err = session.ExecuteSQL("SELECT COUNT(*) FROM accounts WHERE balance = 999")
+	if err != nil {
+		t.Fatalf("SELECT count failed: %v", err)
+	}
+	if result.Rows[0][0].Int64 != 1 {
+		t.Fatalf("expected exactly one updated row, got %d", result.Rows[0][0].Int64)
+	}
+}
+
+func TestIndexedDeletePrimaryKeyPredicate(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	_, err := session.ExecuteSQL("CREATE TABLE todos (id INT PRIMARY KEY, task TEXT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	for i := 1; i <= 5; i++ {
+		_, err = session.ExecuteSQL(fmt.Sprintf("INSERT INTO todos VALUES (%d, 'task_%d')", i, i))
+		if err != nil {
+			t.Fatalf("INSERT %d failed: %v", i, err)
+		}
+	}
+
+	result, err := session.ExecuteSQL("DELETE FROM todos WHERE id = 2")
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+	if result.RowsAffected != 1 {
+		t.Fatalf("expected 1 affected row, got %d", result.RowsAffected)
+	}
+
+	result, err = session.ExecuteSQL("SELECT id FROM todos ORDER BY id")
+	if err != nil {
+		t.Fatalf("SELECT remaining rows failed: %v", err)
+	}
+	if len(result.Rows) != 4 {
+		t.Fatalf("expected 4 rows after delete, got %d", len(result.Rows))
+	}
+	for _, row := range result.Rows {
+		if row[0].Int32 == 2 {
+			t.Fatalf("deleted row id 2 is still visible")
+		}
+	}
+}
+
 // TestCompositeIndexMaintenance tests maintenance of multi-column indexes.
 func TestCompositeIndexMaintenance(t *testing.T) {
 	session, idxMgr, cleanup := setupIndexTest(t)

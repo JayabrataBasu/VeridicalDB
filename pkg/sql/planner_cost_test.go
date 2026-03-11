@@ -15,7 +15,11 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() {
+		if closeErr := idxMgr.Close(); closeErr != nil {
+			t.Fatalf("failed to close index manager: %v", closeErr)
+		}
+	}()
 	planner := NewPlanner(idxMgr)
 
 	schema := &catalog.Schema{
@@ -101,7 +105,11 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create index manager: %v", err)
 	}
-	defer idxMgr.Close()
+	defer func() {
+		if closeErr := idxMgr.Close(); closeErr != nil {
+			t.Fatalf("failed to close index manager: %v", closeErr)
+		}
+	}()
 	planner := NewPlanner(idxMgr)
 
 	schema := &catalog.Schema{

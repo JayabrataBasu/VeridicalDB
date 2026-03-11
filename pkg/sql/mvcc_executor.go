@@ -1292,45 +1292,31 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 		newRow []catalog.Value
 	}
 
-	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
-		// Apply WHERE filter
-		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				return true, nil
-			}
-		}
-
-		// Keep old row for index cleanup
+	collectUpdateCandidate := func(row *catalog.MVCCRow) error {
 		oldRow := make([]catalog.Value, len(row.Values))
 		copy(oldRow, row.Values)
 
-		// Build new row with updates
 		newRow := make([]catalog.Value, len(row.Values))
 		copy(newRow, row.Values)
 
 		for _, assign := range stmt.Assignments {
 			col, idx := meta.Schema.ColumnByName(assign.Column)
 			if col == nil {
-				return false, fmt.Errorf("unknown column: %s", assign.Column)
+				return fmt.Errorf("unknown column: %s", assign.Column)
 			}
 			val, err := e.evalExpr(assign.Value, meta.Schema, row.Values, tx)
 			if err != nil {
-				return false, err
+				return err
 			}
 			val, err = coerceValueMVCC(val, col.Type)
 			if err != nil {
-				return false, fmt.Errorf("column %s: %w", assign.Column, err)
+				return fmt.Errorf("column %s: %w", assign.Column, err)
 			}
 			newRow[idx] = val
 		}
 
-		// Validate CHECK constraints on the updated row
 		if err := e.validateCheckConstraints(meta.Schema, newRow); err != nil {
-			return false, err
+			return err
 		}
 
 		toUpdate = append(toUpdate, struct {
@@ -1338,9 +1324,38 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 			oldRow []catalog.Value
 			newRow []catalog.Value
 		}{rid: row.RID, oldRow: oldRow, newRow: newRow})
+		return nil
+	}
 
-		return true, nil
-	})
+	indexedRows, usedIndex, err := e.collectIndexedMutationCandidates(stmt.TableName, stmt.Where, meta.Schema, tx)
+	if err != nil {
+		return nil, err
+	}
+	if usedIndex {
+		for _, row := range indexedRows {
+			if err := collectUpdateCandidate(row); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+			if stmt.Where != nil {
+				match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return true, nil
+				}
+			}
+
+			if err := collectUpdateCandidate(row); err != nil {
+				return false, err
+			}
+
+			return true, nil
+		})
+	}
 
 	if err != nil {
 		return nil, err
@@ -1403,27 +1418,39 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 		values []catalog.Value
 	}
 
-	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
-		// Apply WHERE filter
-		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
-			if err != nil {
-				return false, err
-			}
-			if !match {
-				return true, nil
-			}
-		}
-
-		// Copy row values for index cleanup
+	collectDeleteCandidate := func(row *catalog.MVCCRow) {
 		values := make([]catalog.Value, len(row.Values))
 		copy(values, row.Values)
 		toDelete = append(toDelete, struct {
 			rid    storage.RID
 			values []catalog.Value
 		}{rid: row.RID, values: values})
-		return true, nil
-	})
+	}
+
+	indexedRows, usedIndex, err := e.collectIndexedMutationCandidates(stmt.TableName, stmt.Where, meta.Schema, tx)
+	if err != nil {
+		return nil, err
+	}
+	if usedIndex {
+		for _, row := range indexedRows {
+			collectDeleteCandidate(row)
+		}
+	} else {
+		err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+			if stmt.Where != nil {
+				match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return true, nil
+				}
+			}
+
+			collectDeleteCandidate(row)
+			return true, nil
+		})
+	}
 
 	if err != nil {
 		return nil, err
@@ -1455,6 +1482,45 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 		Message:      fmt.Sprintf("%d row(s) deleted.", len(toDelete)),
 		RowsAffected: len(toDelete),
 	}, nil
+}
+
+func (e *MVCCExecutor) collectIndexedMutationCandidates(tableName string, where Expression, schema *catalog.Schema, tx *txn.Transaction) ([]*catalog.MVCCRow, bool, error) {
+	if tx == nil || where == nil {
+		return nil, false, nil
+	}
+
+	scanInfo := e.findUsableIndex(tableName, where, schema)
+	if scanInfo == nil {
+		return nil, false, nil
+	}
+
+	rids, err := e.executeIndexScan(tableName, scanInfo, tx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	rows := make([]*catalog.MVCCRow, 0, len(rids))
+	for _, rid := range rids {
+		row, err := e.mtm.FetchWithMVCC(tableName, rid)
+		if err != nil {
+			continue
+		}
+		if !txn.IsVisible(row.Header, tx.Snapshot, e.mtm.TxnManager(), tx.ID) {
+			continue
+		}
+
+		match, err := e.evalCondition(where, schema, row.Values, tx)
+		if err != nil {
+			return nil, false, err
+		}
+		if !match {
+			continue
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows, true, nil
 }
 
 // evalExpr evaluates an expression to a value.
