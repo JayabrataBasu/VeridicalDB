@@ -38,7 +38,11 @@ func TestSetupShardCoordinatorAttachesProvider(t *testing.T) {
 			if err != nil {
 				return
 			}
-			defer conn.Close()
+			defer func() {
+				if closeErr := conn.Close(); closeErr != nil {
+					t.Errorf("close shard test connection: %v", closeErr)
+				}
+			}()
 			<-done
 		}()
 	}
