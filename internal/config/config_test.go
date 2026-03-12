@@ -24,6 +24,13 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Log.Level != "info" {
 		t.Errorf("Expected default log level 'info', got %s", cfg.Log.Level)
 	}
+
+	if cfg.Sharding.Enabled {
+		t.Error("Expected sharding to be disabled by default")
+	}
+	if cfg.Sharding.ShardKeyColumn != "id" {
+		t.Errorf("Expected default shard key column 'id', got %s", cfg.Sharding.ShardKeyColumn)
+	}
 }
 
 func TestConfigValidation(t *testing.T) {
@@ -69,6 +76,40 @@ func TestConfigValidation(t *testing.T) {
 			name: "invalid log level",
 			modify: func(c *Config) {
 				c.Log.Level = "invalid"
+			},
+			shouldError: true,
+		},
+		{
+			name: "valid sharding config",
+			modify: func(c *Config) {
+				c.Sharding.Enabled = true
+				c.Sharding.ShardKeyColumn = "customer_id"
+				c.Sharding.Nodes = []ShardNodeConfig{{Host: "127.0.0.1", Port: 15432}}
+			},
+			shouldError: false,
+		},
+		{
+			name: "enabled sharding without nodes",
+			modify: func(c *Config) {
+				c.Sharding.Enabled = true
+				c.Sharding.Nodes = nil
+			},
+			shouldError: true,
+		},
+		{
+			name: "enabled sharding without shard key",
+			modify: func(c *Config) {
+				c.Sharding.Enabled = true
+				c.Sharding.ShardKeyColumn = ""
+				c.Sharding.Nodes = []ShardNodeConfig{{Host: "127.0.0.1", Port: 15432}}
+			},
+			shouldError: true,
+		},
+		{
+			name: "enabled sharding with invalid node port",
+			modify: func(c *Config) {
+				c.Sharding.Enabled = true
+				c.Sharding.Nodes = []ShardNodeConfig{{Host: "127.0.0.1", Port: 70000}}
 			},
 			shouldError: true,
 		},
@@ -151,6 +192,15 @@ storage:
   page_size: 16384
 log:
   level: debug
+
+sharding:
+  enabled: true
+  shard_key_column: tenant_id
+  nodes:
+    - host: 127.0.0.1
+      port: 15432
+    - host: 127.0.0.1
+      port: 15433
 `
 	if err := os.WriteFile(cfgPath, []byte(content), 0644); err != nil {
 		t.Fatalf("Failed to write test config: %v", err)
@@ -175,5 +225,15 @@ log:
 
 	if cfg.Log.Level != "debug" {
 		t.Errorf("Expected log level debug, got %s", cfg.Log.Level)
+	}
+
+	if !cfg.Sharding.Enabled {
+		t.Error("Expected sharding to be enabled from config file")
+	}
+	if cfg.Sharding.ShardKeyColumn != "tenant_id" {
+		t.Errorf("Expected shard key column tenant_id, got %s", cfg.Sharding.ShardKeyColumn)
+	}
+	if len(cfg.Sharding.Nodes) != 2 {
+		t.Fatalf("Expected 2 shard nodes, got %d", len(cfg.Sharding.Nodes))
 	}
 }

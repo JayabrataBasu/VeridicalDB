@@ -12,10 +12,11 @@ import (
 
 // Config holds all configuration for VeridicalDB
 type Config struct {
-	Server  ServerConfig  `mapstructure:"server"`
-	Storage StorageConfig `mapstructure:"storage"`
-	Log     LogConfig     `mapstructure:"log"`
-	Backup  BackupConfig  `mapstructure:"backup"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Storage  StorageConfig  `mapstructure:"storage"`
+	Log      LogConfig      `mapstructure:"log"`
+	Backup   BackupConfig   `mapstructure:"backup"`
+	Sharding ShardingConfig `mapstructure:"sharding"`
 }
 
 // ServerConfig holds server-related configuration
@@ -68,6 +69,19 @@ type BackupConfig struct {
 	RestoreCommand string `mapstructure:"restore_command"`
 }
 
+// ShardingConfig holds distributed shard coordinator configuration.
+type ShardingConfig struct {
+	Enabled        bool              `mapstructure:"enabled"`
+	ShardKeyColumn string            `mapstructure:"shard_key_column"`
+	Nodes          []ShardNodeConfig `mapstructure:"nodes"`
+}
+
+// ShardNodeConfig describes a single shard endpoint.
+type ShardNodeConfig struct {
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
+}
+
 // Default configuration values
 func defaultConfig() *Config {
 	return &Config{
@@ -98,6 +112,10 @@ func defaultConfig() *Config {
 			Compress:      true,
 			RetentionDays: 30,
 		},
+		Sharding: ShardingConfig{
+			Enabled:        false,
+			ShardKeyColumn: "id",
+		},
 	}
 }
 
@@ -122,6 +140,8 @@ func Load(configPath string) (*Config, error) {
 	v.SetDefault("log.output", cfg.Log.Output)
 	v.SetDefault("backup.compress", cfg.Backup.Compress)
 	v.SetDefault("backup.retention_days", cfg.Backup.RetentionDays)
+	v.SetDefault("sharding.enabled", cfg.Sharding.Enabled)
+	v.SetDefault("sharding.shard_key_column", cfg.Sharding.ShardKeyColumn)
 
 	// Environment variable support
 	v.SetEnvPrefix("VERIDICAL")
@@ -192,6 +212,23 @@ func (c *Config) Validate() error {
 	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLevels[strings.ToLower(c.Log.Level)] {
 		return fmt.Errorf("invalid log level: %s", c.Log.Level)
+	}
+
+	if c.Sharding.Enabled {
+		if c.Sharding.ShardKeyColumn == "" {
+			return fmt.Errorf("sharding.shard_key_column is required when sharding is enabled")
+		}
+		if len(c.Sharding.Nodes) == 0 {
+			return fmt.Errorf("sharding.nodes must contain at least one shard when sharding is enabled")
+		}
+		for i, node := range c.Sharding.Nodes {
+			if node.Host == "" {
+				return fmt.Errorf("sharding.nodes[%d].host is required", i)
+			}
+			if node.Port < 1 || node.Port > 65535 {
+				return fmt.Errorf("sharding.nodes[%d].port must be between 1 and 65535", i)
+			}
+		}
 	}
 
 	return nil
@@ -275,6 +312,15 @@ backup:
   retention_days: 30          # days to keep backups
   # archive_command: ""        # optional: e.g. aws s3 cp %%p s3://bucket/wal/%%f
   # restore_command: ""        # optional: e.g. aws s3 cp s3://bucket/wal/%%f %%p
+
+sharding:
+	enabled: false
+	shard_key_column: id
+	nodes:
+		# - host: 127.0.0.1
+		#   port: 15432
+		# - host: 127.0.0.1
+		#   port: 15433
 `, dataDir, dataDir, dataDir)
 
 	return os.WriteFile(path, []byte(content), 0644)

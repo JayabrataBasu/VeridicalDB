@@ -924,6 +924,23 @@ func runTUI(cfg *config.Config, log *logger.Logger) {
 	if ftsMgr, err := fts.NewManager(cfg.Storage.DataDir); err == nil {
 		session.SetFTSManager(ftsMgr)
 	}
+	coord, err := cli.SetupShardCoordinator(cfg, session)
+	if err != nil {
+		log.Error("Failed to initialize shard coordinator", "error", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to initialize sharding: %v\n", err)
+		os.Exit(1)
+	}
+	if coord != nil {
+		defer func() {
+			if err := coord.Close(); err != nil {
+				log.Warn("Failed to close shard coordinator", "error", err)
+			}
+		}()
+		log.Info("Shard coordinator connected",
+			"shards", len(cfg.Sharding.Nodes),
+			"shard_key", cfg.Sharding.ShardKeyColumn,
+		)
+	}
 
 	// Create TUI model
 	model := tui.New(session)

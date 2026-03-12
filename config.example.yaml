@@ -23,6 +23,19 @@ logging:
   # Output: stdout, stderr, or file path
   output: "stdout"
 
+# Distributed sharding settings
+sharding:
+  # Enable coordinator-based sharding
+  enabled: false
+  # Column used to compute shard routing (must exist in tables)
+  shard_key_column: "id"
+  # Shard endpoints for the coordinator to connect to
+  nodes:
+    # - host: "127.0.0.1"
+    #   port: 15432
+    # - host: "127.0.0.1"
+    #   port: 15433
+
 # PostgreSQL wire protocol settings
 pgwire:
   # TLS/SSL configuration for secure connections

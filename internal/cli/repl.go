@@ -14,6 +14,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
@@ -32,6 +33,7 @@ type REPL struct {
 	executor *sql.Executor
 	mtm      *catalog.MVCCTableManager
 	session  *sql.Session
+	coord    *shard.Coordinator
 }
 
 // NewREPL creates a new REPL instance
@@ -104,7 +106,30 @@ func (r *REPL) Initialize() error {
 	} else {
 		r.log.Warn("FTS manager not available", "error", err)
 	}
+
+	coord, err := SetupShardCoordinator(r.config, r.session)
+	if err != nil {
+		return fmt.Errorf("failed to initialize shard coordinator: %w", err)
+	}
+	r.coord = coord
+	if r.coord != nil {
+		r.log.Info("Shard coordinator connected",
+			"shards", len(r.config.Sharding.Nodes),
+			"shard_key", r.config.Sharding.ShardKeyColumn,
+		)
+	}
 	return nil
+}
+
+func (r *REPL) closeResources() {
+	if r.coord != nil {
+		if err := r.coord.Close(); err != nil {
+			r.log.Warn("failed to close shard coordinator", "error", err)
+		}
+	}
+	if r.session != nil {
+		r.session.Close()
+	}
 }
 
 // Run starts the REPL loop
@@ -113,6 +138,7 @@ func (r *REPL) Run() error {
 	if err := r.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
+	defer r.closeResources()
 
 	// Configure readline
 	rlConfig := &readline.Config{
@@ -579,6 +605,13 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 	if ftsMgr, err := fts.NewManager(dataDir); err == nil {
 		repl.session.SetFTSManager(ftsMgr)
 	}
+
+	coord, err := SetupShardCoordinator(repl.config, repl.session)
+	if err != nil {
+		return fmt.Errorf("failed to initialize shard coordinator: %w", err)
+	}
+	repl.coord = coord
+	defer repl.closeResources()
 
 	// Configure readline
 	rlConfig := &readline.Config{
