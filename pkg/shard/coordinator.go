@@ -2,10 +2,13 @@ package shard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 )
@@ -49,6 +52,9 @@ func (c *ShardClient) Execute(query string) (string, error) {
 	// Read response
 	buf := make([]byte, 4096)
 	n, err := c.conn.Read(buf)
+	if err == io.EOF && n == 0 {
+		return "", fmt.Errorf("read response: %w", err)
+	}
 	if err != nil && err != io.EOF {
 		return "", fmt.Errorf("read response: %w", err)
 	}
@@ -142,20 +148,39 @@ type RouteResult struct {
 
 // Route determines which shard(s) a query should go to.
 func (c *Coordinator) Route(query string, sessionID string) RouteResult {
-	// Check if session has an active transaction bound to a shard
+	stmt, err := parseStatement(query)
+	if err != nil {
+		return RouteResult{Error: err}
+	}
+
+	return c.routeParsedStatement(stmt, sessionID)
+}
+
+func parseStatement(query string) (sql.Statement, error) {
+	parser := sql.NewParser(query)
+	stmt, err := parser.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("parse query: %w", err)
+	}
+	return stmt, nil
+}
+
+	// routeParsedStatement determines which shard(s) a parsed statement should go to.
+func (c *Coordinator) routeParsedStatement(stmt sql.Statement, sessionID string) RouteResult {
+	// Bound transactions should continue to route to the same shard, but COMMIT/
+	// ROLLBACK must pass through routeStatement so the binding can be cleared.
+	switch stmt.(type) {
+	case *sql.CommitStmt, *sql.RollbackStmt, *sql.BeginStmt:
+		return c.routeStatement(stmt, sessionID)
+	}
+
+	// Check if session has an active transaction bound to a shard.
 	c.txnMu.Lock()
 	if boundShard, ok := c.activeTxns[sessionID]; ok {
 		c.txnMu.Unlock()
 		return RouteResult{TargetShard: &boundShard}
 	}
 	c.txnMu.Unlock()
-
-	// Parse the query to determine routing
-	parser := sql.NewParser(query)
-	stmt, err := parser.Parse()
-	if err != nil {
-		return RouteResult{Error: fmt.Errorf("parse query: %w", err)}
-	}
 
 	return c.routeStatement(stmt, sessionID)
 }
@@ -370,23 +395,19 @@ func (c *Coordinator) UnbindTransaction(sessionID string) {
 
 // Execute executes a query, routing to appropriate shard(s).
 func (c *Coordinator) Execute(ctx context.Context, query string, sessionID string) ([]string, error) {
-	route := c.Route(query, sessionID)
+	stmt, err := parseStatement(query)
+	if err != nil {
+		return nil, err
+	}
+
+	route := c.routeParsedStatement(stmt, sessionID)
 
 	if route.Error != nil {
 		return nil, route.Error
 	}
 
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	if route.TargetShard != nil {
-		// Single shard query
-		client, ok := c.clients[*route.TargetShard]
-		if !ok {
-			return nil, fmt.Errorf("no connection to shard %d", *route.TargetShard)
-		}
-
-		result, err := client.Execute(query)
+		result, err := c.executeOnShard(ctx, *route.TargetShard, query, stmt)
 		if err != nil {
 			return nil, err
 		}
@@ -395,36 +416,144 @@ func (c *Coordinator) Execute(ctx context.Context, query string, sessionID strin
 
 	if route.ScatterGather {
 		// Scatter to all shards and gather results
-		return c.scatterGather(ctx, query)
+		return c.scatterGather(ctx, query, stmt)
 	}
 
 	return nil, fmt.Errorf("unable to route query")
 }
 
-// scatterGather sends query to all shards and gathers results.
-func (c *Coordinator) scatterGather(_ context.Context, query string) ([]string, error) {
-	var wg sync.WaitGroup
-	results := make([]string, len(c.clients))
-	errors := make([]error, len(c.clients))
-
-	i := 0
-	for id, client := range c.clients {
-		wg.Add(1)
-		go func(idx int, shardID ShardID, cl *ShardClient) {
-			defer wg.Done()
-			result, err := cl.Execute(query)
-			results[idx] = result
-			errors[idx] = err
-		}(i, id, client)
-		i++
+func (c *Coordinator) executeOnShard(ctx context.Context, shardID ShardID, query string, stmt sql.Statement) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 
-	wg.Wait()
-
-	// Check for errors
-	for i, err := range errors {
+	client, ok := c.getClient(shardID)
+	if !ok {
+		refreshedClient, err := c.reconnectClient(shardID)
 		if err != nil {
-			return nil, fmt.Errorf("shard %d: %w", i, err)
+			return "", fmt.Errorf("reconnect shard %d: %w", shardID, err)
+		}
+		return refreshedClient.Execute(query)
+	}
+
+	result, err := client.Execute(query)
+	if err == nil {
+		return result, nil
+	}
+	if !isReconnectEligibleError(err) {
+		return "", err
+	}
+	c.invalidateClient(shardID, client)
+	if !isRetryableReadStatement(stmt) {
+		return "", err
+	}
+
+	refreshedClient, reconnectErr := c.reconnectClient(shardID)
+	if reconnectErr != nil {
+		return "", fmt.Errorf("reconnect shard %d: %w", shardID, reconnectErr)
+	}
+
+	return refreshedClient.Execute(query)
+}
+
+func (c *Coordinator) getClient(shardID ShardID) (*ShardClient, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	client, ok := c.clients[shardID]
+	return client, ok
+}
+
+func (c *Coordinator) invalidateClient(shardID ShardID, staleClient *ShardClient) {
+	c.mu.Lock()
+	currentClient, ok := c.clients[shardID]
+	if ok && currentClient == staleClient {
+		delete(c.clients, shardID)
+	}
+	c.mu.Unlock()
+
+	if staleClient != nil {
+		_ = staleClient.Close()
+	}
+}
+
+func (c *Coordinator) reconnectClient(shardID ShardID) (*ShardClient, error) {
+	shardInfo, err := c.config.GetShard(shardID)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := NewShardClient(shardInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	c.mu.Lock()
+	staleClient := c.clients[shardID]
+	c.clients[shardID] = client
+	c.mu.Unlock()
+
+	if staleClient != nil {
+		_ = staleClient.Close()
+	}
+
+	return client, nil
+}
+
+func isReconnectEligibleError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return strings.Contains(err.Error(), "connection closed") ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
+
+func isRetryableReadStatement(stmt sql.Statement) bool {
+	switch stmt.(type) {
+	case *sql.SelectStmt, *sql.ShowStmt, *sql.ExplainStmt:
+		return true
+	default:
+		return false
+	}
+}
+
+// scatterGather sends query to all shards and gathers results.
+func (c *Coordinator) scatterGather(ctx context.Context, query string, stmt sql.Statement) ([]string, error) {
+	type shardExecResult struct {
+		shardID ShardID
+		result  string
+		err     error
+	}
+
+	resultCh := make(chan shardExecResult, len(c.clients))
+	c.mu.RLock()
+	shardIDs := make([]ShardID, 0, len(c.clients))
+	for id := range c.clients {
+		shardIDs = append(shardIDs, id)
+	}
+	c.mu.RUnlock()
+
+	for _, id := range shardIDs {
+		go func(shardID ShardID) {
+			result, err := c.executeOnShard(ctx, shardID, query, stmt)
+			resultCh <- shardExecResult{shardID: shardID, result: result, err: err}
+		}(id)
+	}
+
+	results := make([]string, 0, len(shardIDs))
+	for pending := 0; pending < len(shardIDs); pending++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case shardResult := <-resultCh:
+			if shardResult.err != nil {
+				return nil, fmt.Errorf("shard %d: %w", shardResult.shardID, shardResult.err)
+			}
+			results = append(results, shardResult.result)
 		}
 	}
 

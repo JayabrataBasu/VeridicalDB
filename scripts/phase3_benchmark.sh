@@ -13,6 +13,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BINARY="$PROJECT_DIR/build/veridicaldb"
 TIMESTAMP="$(date -u +"%Y%m%dT%H%M%SZ")"
 OUTDIR="$PROJECT_DIR/.benchmarks/phase3/$TIMESTAMP"
+QUICK_MODE=0
 RUNS=5
 ROWS=2000
 LOOKUPS=1000
@@ -26,6 +27,7 @@ usage() {
 Usage: $0 [options]
 
 Options:
+    --quick           Use the standard quick local profile
   --runs N          Number of runs per workload (default: 5)
   --rows N          Number of seed rows (default: 2000)
   --lookups N       Point lookup statements per run (default: 1000)
@@ -40,6 +42,16 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --quick)
+            QUICK_MODE=1
+            RUNS=3
+            ROWS=800
+            LOOKUPS=300
+            RANGES=120
+            MIXED_OPS=360
+            PARSE_OPS=360
+            shift
+            ;;
         --runs)
             RUNS="$2"
             shift 2

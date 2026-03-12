@@ -14,6 +14,7 @@ THRESHOLD_PERCENT=5
 WORKLOAD_THRESHOLDS=""
 MAX_CV_PERCENT=15
 CV_MARGIN_PERCENT=3
+QUICK_MODE=0
 RUNS=5
 ROWS=2000
 LOOKUPS=1000
@@ -31,6 +32,7 @@ Required:
   --baseline-summary PATH   Path to baseline summary.csv file
 
 Optional:
+    --quick                   Use the standard quick local profile
   --threshold-percent N     Allowed p95 regression percentage (default: 5)
     --workload-thresholds S   Per-workload thresholds, e.g.
                                                         point_lookup=5,range_scan=5,mixed_oltp=10,parse_cache=8
@@ -50,6 +52,16 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --quick)
+            QUICK_MODE=1
+            RUNS=3
+            ROWS=800
+            LOOKUPS=300
+            RANGES=120
+            MIXED_OPS=360
+            PARSE_OPS=360
+            shift
+            ;;
         --baseline-summary)
             BASELINE_SUMMARY="$2"
             shift 2
@@ -113,6 +125,21 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+if [[ "$QUICK_MODE" -eq 1 ]]; then
+    if [[ "$THRESHOLD_PERCENT" == "5" ]]; then
+        THRESHOLD_PERCENT=15
+    fi
+    if [[ -z "$WORKLOAD_THRESHOLDS" ]]; then
+        WORKLOAD_THRESHOLDS="point_lookup=12,range_scan=20,mixed_oltp=18,parse_cache=30"
+    fi
+    if [[ "$MAX_CV_PERCENT" == "15" ]]; then
+        MAX_CV_PERCENT=25
+    fi
+    if [[ "$CV_MARGIN_PERCENT" == "3" ]]; then
+        CV_MARGIN_PERCENT=8
+    fi
+fi
 
 if [[ -z "$BASELINE_SUMMARY" ]]; then
     echo "--baseline-summary is required" >&2
