@@ -4,6 +4,7 @@ package observability
 import (
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,13 @@ type SystemCatalog struct {
 
 	// Statistics
 	stats *Statistics
+
+	// Optional metrics providers
+	shardMetricsProvider metricsProvider
+}
+
+type metricsProvider interface {
+	PrometheusMetrics() string
 }
 
 // Statistics tracks database performance metrics.
@@ -337,17 +345,31 @@ func (sc *SystemCatalog) Stats() *Statistics {
 	return sc.stats
 }
 
+// SetShardMetricsProvider attaches an optional shard metrics provider.
+func (sc *SystemCatalog) SetShardMetricsProvider(provider metricsProvider) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.shardMetricsProvider = provider
+}
+
 // PrometheusMetrics returns metrics in Prometheus format.
 func (sc *SystemCatalog) PrometheusMetrics() string {
 	stats := sc.stats.Snapshot()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	tableCount := 0
+	var shardMetrics string
+
+	sc.mu.RLock()
 	if sc.cat != nil {
 		tableCount = len(sc.cat.ListTables())
 	}
+	if sc.shardMetricsProvider != nil {
+		shardMetrics = strings.TrimSpace(sc.shardMetricsProvider.PrometheusMetrics())
+	}
+	sc.mu.RUnlock()
 
-	return fmt.Sprintf(`# HELP veridicaldb_queries_total Total number of queries executed
+	metrics := fmt.Sprintf(`# HELP veridicaldb_queries_total Total number of queries executed
 # TYPE veridicaldb_queries_total counter
 veridicaldb_queries_total{status="success"} %d
 veridicaldb_queries_total{status="failed"} %d
@@ -404,4 +426,10 @@ veridicaldb_uptime_seconds %d
 		runtime.NumGoroutine(),
 		int64(time.Since(stats.StartTime).Seconds()),
 	)
+
+	if shardMetrics == "" {
+		return metrics
+	}
+
+	return metrics + "\n" + shardMetrics + "\n"
 }

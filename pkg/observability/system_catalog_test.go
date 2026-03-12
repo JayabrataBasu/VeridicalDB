@@ -11,6 +11,14 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
+type stubMetricsProvider struct {
+	output string
+}
+
+func (s stubMetricsProvider) PrometheusMetrics() string {
+	return s.output
+}
+
 func TestNewSystemCatalog(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "observability_test_*")
 	if err != nil {
@@ -383,6 +391,16 @@ func TestPrometheusMetrics(t *testing.T) {
 	}
 }
 
+func TestPrometheusMetricsIncludesShardProvider(t *testing.T) {
+	sc := NewSystemCatalog(nil, nil, nil)
+	sc.SetShardMetricsProvider(stubMetricsProvider{output: "veridicaldb_shard_queries_total 5"})
+
+	metrics := sc.PrometheusMetrics()
+	if !strings.Contains(metrics, "veridicaldb_shard_queries_total 5") {
+		t.Fatalf("expected shard metrics in Prometheus output, got %q", metrics)
+	}
+}
+
 func TestRatioHelpers(t *testing.T) {
 	stats := &Statistics{}
 
@@ -429,5 +447,19 @@ func TestNilComponents(t *testing.T) {
 	}
 	if rows := sc.GetColumns("test"); rows != nil {
 		t.Error("GetColumns should return nil with nil catalog")
+	}
+}
+
+func TestSetShardMetricsProvider(t *testing.T) {
+	sc := NewSystemCatalog(nil, nil, nil)
+	provider := stubMetricsProvider{output: "veridicaldb_shard_timeout_errors_total 2"}
+
+	sc.SetShardMetricsProvider(provider)
+
+	if sc.shardMetricsProvider == nil {
+		t.Fatal("expected shard metrics provider to be set")
+	}
+	if got := sc.shardMetricsProvider.PrometheusMetrics(); got != provider.output {
+		t.Fatalf("unexpected shard metrics output: got %q want %q", got, provider.output)
 	}
 }

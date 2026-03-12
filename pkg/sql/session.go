@@ -15,16 +15,17 @@ import (
 // Session represents a database session with transaction state.
 // Each REPL connection has its own session.
 type Session struct {
-	mtm        *catalog.MVCCTableManager
-	executor   *MVCCExecutor
-	txnMgr     *txn.Manager
-	lockMgr    *lock.Manager             // Optional, can be nil for single-threaded mode
-	idxMgr     *btree.IndexManager       // Optional, can be nil if indexes not used
-	queryCache *QueryCache               // Parsed SQL cache for repeated statements
-	userCat    *auth.UserCatalog         // Optional, can be nil if auth disabled
-	dbMgr      *catalog.DatabaseManager  // Optional, for multi-database support
-	triggerCat *catalog.TriggerCatalog   // Optional, for trigger support
-	procCat    *catalog.ProcedureCatalog // Optional, for stored procedures/functions
+	mtm                  *catalog.MVCCTableManager
+	executor             *MVCCExecutor
+	txnMgr               *txn.Manager
+	lockMgr              *lock.Manager             // Optional, can be nil for single-threaded mode
+	idxMgr               *btree.IndexManager       // Optional, can be nil if indexes not used
+	shardMetricsProvider metricsProvider           // Optional, for distributed shard observability
+	queryCache           *QueryCache               // Parsed SQL cache for repeated statements
+	userCat              *auth.UserCatalog         // Optional, can be nil if auth disabled
+	dbMgr                *catalog.DatabaseManager  // Optional, for multi-database support
+	triggerCat           *catalog.TriggerCatalog   // Optional, for trigger support
+	procCat              *catalog.ProcedureCatalog // Optional, for stored procedures/functions
 
 	// currentTx is the current transaction, or nil if in autocommit mode.
 	currentTx *txn.Transaction
@@ -40,6 +41,10 @@ type Session struct {
 
 	// currentDatabase is the current database namespace for this session
 	currentDatabase string
+}
+
+type metricsProvider interface {
+	PrometheusMetrics() string
 }
 
 // NewSession creates a new database session.
@@ -80,6 +85,16 @@ func (s *Session) SetIndexManager(idxMgr *btree.IndexManager) {
 	s.idxMgr = idxMgr
 	// Also set on executor for DML index maintenance
 	s.executor.SetIndexManager(idxMgr)
+}
+
+// SetShardMetricsProvider attaches an optional shard metrics provider.
+func (s *Session) SetShardMetricsProvider(provider metricsProvider) {
+	s.shardMetricsProvider = provider
+}
+
+// ShardMetricsProvider returns the configured shard metrics provider, if any.
+func (s *Session) ShardMetricsProvider() metricsProvider {
+	return s.shardMetricsProvider
 }
 
 // SetUserCatalog sets the user catalog for authentication.

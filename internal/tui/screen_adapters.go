@@ -13,12 +13,24 @@ type DatabaseBrowserAdapter struct {
 	app     *Model
 }
 
+func buildSystemCatalog(app *Model) *observability.SystemCatalog {
+	if app == nil || app.GetSession() == nil {
+		return nil
+	}
+
+	session := app.GetSession()
+	sc := observability.NewSystemCatalog(nil, nil, session.Catalog())
+	if provider := session.ShardMetricsProvider(); provider != nil {
+		sc.SetShardMetricsProvider(provider)
+	}
+	return sc
+}
+
 // NewDatabaseBrowserAdapter creates a new adapter for DatabaseBrowser
 func NewDatabaseBrowserAdapter(app *Model, width, height int) *DatabaseBrowserAdapter {
 	browser := screens.NewDatabaseBrowser(width, height, app.GetThemeManager())
 
-	if app != nil && app.GetSession() != nil {
-		sc := observability.NewSystemCatalog(nil, nil, app.GetSession().Catalog())
+	if sc := buildSystemCatalog(app); sc != nil {
 		browser.SetSystemCatalog(sc)
 	}
 
@@ -67,8 +79,7 @@ type DashboardAdapter struct {
 func NewDashboardAdapter(app *Model) *DashboardAdapter {
 	dashboard := screens.NewDashboard()
 
-	if app != nil && app.GetSession() != nil {
-		sc := observability.NewSystemCatalog(nil, nil, app.GetSession().Catalog())
+	if sc := buildSystemCatalog(app); sc != nil {
 		dashboard.SetSystemCatalog(sc)
 
 		// Pass DatabaseManager if available for instance-level metrics

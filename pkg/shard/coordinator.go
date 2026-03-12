@@ -78,6 +78,7 @@ func (c *ShardClient) Close() error {
 type Coordinator struct {
 	config  *ShardConfig
 	clients map[ShardID]*ShardClient
+	metrics *CoordinatorMetrics
 	mu      sync.RWMutex
 
 	// activeTxns tracks which shard each transaction is bound to
@@ -90,6 +91,7 @@ func NewCoordinator(config *ShardConfig) *Coordinator {
 	return &Coordinator{
 		config:     config,
 		clients:    make(map[ShardID]*ShardClient),
+		metrics:    &CoordinatorMetrics{},
 		activeTxns: make(map[string]ShardID),
 	}
 }
@@ -165,7 +167,7 @@ func parseStatement(query string) (sql.Statement, error) {
 	return stmt, nil
 }
 
-	// routeParsedStatement determines which shard(s) a parsed statement should go to.
+// routeParsedStatement determines which shard(s) a parsed statement should go to.
 func (c *Coordinator) routeParsedStatement(stmt sql.Statement, sessionID string) RouteResult {
 	// Bound transactions should continue to route to the same shard, but COMMIT/
 	// ROLLBACK must pass through routeStatement so the binding can be cleared.
@@ -397,26 +399,38 @@ func (c *Coordinator) UnbindTransaction(sessionID string) {
 func (c *Coordinator) Execute(ctx context.Context, query string, sessionID string) ([]string, error) {
 	stmt, err := parseStatement(query)
 	if err != nil {
+		c.observeExecutionError(err)
 		return nil, err
 	}
 
 	route := c.routeParsedStatement(stmt, sessionID)
 
 	if route.Error != nil {
+		c.observeExecutionError(route.Error)
 		return nil, route.Error
 	}
 
+	c.metrics.QueriesTotal.Add(1)
+
 	if route.TargetShard != nil {
+		c.metrics.SingleShardQueriesTotal.Add(1)
 		result, err := c.executeOnShard(ctx, *route.TargetShard, query, stmt)
 		if err != nil {
+			c.observeExecutionError(err)
 			return nil, err
 		}
 		return []string{result}, nil
 	}
 
 	if route.ScatterGather {
+		c.metrics.ScatterGatherQueriesTotal.Add(1)
 		// Scatter to all shards and gather results
-		return c.scatterGather(ctx, query, stmt)
+		results, err := c.scatterGather(ctx, query, stmt)
+		if err != nil {
+			c.observeExecutionError(err)
+			return nil, err
+		}
+		return results, nil
 	}
 
 	return nil, fmt.Errorf("unable to route query")
@@ -429,10 +443,13 @@ func (c *Coordinator) executeOnShard(ctx context.Context, shardID ShardID, query
 
 	client, ok := c.getClient(shardID)
 	if !ok {
+		c.metrics.ReconnectAttemptsTotal.Add(1)
 		refreshedClient, err := c.reconnectClient(shardID)
 		if err != nil {
+			c.metrics.ReconnectFailuresTotal.Add(1)
 			return "", fmt.Errorf("reconnect shard %d: %w", shardID, err)
 		}
+		c.metrics.ReconnectSuccessesTotal.Add(1)
 		return refreshedClient.Execute(query)
 	}
 
@@ -443,15 +460,30 @@ func (c *Coordinator) executeOnShard(ctx context.Context, shardID ShardID, query
 	if !isReconnectEligibleError(err) {
 		return "", err
 	}
+	if isLocallyClosedClientError(err) {
+		c.invalidateClient(shardID, client)
+		c.metrics.ReconnectAttemptsTotal.Add(1)
+		refreshedClient, reconnectErr := c.reconnectClient(shardID)
+		if reconnectErr != nil {
+			c.metrics.ReconnectFailuresTotal.Add(1)
+			return "", fmt.Errorf("reconnect shard %d: %w", shardID, reconnectErr)
+		}
+		c.metrics.ReconnectSuccessesTotal.Add(1)
+		return refreshedClient.Execute(query)
+	}
 	c.invalidateClient(shardID, client)
 	if !isRetryableReadStatement(stmt) {
 		return "", err
 	}
 
+	c.metrics.ReadRetriesTotal.Add(1)
+	c.metrics.ReconnectAttemptsTotal.Add(1)
 	refreshedClient, reconnectErr := c.reconnectClient(shardID)
 	if reconnectErr != nil {
+		c.metrics.ReconnectFailuresTotal.Add(1)
 		return "", fmt.Errorf("reconnect shard %d: %w", shardID, reconnectErr)
 	}
+	c.metrics.ReconnectSuccessesTotal.Add(1)
 
 	return refreshedClient.Execute(query)
 }
@@ -512,12 +544,44 @@ func isReconnectEligibleError(err error) bool {
 		errors.Is(err, syscall.ECONNRESET)
 }
 
+func isLocallyClosedClientError(err error) bool {
+	return err != nil && err.Error() == "connection closed"
+}
+
 func isRetryableReadStatement(stmt sql.Statement) bool {
 	switch stmt.(type) {
 	case *sql.SelectStmt, *sql.ShowStmt, *sql.ExplainStmt:
 		return true
 	default:
 		return false
+	}
+}
+
+// MetricsSnapshot returns a point-in-time copy of coordinator metrics.
+func (c *Coordinator) MetricsSnapshot() CoordinatorMetricsSnapshot {
+	if c.metrics == nil {
+		return CoordinatorMetricsSnapshot{}
+	}
+	return c.metrics.snapshot()
+}
+
+// PrometheusMetrics returns coordinator metrics in Prometheus exposition format.
+func (c *Coordinator) PrometheusMetrics() string {
+	if c.metrics == nil {
+		return ""
+	}
+	return c.metrics.PrometheusMetrics()
+}
+
+func (c *Coordinator) observeExecutionError(err error) {
+	if err == nil || c.metrics == nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		c.metrics.TimeoutErrorsTotal.Add(1)
+	}
+	if strings.Contains(err.Error(), "shard ") {
+		c.metrics.ShardErrorsTotal.Add(1)
 	}
 }
 

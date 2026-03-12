@@ -12,9 +12,9 @@ import (
 )
 
 type testShardServer struct {
-	listener net.Listener
-	shardID  int
-	delay    time.Duration
+	listener           net.Listener
+	shardID            int
+	delay              time.Duration
 	closeAfterResponse bool
 
 	mu      sync.Mutex
@@ -61,7 +61,11 @@ func startTestShardServerWithOptions(t *testing.T, shardID int, delay time.Durat
 			srv.wg.Add(1)
 			go func(c net.Conn) {
 				defer srv.wg.Done()
-				defer c.Close()
+				defer func() {
+					if err := c.Close(); err != nil {
+						t.Errorf("close test shard connection: %v", err)
+					}
+				}()
 
 				reader := bufio.NewReader(c)
 				for {
@@ -379,6 +383,55 @@ func TestCoordinatorExecuteSingleShardWriteDoesNotRetryStaleConnectionSmoke(t *t
 	}
 	if got := len(targetServer.recordedQueries()); got != 1 {
 		t.Fatalf("expected write query to be recorded once without retry, got %d", got)
+	}
+}
+
+func TestCoordinatorMetricsTrackReconnectsAndTimeouts(t *testing.T) {
+	shard0 := startTestShardServerClosingAfterResponse(t, 0)
+	shard1 := startTestShardServerWithDelay(t, 1, 200*time.Millisecond)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	if _, err := coord.Execute(context.Background(), "SELECT * FROM users;", "metrics-first"); err != nil {
+		t.Fatalf("first read failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _ = coord.Execute(ctx, "SELECT * FROM users;", "metrics-timeout")
+
+	snapshot := coord.MetricsSnapshot()
+	if snapshot.QueriesTotal != 2 {
+		t.Fatalf("expected 2 total queries, got %d", snapshot.QueriesTotal)
+	}
+	if snapshot.ScatterGatherQueriesTotal != 2 {
+		t.Fatalf("expected 2 scatter-gather queries, got %d", snapshot.ScatterGatherQueriesTotal)
+	}
+	if snapshot.ReadRetriesTotal == 0 {
+		t.Fatal("expected read retry metrics to increment")
+	}
+	if snapshot.ReconnectAttemptsTotal == 0 || snapshot.ReconnectSuccessesTotal == 0 {
+		t.Fatalf("expected reconnect metrics to increment, got attempts=%d successes=%d", snapshot.ReconnectAttemptsTotal, snapshot.ReconnectSuccessesTotal)
+	}
+	if snapshot.TimeoutErrorsTotal == 0 {
+		t.Fatal("expected timeout error metrics to increment")
+	}
+	if !strings.Contains(coord.PrometheusMetrics(), "veridicaldb_shard_read_retries_total") {
+		t.Fatal("expected shard Prometheus metrics output")
 	}
 }
 
