@@ -307,3 +307,12 @@ func (s *Storage) ReplayUpdate(rid RID, data []byte) error {
 
 	return pager.WritePage(rid.Page, pageBuf)
 }
+
+// BufferPoolStats returns current buffer pool statistics for query optimization.
+// This allows the planner to use actual hit/miss ratios instead of estimates.
+func (s *Storage) BufferPoolStats() BufferPoolStats {
+	if s.bufferPool == nil {
+		return BufferPoolStats{}
+	}
+	return s.bufferPool.Stats()
+}

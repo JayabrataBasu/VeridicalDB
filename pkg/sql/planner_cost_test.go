@@ -978,3 +978,303 @@ func TestPlanner_IndexedRangeSelectivityCap_BoundedRange(t *testing.T) {
 		t.Fatalf("expected capped selectivity <= 0.20 for bounded range, got %f", plan.Selectivity)
 	}
 }
+
+// TestPlanner_DynamicBufferHitRatio tests that setting buffer hit ratio affects cost estimation.
+func TestPlanner_DynamicBufferHitRatio(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() { _ = idxMgr.Close() }()
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "data", Type: catalog.TypeText},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "test", Schema: schema}
+
+	tableStats := &stats.TableStats{
+		TableName: "test",
+		RowCount:  10000,
+		PageCount: 1000,
+		Columns: map[string]*stats.ColumnStats{
+			"id": {ColumnName: "id", DataType: catalog.TypeInt32, DistinctCount: 10000},
+		},
+	}
+
+	stmt := &SelectStmt{
+		TableName: "test",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op:    TOKEN_EQ,
+			Left:  &ColumnRef{Name: "id"},
+			Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+		},
+	}
+
+	// Test with high buffer hit ratio (90%)
+	plannerHigh := NewPlanner(idxMgr)
+	_ = plannerHigh.statsMgr.SetTableStats(tableStats)
+	plannerHigh.SetBufferHitRatio(0.9)
+	planHigh := plannerHigh.Plan(stmt, tableMeta)
+
+	// Test with low buffer hit ratio (10%)
+	plannerLow := NewPlanner(idxMgr)
+	_ = plannerLow.statsMgr.SetTableStats(tableStats)
+	plannerLow.SetBufferHitRatio(0.1)
+	planLow := plannerLow.Plan(stmt, tableMeta)
+
+	// Low hit ratio should result in higher cost (more disk I/O)
+	if planLow.Cost <= planHigh.Cost {
+		t.Errorf("Expected lower buffer hit ratio to increase cost: high=%f, low=%f",
+			planHigh.Cost, planLow.Cost)
+	}
+
+	t.Logf("High hit ratio cost: %f, Low hit ratio cost: %f", planHigh.Cost, planLow.Cost)
+}
+
+// TestPlanner_BufferHitRatioBounds tests that SetBufferHitRatio clamps values correctly.
+func TestPlanner_BufferHitRatioBounds(t *testing.T) {
+	planner := NewPlanner(nil)
+
+	tests := []struct {
+		input    float64
+		expected float64
+	}{
+		{0.5, 0.5},
+		{0.0, 0.0},
+		{1.0, 1.0},
+		{-0.5, 0.0},  // Should clamp to 0
+		{1.5, 1.0},   // Should clamp to 1
+		{-100.0, 0.0}, // Should clamp to 0
+		{100.0, 1.0},  // Should clamp to 1
+	}
+
+	for _, tt := range tests {
+		planner.SetBufferHitRatio(tt.input)
+		got := planner.BufferHitRatioValue()
+		if got != tt.expected {
+			t.Errorf("SetBufferHitRatio(%f): expected %f, got %f", tt.input, tt.expected, got)
+		}
+	}
+}
+
+// TestPlanner_DefaultBufferHitRatio tests the default buffer hit ratio value.
+func TestPlanner_DefaultBufferHitRatio(t *testing.T) {
+	planner := NewPlanner(nil)
+
+	// Default should match the constant
+	if planner.BufferHitRatioValue() != BufferHitRatio {
+		t.Errorf("Expected default buffer hit ratio %f, got %f",
+			BufferHitRatio, planner.BufferHitRatioValue())
+	}
+}
+
+// TestPlanner_StatsManagerIntegration tests that stats manager affects plan selection.
+func TestPlanner_StatsManagerIntegration(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() { _ = idxMgr.Close() }()
+
+	// Create an index
+	if err := idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_orders_customer_id",
+		TableName: "orders",
+		Columns:   []string{"customer_id"},
+		Unique:    false,
+	}); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+			{Name: "customer_id", Type: catalog.TypeInt32},
+			{Name: "amount", Type: catalog.TypeFloat64},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "orders", Schema: schema}
+
+	stmt := &SelectStmt{
+		TableName: "orders",
+		Columns:   []SelectColumn{{Star: true}},
+		Where: &BinaryExpr{
+			Op:    TOKEN_EQ,
+			Left:  &ColumnRef{Name: "customer_id"},
+			Right: &LiteralExpr{Value: catalog.NewInt32(123)},
+		},
+	}
+
+	// Test without stats: should still produce a plan
+	plannerNoStats := NewPlanner(idxMgr)
+	plannerNoStats.SetStatsManager(nil)
+	planNoStats := plannerNoStats.Plan(stmt, tableMeta)
+	if planNoStats == nil {
+		t.Fatal("Expected plan without stats")
+	}
+
+	// Test with stats: should produce plan with cost estimates
+	plannerWithStats := NewPlanner(idxMgr)
+	tableStats := &stats.TableStats{
+		TableName: "orders",
+		RowCount:  100000,
+		PageCount: 10000,
+		Columns: map[string]*stats.ColumnStats{
+			"customer_id": {
+				ColumnName:    "customer_id",
+				DataType:      catalog.TypeInt32,
+				DistinctCount: 10000, // Many distinct customers
+				NullCount:     0,
+			},
+		},
+	}
+	if err := plannerWithStats.statsMgr.SetTableStats(tableStats); err != nil {
+		t.Fatalf("failed to set table stats: %v", err)
+	}
+
+	planWithStats := plannerWithStats.Plan(stmt, tableMeta)
+	if planWithStats == nil {
+		t.Fatal("Expected plan with stats")
+	}
+
+	// Plan with stats should have estimated rows
+	if planWithStats.EstimatedRows <= 0 {
+		t.Errorf("Expected positive estimated rows with stats, got %d", planWithStats.EstimatedRows)
+	}
+
+	// Plan with stats should have selectivity
+	if planWithStats.Selectivity <= 0 || planWithStats.Selectivity > 1 {
+		t.Errorf("Expected valid selectivity with stats, got %f", planWithStats.Selectivity)
+	}
+
+	t.Logf("Plan without stats: %s", planNoStats.Explain())
+	t.Logf("Plan with stats: %s (estimated rows: %d, selectivity: %f)",
+		planWithStats.Explain(), planWithStats.EstimatedRows, planWithStats.Selectivity)
+}
+
+// TestPlanner_ExplainIncludesBufferHitRatio tests EXPLAIN includes buffer pool context.
+func TestPlanner_CostSensitivityToCachePerformance(t *testing.T) {
+	// Test that poor cache performance leads to significantly higher costs
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "large_table", Schema: schema}
+
+	tableStats := &stats.TableStats{
+		TableName: "large_table",
+		RowCount:  1000000,  // 1M rows
+		PageCount: 100000,   // 100K pages (~400MB)
+		Columns: map[string]*stats.ColumnStats{
+			"id": {ColumnName: "id", DataType: catalog.TypeInt32, DistinctCount: 1000000},
+		},
+	}
+
+	stmt := &SelectStmt{
+		TableName: "large_table",
+		Columns:   []SelectColumn{{Star: true}},
+		Where:     nil, // Full scan
+	}
+
+	plannerCold := NewPlanner(nil)
+	_ = plannerCold.statsMgr.SetTableStats(tableStats)
+	plannerCold.SetBufferHitRatio(0.1) // Cold cache
+
+	plannerWarm := NewPlanner(nil)
+	_ = plannerWarm.statsMgr.SetTableStats(tableStats)
+	plannerWarm.SetBufferHitRatio(0.95) // Warm cache
+
+	planCold := plannerCold.Plan(stmt, tableMeta)
+	planWarm := plannerWarm.Plan(stmt, tableMeta)
+
+	// Cold cache cost should be much higher
+	costRatio := planCold.Cost / planWarm.Cost
+	if costRatio < 2.0 {
+		t.Errorf("Expected cold cache to cost at least 2x warm cache, got ratio %f", costRatio)
+	}
+
+	t.Logf("Cold cache cost: %f, Warm cache cost: %f, Ratio: %fx",
+		planCold.Cost, planWarm.Cost, costRatio)
+}
+
+// TestPlanner_IndexVsTableScanThreshold tests the threshold where index beats table scan.
+func TestPlanner_IndexVsTableScanThreshold(t *testing.T) {
+	idxMgr, err := btree.NewIndexManager(t.TempDir(), 4096)
+	if err != nil {
+		t.Fatalf("failed to create index manager: %v", err)
+	}
+	defer func() { _ = idxMgr.Close() }()
+
+	if err := idxMgr.CreateIndex(btree.IndexMeta{
+		Name:      "idx_test_key",
+		TableName: "test",
+		Columns:   []string{"key"},
+	}); err != nil {
+		t.Fatalf("failed to create index: %v", err)
+	}
+
+	schema := &catalog.Schema{
+		Columns: []catalog.Column{
+			{Name: "key", Type: catalog.TypeInt32},
+			{Name: "value", Type: catalog.TypeText},
+		},
+	}
+	tableMeta := &catalog.TableMeta{Name: "test", Schema: schema}
+
+	// Test different selectivity levels
+	tests := []struct {
+		name          string
+		distinctCount int64
+		rowCount      int64
+		expectIndex   bool
+	}{
+		{"unique_key", 10000, 10000, true},       // 0.01% selectivity - index wins
+		{"high_cardinality", 1000, 10000, true},  // 0.1% selectivity - index wins
+		{"medium_cardinality", 100, 10000, true}, // 1% selectivity - usually index
+		{"low_cardinality", 5, 10000, false},     // 20% selectivity - table scan may win
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			planner := NewPlanner(idxMgr)
+			tableStats := &stats.TableStats{
+				TableName: "test",
+				RowCount:  tt.rowCount,
+				PageCount: int32(tt.rowCount / 10), // Assume 10 rows per page
+				Columns: map[string]*stats.ColumnStats{
+					"key": {
+						ColumnName:    "key",
+						DataType:      catalog.TypeInt32,
+						DistinctCount: tt.distinctCount,
+					},
+				},
+			}
+			_ = planner.statsMgr.SetTableStats(tableStats)
+
+			stmt := &SelectStmt{
+				TableName: "test",
+				Columns:   []SelectColumn{{Star: true}},
+				Where: &BinaryExpr{
+					Op:    TOKEN_EQ,
+					Left:  &ColumnRef{Name: "key"},
+					Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+				},
+			}
+
+			plan := planner.Plan(stmt, tableMeta)
+
+			if tt.expectIndex && plan.Type != PlanIndexScan {
+				t.Errorf("Expected IndexScan for %s, got %v", tt.name, plan.Type)
+			}
+			// For low cardinality, we don't assert - the cost model may choose either
+
+			t.Logf("%s: plan=%v, cost=%f, selectivity=%f",
+				tt.name, plan.Type, plan.Cost, plan.Selectivity)
+		})
+	}
+}

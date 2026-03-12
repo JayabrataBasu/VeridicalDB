@@ -22,17 +22,19 @@ import (
 // - Cost-based selection between multiple candidate indexes
 // - Join ordering
 type Planner struct {
-	idxMgr   *btree.IndexManager
-	statsMgr *stats.StatsManager
-	useStats bool // Enable/disable cost-based optimization
+	idxMgr         *btree.IndexManager
+	statsMgr       *stats.StatsManager
+	useStats       bool    // Enable/disable cost-based optimization
+	bufferHitRatio float64 // Dynamic buffer pool hit ratio (0.0-1.0)
 }
 
 // NewPlanner creates a new query planner.
 func NewPlanner(idxMgr *btree.IndexManager) *Planner {
 	return &Planner{
-		idxMgr:   idxMgr,
-		statsMgr: stats.NewStatsManager(),
-		useStats: true, // Enable cost-based optimization by default
+		idxMgr:         idxMgr,
+		statsMgr:       stats.NewStatsManager(),
+		useStats:       true, // Enable cost-based optimization by default
+		bufferHitRatio: BufferHitRatio,
 	}
 }
 
@@ -40,6 +42,23 @@ func NewPlanner(idxMgr *btree.IndexManager) *Planner {
 func (p *Planner) SetStatsManager(mgr *stats.StatsManager) {
 	p.statsMgr = mgr
 	p.useStats = mgr != nil
+}
+
+// SetBufferHitRatio sets the buffer pool hit ratio for cost estimation.
+// This allows dynamic adjustment based on actual buffer pool statistics.
+// ratio should be between 0.0 and 1.0 (e.g., 0.9 = 90% hit rate).
+func (p *Planner) SetBufferHitRatio(ratio float64) {
+	if ratio < 0.0 {
+		ratio = 0.0
+	} else if ratio > 1.0 {
+		ratio = 1.0
+	}
+	p.bufferHitRatio = ratio
+}
+
+// BufferHitRatioValue returns the current buffer hit ratio used for cost estimation.
+func (p *Planner) BufferHitRatioValue() float64 {
+	return p.bufferHitRatio
 }
 
 // PlanType indicates the type of execution plan.
@@ -209,8 +228,8 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 		// Cost = (pages_to_read * page_cost * cache_miss_factor) + (rows * row_processing_cost)
 		pageReadCost := float64(tableStats.PageCount) * TableScanCostPerPage
 
-		// Apply cache factor
-		cacheAdjustedCost := pageReadCost * (BufferHitRatio + (1.0-BufferHitRatio)*DiskPageCostMultiplier)
+		// Apply cache factor using dynamic buffer hit ratio
+		cacheAdjustedCost := pageReadCost * (p.bufferHitRatio + (1.0-p.bufferHitRatio)*DiskPageCostMultiplier)
 
 		// Add row processing cost
 		rowProcessCost := float64(tableStats.RowCount) * RowProcessingCost
@@ -231,7 +250,7 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 		}
 
 		indexScanCost := float64(estimatedPages) * IndexScanCostPerPage
-		cacheAdjustedScanCost := indexScanCost * (BufferHitRatio + (1.0-BufferHitRatio)*DiskPageCostMultiplier)
+		cacheAdjustedScanCost := indexScanCost * (p.bufferHitRatio + (1.0-p.bufferHitRatio)*DiskPageCostMultiplier)
 
 		rowProcessCost := float64(plan.EstimatedRows) * RowProcessingCost
 		conditionCost := float64(plan.EstimatedRows) * ConditionEvalCost

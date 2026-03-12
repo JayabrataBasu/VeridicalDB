@@ -9,6 +9,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -21,6 +22,7 @@ type Session struct {
 	lockMgr              *lock.Manager             // Optional, can be nil for single-threaded mode
 	idxMgr               *btree.IndexManager       // Optional, can be nil if indexes not used
 	shardMetricsProvider metricsProvider           // Optional, for distributed shard observability
+	statsMan             *stats.StatsManager       // Optional, table/column statistics for optimization
 	queryCache           *QueryCache               // Parsed SQL cache for repeated statements
 	userCat              *auth.UserCatalog         // Optional, can be nil if auth disabled
 	dbMgr                *catalog.DatabaseManager  // Optional, for multi-database support
@@ -95,6 +97,20 @@ func (s *Session) SetShardMetricsProvider(provider metricsProvider) {
 // ShardMetricsProvider returns the configured shard metrics provider, if any.
 func (s *Session) ShardMetricsProvider() metricsProvider {
 	return s.shardMetricsProvider
+}
+
+// SetStatsManager sets the statistics manager for cost-based query optimization.
+// It propagates to the underlying executor for EXPLAIN and query planning.
+func (s *Session) SetStatsManager(mgr *stats.StatsManager) {
+	s.statsMan = mgr
+	if s.executor != nil {
+		s.executor.SetStatsManager(mgr)
+	}
+}
+
+// StatsManager returns the configured statistics manager, if any.
+func (s *Session) StatsManager() *stats.StatsManager {
+	return s.statsMan
 }
 
 // SetUserCatalog sets the user catalog for authentication.

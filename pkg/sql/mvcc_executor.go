@@ -12,6 +12,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -122,6 +123,7 @@ type MVCCExecutor struct {
 	procCat    *catalog.ProcedureCatalog
 	session    *Session
 	ftsMgr     *fts.Manager
+	statsMan   *stats.StatsManager // Table/column statistics for cost-based optimization
 	// Views defined in this executor (CREATE VIEW)
 	views   map[string]*ViewDef
 	viewsMu sync.RWMutex
@@ -162,6 +164,34 @@ func (e *MVCCExecutor) SetProcedureCatalog(cat *catalog.ProcedureCatalog) {
 // SetSession sets the session for PL/pgSQL execution within triggers.
 func (e *MVCCExecutor) SetSession(s *Session) {
 	e.session = s
+}
+
+// SetStatsManager sets the statistics manager for cost-based query optimization.
+func (e *MVCCExecutor) SetStatsManager(mgr *stats.StatsManager) {
+	e.statsMan = mgr
+}
+
+// StatsManager returns the configured statistics manager, if any.
+func (e *MVCCExecutor) StatsManager() *stats.StatsManager {
+	return e.statsMan
+}
+
+// getStorageBufferStats returns buffer pool statistics for dynamic cost estimation.
+// Returns nil if the underlying storage is not accessible.
+func (e *MVCCExecutor) getStorageBufferStats() *storage.BufferPoolStats {
+	if e.mtm == nil {
+		return nil
+	}
+	tm := e.mtm.TableManager()
+	if tm == nil {
+		return nil
+	}
+	store := tm.Storage()
+	if store == nil {
+		return nil
+	}
+	stats := store.BufferPoolStats()
+	return &stats
 }
 
 // Execute executes a SQL statement within a transaction context.
@@ -3142,8 +3172,17 @@ func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*
 		return nil, err
 	}
 
-	// Create a planner and generate the plan
+	// Create a planner with statistics manager if available
 	planner := NewPlanner(e.indexMgr)
+	if e.statsMan != nil {
+		planner.SetStatsManager(e.statsMan)
+	}
+
+	// Set dynamic buffer hit ratio from storage if available
+	if storeStats := e.getStorageBufferStats(); storeStats != nil {
+		planner.SetBufferHitRatio(storeStats.HitRate / 100.0) // Convert percentage to ratio
+	}
+
 	plan := planner.Plan(selectStmt, meta)
 
 	// Build the explanation
