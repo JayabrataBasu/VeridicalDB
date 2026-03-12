@@ -1046,8 +1046,8 @@ func TestPlanner_BufferHitRatioBounds(t *testing.T) {
 		{0.5, 0.5},
 		{0.0, 0.0},
 		{1.0, 1.0},
-		{-0.5, 0.0},  // Should clamp to 0
-		{1.5, 1.0},   // Should clamp to 1
+		{-0.5, 0.0},   // Should clamp to 0
+		{1.5, 1.0},    // Should clamp to 1
 		{-100.0, 0.0}, // Should clamp to 0
 		{100.0, 1.0},  // Should clamp to 1
 	}
@@ -1168,8 +1168,8 @@ func TestPlanner_CostSensitivityToCachePerformance(t *testing.T) {
 
 	tableStats := &stats.TableStats{
 		TableName: "large_table",
-		RowCount:  1000000,  // 1M rows
-		PageCount: 100000,   // 100K pages (~400MB)
+		RowCount:  1000000, // 1M rows
+		PageCount: 100000,  // 100K pages (~400MB)
 		Columns: map[string]*stats.ColumnStats{
 			"id": {ColumnName: "id", DataType: catalog.TypeInt32, DistinctCount: 1000000},
 		},
