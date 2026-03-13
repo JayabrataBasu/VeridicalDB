@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,11 @@ func startTestShardServer(t *testing.T, shardID int) *testShardServer {
 	return startTestShardServerWithOptions(t, shardID, 0, false)
 }
 
+func startTestShardServerAtAddress(t *testing.T, shardID int, addr string) *testShardServer {
+	t.Helper()
+	return startTestShardServerAtAddressWithOptions(t, shardID, addr, 0, false)
+}
+
 func startTestShardServerWithDelay(t *testing.T, shardID int, delay time.Duration) *testShardServer {
 	t.Helper()
 	return startTestShardServerWithOptions(t, shardID, delay, false)
@@ -40,8 +46,13 @@ func startTestShardServerClosingAfterResponse(t *testing.T, shardID int) *testSh
 
 func startTestShardServerWithOptions(t *testing.T, shardID int, delay time.Duration, closeAfterResponse bool) *testShardServer {
 	t.Helper()
+	return startTestShardServerAtAddressWithOptions(t, shardID, "127.0.0.1:0", delay, closeAfterResponse)
+}
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+func startTestShardServerAtAddressWithOptions(t *testing.T, shardID int, addr string, delay time.Duration, closeAfterResponse bool) *testShardServer {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatalf("listen failed: %v", err)
 	}
@@ -92,6 +103,23 @@ func startTestShardServerWithOptions(t *testing.T, shardID int, delay time.Durat
 	}()
 
 	return srv
+}
+
+func p95Duration(samples []time.Duration) time.Duration {
+	if len(samples) == 0 {
+		return 0
+	}
+	ordered := make([]time.Duration, len(samples))
+	copy(ordered, samples)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	idx := (95*len(ordered)+99)/100 - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(ordered) {
+		idx = len(ordered) - 1
+	}
+	return ordered[idx]
 }
 
 func (s *testShardServer) hostPort() (string, int) {
@@ -760,5 +788,185 @@ func TestCoordinatorBoundTransactionDMLExcludesOtherShardsSmoke(t *testing.T) {
 	coord.txnMu.Unlock()
 	if stillBound {
 		t.Fatal("expected binding to be cleared after COMMIT")
+	}
+}
+
+func TestCoordinatorNetworkPartitionRecoverySmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+	partitionAddr := fmt.Sprintf("%s:%d", host1, port1)
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	if _, err := coord.Execute(context.Background(), "SELECT * FROM users;", "partition-warmup"); err != nil {
+		t.Fatalf("warmup select failed: %v", err)
+	}
+
+	coord.mu.RLock()
+	stale := coord.clients[ShardID(1)]
+	coord.mu.RUnlock()
+	if stale == nil {
+		t.Fatal("expected shard 1 client")
+	}
+	_ = stale.Close()
+	shard1.close()
+
+	if _, err := coord.Execute(context.Background(), "SELECT * FROM users;", "partition-down"); err == nil {
+		t.Fatal("expected error while shard 1 is partitioned")
+	}
+
+	recovered := startTestShardServerAtAddress(t, 1, partitionAddr)
+	defer recovered.close()
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("expected reconnect after partition heal, got %v", err)
+	}
+
+	results, err := coord.Execute(context.Background(), "SELECT * FROM users;", "partition-healed")
+	if err != nil {
+		t.Fatalf("expected recovery after partition heal, got %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results after heal, got %d", len(results))
+	}
+	if recovered.acceptedConnections() == 0 {
+		t.Fatal("expected recovered shard to accept at least one reconnect")
+	}
+}
+
+func TestCoordinatorDelayedParticipantRecoverySmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	delayed := startTestShardServerWithDelay(t, 1, 350*time.Millisecond)
+	defer shard0.close()
+	defer delayed.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := delayed.hostPort()
+	delayedAddr := fmt.Sprintf("%s:%d", host1, port1)
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	if _, err := coord.Execute(ctx, "SELECT * FROM users;", "delay-timeout"); err == nil {
+		t.Fatal("expected timeout with delayed participant")
+	}
+
+	delayed.close()
+	fast := startTestShardServerAtAddress(t, 1, delayedAddr)
+	defer fast.close()
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("expected reconnect after delayed shard replacement, got %v", err)
+	}
+
+	start := time.Now()
+	results, err := coord.Execute(context.Background(), "SELECT * FROM users;", "delay-recovered")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("expected recovery once delay is removed, got %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results after delay recovery, got %d", len(results))
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("expected recovered execution to complete promptly, took %s", elapsed)
+	}
+}
+
+func TestCoordinatorRestartRecoverySmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord1 := NewCoordinator(config)
+	if err := coord1.Connect(context.Background()); err != nil {
+		t.Fatalf("coord1 connect failed: %v", err)
+	}
+
+	if _, err := coord1.Execute(context.Background(), "SELECT * FROM users;", "restart-before"); err != nil {
+		t.Fatalf("coord1 execute failed: %v", err)
+	}
+	if err := coord1.Close(); err != nil {
+		t.Fatalf("coord1 close failed: %v", err)
+	}
+
+	coord2 := NewCoordinator(config)
+	if err := coord2.Connect(context.Background()); err != nil {
+		t.Fatalf("coord2 connect failed after restart: %v", err)
+	}
+	defer func() { _ = coord2.Close() }()
+
+	results, err := coord2.Execute(context.Background(), "SELECT * FROM users;", "restart-after")
+	if err != nil {
+		t.Fatalf("coord2 execute failed after restart: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 shard results after coordinator restart, got %d", len(results))
+	}
+}
+
+func TestCoordinatorRecoveryLatencyP95AfterReconnectSmoke(t *testing.T) {
+	shard0 := startTestShardServerClosingAfterResponse(t, 0)
+	shard1 := startTestShardServerClosingAfterResponse(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	samples := make([]time.Duration, 0, 20)
+	for i := 0; i < 20; i++ {
+		start := time.Now()
+		if _, err := coord.Execute(context.Background(), "SELECT * FROM users;", fmt.Sprintf("recovery-%d", i)); err != nil {
+			t.Fatalf("recovery iteration %d failed: %v", i, err)
+		}
+		samples = append(samples, time.Since(start))
+	}
+
+	p95 := p95Duration(samples)
+	if p95 > 2*time.Second {
+		t.Fatalf("expected recovery p95 <= 2s, got %s", p95)
 	}
 }
