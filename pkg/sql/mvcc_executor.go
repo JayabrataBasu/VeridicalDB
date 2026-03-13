@@ -607,6 +607,10 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return e.executeSelectWithAggregatesMVCC(stmt, tx)
 	}
 
+	if plan := e.planSelectExecution(stmt); plan != nil {
+		return e.executeSelectWithPlan(stmt, tx, plan)
+	}
+
 	// Try to use an index scan first
 	result, used, err := e.executeSelectWithIndex(stmt, tx)
 	if err != nil {
@@ -616,6 +620,11 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		return result, nil // Index scan succeeded
 	}
 
+	return e.executeSelectTableScan(stmt, tx)
+}
+
+
+func (e *MVCCExecutor) executeSelectTableScan(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
 	// Fall back to full table scan
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
@@ -826,6 +835,49 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 		Columns: outCols,
 		Rows:    rows,
 	}, nil
+}
+
+func (e *MVCCExecutor) executeSelectWithPlan(stmt *SelectStmt, tx *txn.Transaction, plan *ExecutionPlan) (*Result, error) {
+	if plan == nil {
+		return e.executeSelectTableScan(stmt, tx)
+	}
+
+	switch plan.Type {
+	case PlanIndexScan:
+		result, used, err := e.executeSelectWithIndex(stmt, tx)
+		if err != nil {
+			return nil, err
+		}
+		if used {
+			return result, nil
+		}
+		return e.executeSelectTableScan(stmt, tx)
+	case PlanTableScan:
+		return e.executeSelectTableScan(stmt, tx)
+	default:
+		return e.executeSelectTableScan(stmt, tx)
+	}
+}
+
+func (e *MVCCExecutor) planSelectExecution(stmt *SelectStmt) *ExecutionPlan {
+	if stmt == nil || !canUseIndexExecutionFastPathMVCC(stmt) || e.mtm == nil {
+		return nil
+	}
+
+	meta, err := e.mtm.GetTableMeta(stmt.TableName)
+	if err != nil {
+		return nil
+	}
+
+	planner := NewPlanner(e.indexMgr)
+	if e.statsMan != nil {
+		planner.SetStatsManager(e.statsMan)
+	}
+	if storeStats := e.getStorageBufferStats(); storeStats != nil {
+		planner.SetBufferHitRatio(storeStats.HitRate / 100.0)
+	}
+
+	return planner.Plan(stmt, meta)
 }
 
 func isUniqueEqualityFilterMVCC(where Expression, schema *catalog.Schema) bool {

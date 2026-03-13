@@ -51,12 +51,16 @@ type metricsProvider interface {
 
 // NewSession creates a new database session.
 func NewSession(mtm *catalog.MVCCTableManager) *Session {
+	statsMan := stats.NewStatsManager()
+	executor := NewMVCCExecutor(mtm)
+	executor.SetStatsManager(statsMan)
 	return &Session{
 		mtm:           mtm,
-		executor:      NewMVCCExecutor(mtm),
+		executor:      executor,
 		txnMgr:        mtm.TxnManager(),
 		lockMgr:       nil, // No locking by default
 		idxMgr:        nil, // No indexes by default
+		statsMan:      statsMan,
 		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
 		preparedStmts: make(map[string]Statement),
@@ -65,12 +69,16 @@ func NewSession(mtm *catalog.MVCCTableManager) *Session {
 
 // NewSessionWithLocks creates a new database session with lock support.
 func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *Session {
+	statsMan := stats.NewStatsManager()
+	executor := NewMVCCExecutor(mtm)
+	executor.SetStatsManager(statsMan)
 	return &Session{
 		mtm:           mtm,
-		executor:      NewMVCCExecutor(mtm),
+		executor:      executor,
 		txnMgr:        mtm.TxnManager(),
 		lockMgr:       lockMgr,
 		idxMgr:        nil, // No indexes by default
+		statsMan:      statsMan,
 		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
 		preparedStmts: make(map[string]Statement),
@@ -218,9 +226,13 @@ func (s *Session) Authenticate(username, password string) error {
 // ExecuteSQL parses and executes a SQL string.
 func (s *Session) ExecuteSQL(input string) (*Result, error) {
 	var stmt Statement
+	var cachedPlan *ExecutionPlan
 	if s.queryCache != nil {
 		if cached, found := s.queryCache.Get(input); found && cached.ParsedAST != nil {
 			stmt = cached.ParsedAST
+			if plan, ok := cached.PreparedPlan.(*ExecutionPlan); ok {
+				cachedPlan = plan
+			}
 		} else {
 			parser := NewParser(input)
 			parsed, err := parser.Parse()
@@ -238,6 +250,20 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 		}
 		stmt = parsed
 	}
+
+	if selectStmt, ok := stmt.(*SelectStmt); ok && s.executor != nil {
+		plan := cachedPlan
+		if plan == nil {
+			plan = s.executor.planSelectExecution(selectStmt)
+			if plan != nil && s.queryCache != nil {
+				_ = s.queryCache.PutWithPlan(input, stmt, plan)
+			}
+		}
+		if plan != nil {
+			return s.executeSelectWithPlan(selectStmt, plan)
+		}
+	}
+
 	return s.Execute(stmt)
 }
 
@@ -277,22 +303,38 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, s.currentTx)
+		result, err := s.executor.Execute(stmt, s.currentTx)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *DropTableStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.executor.Execute(stmt, s.currentTx)
+		result, err := s.executor.Execute(stmt, s.currentTx)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *CreateIndexStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.handleCreateIndex(typedStmt)
+		result, err := s.handleCreateIndex(typedStmt)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *DropIndexStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
-		return s.handleDropIndex(typedStmt)
+		result, err := s.handleDropIndex(typedStmt)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *CreateTriggerStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
@@ -316,11 +358,23 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		return s.handleRevoke(typedStmt)
 	// Database management statements
 	case *CreateDatabaseStmt:
-		return s.handleCreateDatabase(typedStmt)
+		result, err := s.handleCreateDatabase(typedStmt)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *DropDatabaseStmt:
-		return s.handleDropDatabase(typedStmt)
+		result, err := s.handleDropDatabase(typedStmt)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	case *UseDatabaseStmt:
-		return s.handleUseDatabase(typedStmt)
+		result, err := s.handleUseDatabase(typedStmt)
+		if err == nil {
+			s.invalidateQueryCacheForStatement(stmt)
+		}
+		return result, err
 	// Stored procedure/function statements
 	case *CreateProcedureStmt:
 		return s.handleCreateProcedure(typedStmt)
@@ -372,7 +426,63 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		s.currentTx = nil
 	}
 
+	s.invalidateQueryCacheForStatement(stmt)
+
 	return result, nil
+}
+
+func (s *Session) executeSelectWithPlan(stmt *SelectStmt, plan *ExecutionPlan) (*Result, error) {
+	tx, shouldCommit, err := s.ensureTransaction()
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := s.executor.executeSelectWithPlan(stmt, tx, plan)
+	if err != nil {
+		if shouldCommit {
+			if s.lockMgr != nil {
+				s.lockMgr.ReleaseAll(tx.ID)
+			}
+			_ = s.txnMgr.Abort(tx.ID)
+			s.currentTx = nil
+		}
+		return nil, err
+	}
+
+	if shouldCommit {
+		if s.lockMgr != nil {
+			s.lockMgr.ReleaseAll(tx.ID)
+		}
+		if err := s.txnMgr.Commit(tx.ID); err != nil {
+			return nil, fmt.Errorf("autocommit failed: %w", err)
+		}
+		s.currentTx = nil
+	}
+
+	return result, nil
+}
+
+func (s *Session) invalidateQueryCacheForStatement(stmt Statement) {
+	if s.queryCache == nil || stmt == nil {
+		return
+	}
+
+	switch typedStmt := stmt.(type) {
+	case *CreateTableStmt:
+		s.queryCache.InvalidateTable(typedStmt.TableName)
+	case *DropTableStmt:
+		s.queryCache.InvalidateTable(typedStmt.TableName)
+	case *AlterTableStmt:
+		s.queryCache.InvalidateTable(typedStmt.TableName)
+	case *TruncateTableStmt:
+		s.queryCache.InvalidateTable(typedStmt.TableName)
+	case *CreateIndexStmt:
+		s.queryCache.InvalidateTable(typedStmt.TableName)
+	case *DropIndexStmt:
+		s.queryCache.Clear()
+	case *CreateDatabaseStmt, *DropDatabaseStmt, *UseDatabaseStmt:
+		s.queryCache.Clear()
+	}
 }
 
 // ensureTransaction ensures there's an active transaction.
