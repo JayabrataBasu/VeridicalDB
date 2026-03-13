@@ -625,7 +625,6 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	return e.executeSelectTableScan(stmt, tx)
 }
 
-
 func (e *MVCCExecutor) executeSelectTableScan(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
 	// Fall back to full table scan
 	cat := e.mtm.Catalog()
@@ -6238,7 +6237,7 @@ func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*
 	if e.statsMan == nil {
 		return &Result{
 			Columns: []string{"ANALYZE"},
-			Rows: [][]catalog.Value{{catalog.NewText("ANALYZE skipped: no stats manager configured")}},
+			Rows:    [][]catalog.Value{{catalog.NewText("ANALYZE skipped: no stats manager configured")}},
 		}, nil
 	}
 
@@ -6260,7 +6259,7 @@ func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*
 		}
 		return &Result{
 			Columns: []string{"ANALYZE"},
-			Rows: [][]catalog.Value{{catalog.NewText(msg)}},
+			Rows:    [][]catalog.Value{{catalog.NewText(msg)}},
 		}, nil
 	}
 
@@ -6294,7 +6293,7 @@ func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*
 	if sErr != nil || tableStats == nil {
 		return &Result{
 			Columns: []string{"ANALYZE"},
-			Rows: [][]catalog.Value{{catalog.NewText(fmt.Sprintf("ANALYZE %s completed (no data)", stmt.TableName))}},
+			Rows:    [][]catalog.Value{{catalog.NewText(fmt.Sprintf("ANALYZE %s completed (no data)", stmt.TableName))}},
 		}, nil
 	}
 
@@ -6302,7 +6301,7 @@ func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*
 		stmt.TableName, tableStats.RowCount, len(tableStats.Columns))
 	return &Result{
 		Columns: []string{"ANALYZE"},
-		Rows: [][]catalog.Value{{catalog.NewText(msg)}},
+		Rows:    [][]catalog.Value{{catalog.NewText(msg)}},
 	}, nil
 }
 
