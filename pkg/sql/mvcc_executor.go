@@ -233,6 +233,8 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 		return e.executeCreateFTSIndex(s)
 	case *DropFTSIndexStmt:
 		return e.executeDropFTSIndex(s)
+	case *AnalyzeStmt:
+		return e.executeAnalyze(s, tx)
 	case *BeginStmt, *CommitStmt, *RollbackStmt:
 		// These are handled by the session, not the executor
 		return nil, fmt.Errorf("transaction statements should be handled by session")
@@ -6227,4 +6229,185 @@ func (e *MVCCExecutor) executeRecursiveCTEMVCC(cte *CTE, tx *txn.Transaction) (*
 	}
 
 	return result, nil
+}
+
+// executeAnalyze collects statistics for query optimization via the MVCC path.
+// ANALYZE            - analyzes all tables in the current database
+// ANALYZE tablename  - analyzes a specific table
+func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*Result, error) {
+	if e.statsMan == nil {
+		return &Result{
+			Columns: []string{"ANALYZE"},
+			Rows: [][]catalog.Value{{catalog.NewText("ANALYZE skipped: no stats manager configured")}},
+		}, nil
+	}
+
+	if stmt.TableName == "" {
+		// Analyze all tables in the current database.
+		tableNames := e.mtm.ListTables()
+		analyzed := 0
+		var errs []string
+		for _, name := range tableNames {
+			if err := e.analyzeTableMVCC(name, nil, tx); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: %v", name, err))
+			} else {
+				analyzed++
+			}
+		}
+		msg := fmt.Sprintf("ANALYZE completed for %d table(s)", analyzed)
+		if len(errs) > 0 {
+			msg += fmt.Sprintf(" (%d failed)", len(errs))
+		}
+		return &Result{
+			Columns: []string{"ANALYZE"},
+			Rows: [][]catalog.Value{{catalog.NewText(msg)}},
+		}, nil
+	}
+
+	// Verify table exists.
+	meta, err := e.mtm.Catalog().GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table not found: %w", err)
+	}
+
+	// Validate requested columns.
+	if len(stmt.Columns) > 0 {
+		for _, colName := range stmt.Columns {
+			found := false
+			for _, col := range meta.Schema.Columns {
+				if col.Name == colName {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("column %s not found in table %s", colName, stmt.TableName)
+			}
+		}
+	}
+
+	if err := e.analyzeTableMVCC(stmt.TableName, stmt.Columns, tx); err != nil {
+		return nil, err
+	}
+
+	tableStats, sErr := e.statsMan.GetTableStats(stmt.TableName)
+	if sErr != nil || tableStats == nil {
+		return &Result{
+			Columns: []string{"ANALYZE"},
+			Rows: [][]catalog.Value{{catalog.NewText(fmt.Sprintf("ANALYZE %s completed (no data)", stmt.TableName))}},
+		}, nil
+	}
+
+	msg := fmt.Sprintf("ANALYZE %s completed: %d rows, %d columns analyzed",
+		stmt.TableName, tableStats.RowCount, len(tableStats.Columns))
+	return &Result{
+		Columns: []string{"ANALYZE"},
+		Rows: [][]catalog.Value{{catalog.NewText(msg)}},
+	}, nil
+}
+
+// analyzeTableMVCC performs a full table scan and stores per-column statistics
+// into the executor's StatsManager. columns restricts which columns are analyzed
+// (nil = all columns).
+func (e *MVCCExecutor) analyzeTableMVCC(tableName string, columns []string, tx *txn.Transaction) error {
+	meta, err := e.mtm.Catalog().GetTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	type columnTracker struct {
+		nullCount    int64
+		distinctVals map[string]int64
+	}
+
+	trackers := make(map[string]*columnTracker)
+	for _, col := range meta.Schema.Columns {
+		if len(columns) > 0 {
+			included := false
+			for _, req := range columns {
+				if req == col.Name {
+					included = true
+					break
+				}
+			}
+			if !included {
+				continue
+			}
+		}
+		trackers[col.Name] = &columnTracker{distinctVals: make(map[string]int64)}
+	}
+
+	// Full table scan to collect statistics.
+	selectStmt := &SelectStmt{
+		TableName: tableName,
+		Columns:   []SelectColumn{{Star: true}},
+	}
+	result, err := e.executeSelect(selectStmt, tx)
+	if err != nil {
+		return err
+	}
+
+	rowCount := int64(len(result.Rows))
+
+	for _, row := range result.Rows {
+		for i, col := range meta.Schema.Columns {
+			tracker, ok := trackers[col.Name]
+			if !ok || i >= len(row) {
+				continue
+			}
+			if row[i].IsNull {
+				tracker.nullCount++
+				continue
+			}
+			tracker.distinctVals[fmt.Sprintf("%v", row[i])]++
+		}
+	}
+
+	tableStats := &stats.TableStats{
+		TableName:    tableName,
+		RowCount:     rowCount,
+		LastAnalyzed: time.Now(),
+		Columns:      make(map[string]*stats.ColumnStats),
+	}
+
+	for colName, tracker := range trackers {
+		var colType catalog.DataType
+		for _, col := range meta.Schema.Columns {
+			if col.Name == colName {
+				colType = col.Type
+				break
+			}
+		}
+
+		type valFreq struct {
+			val   string
+			count int64
+		}
+		var freqs []valFreq
+		for v, cnt := range tracker.distinctVals {
+			freqs = append(freqs, valFreq{v, cnt})
+		}
+		sort.Slice(freqs, func(i, j int) bool { return freqs[i].count > freqs[j].count })
+
+		var mcvs []stats.Value
+		var mcvFreqs []float64
+		for i := 0; i < len(freqs) && i < 10; i++ {
+			mcvs = append(mcvs, stats.Value{Type: colType, StringVal: freqs[i].val})
+			if rowCount > 0 {
+				mcvFreqs = append(mcvFreqs, float64(freqs[i].count)/float64(rowCount))
+			}
+		}
+
+		tableStats.Columns[colName] = &stats.ColumnStats{
+			ColumnName:      colName,
+			DataType:        colType,
+			DistinctCount:   int64(len(tracker.distinctVals)),
+			NullCount:       tracker.nullCount,
+			MostCommonVals:  mcvs,
+			MostCommonFreqs: mcvFreqs,
+			Histogram:       stats.NewHistogram(100),
+		}
+	}
+
+	return e.statsMan.SetTableStats(tableStats)
 }

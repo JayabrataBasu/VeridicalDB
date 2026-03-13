@@ -1,6 +1,9 @@
 package sql
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestSessionExecuteSQLCachesPreparedPlanForIndexedSelect(t *testing.T) {
 	session, _, cleanup := setupIndexTest(t)
@@ -100,5 +103,49 @@ func TestSessionInvalidatesPreparedPlanOnDropIndex(t *testing.T) {
 
 	if _, found := session.queryCache.Get(query); found {
 		t.Fatal("expected cached prepared plan to be invalidated after dropping index")
+	}
+}
+
+func TestSessionAnalyzePopulatesStatsManager(t *testing.T) {
+	session, _, cleanup := setupIndexTest(t)
+	defer cleanup()
+
+	if _, err := session.ExecuteSQL("CREATE TABLE products (id INT, name TEXT, price INT);"); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	for i := 1; i <= 5; i++ {
+		q := fmt.Sprintf("INSERT INTO products VALUES (%d, 'item%d', %d);", i, i, i*10)
+		if _, err := session.ExecuteSQL(q); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	// Before ANALYZE, stats should be absent.
+	if session.statsMan != nil {
+		if ts, _ := session.statsMan.GetTableStats("products"); ts != nil {
+			t.Fatal("expected no stats before ANALYZE")
+		}
+	}
+
+	result, err := session.ExecuteSQL("ANALYZE products;")
+	if err != nil {
+		t.Fatalf("ANALYZE: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Fatal("expected ANALYZE result row")
+	}
+
+	if session.statsMan == nil {
+		t.Fatal("expected stats manager to be set")
+	}
+	ts, err := session.statsMan.GetTableStats("products")
+	if err != nil || ts == nil {
+		t.Fatalf("expected stats after ANALYZE, err=%v ts=%v", err, ts)
+	}
+	if ts.RowCount != 5 {
+		t.Fatalf("expected 5 rows in stats, got %d", ts.RowCount)
+	}
+	if _, ok := ts.Columns["id"]; !ok {
+		t.Fatal("expected 'id' column stats")
 	}
 }

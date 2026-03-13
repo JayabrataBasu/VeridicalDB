@@ -314,13 +314,13 @@ backup:
   # restore_command: ""        # optional: e.g. aws s3 cp s3://bucket/wal/%%f %%p
 
 sharding:
-	enabled: false
-	shard_key_column: id
-	nodes:
-		# - host: 127.0.0.1
-		#   port: 15432
-		# - host: 127.0.0.1
-		#   port: 15433
+  enabled: false
+  shard_key_column: id
+  nodes:
+    # - host: 127.0.0.1
+    #   port: 15432
+    # - host: 127.0.0.1
+    #   port: 15433
 `, dataDir, dataDir, dataDir)
 
 	return os.WriteFile(path, []byte(content), 0644)
