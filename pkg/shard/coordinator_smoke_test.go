@@ -466,3 +466,299 @@ func TestCoordinatorExecuteCrossShardTimeoutSmoke(t *testing.T) {
 		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 }
+
+// TestCoordinatorBoundTransactionInsertThenCommitSmoke verifies the full
+// bound-transaction lifecycle: INSERT is routed only to the bound shard,
+// followed by COMMIT on the same shard, and the binding is cleared afterwards.
+func TestCoordinatorBoundTransactionInsertThenCommitSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	const session = "session-insert-commit"
+	coord.BindTransaction(session, ShardID(1))
+
+	// INSERT should route to the bound shard (1), not shard 0, regardless of key routing.
+	insertQuery := "INSERT INTO orders VALUES (99, 'widget');"
+	results, err := coord.Execute(context.Background(), insertQuery, session)
+	if err != nil {
+		t.Fatalf("INSERT on bound shard failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for single-shard INSERT, got %d", len(results))
+	}
+	if !strings.Contains(results[0], "shard=1") {
+		t.Fatalf("expected INSERT to reach shard 1, got %v", results)
+	}
+	if q0 := shard0.recordedQueries(); len(q0) != 0 {
+		t.Fatalf("expected shard 0 to receive no queries during bound txn, got %v", q0)
+	}
+
+	// COMMIT must route to the same shard and clear the binding.
+	results, err = coord.Execute(context.Background(), "COMMIT;", session)
+	if err != nil {
+		t.Fatalf("COMMIT on bound shard failed: %v", err)
+	}
+	if !strings.Contains(results[0], "shard=1 query=COMMIT;") {
+		t.Fatalf("expected COMMIT on shard 1, got %v", results)
+	}
+	if q1 := shard1.recordedQueries(); len(q1) != 2 || q1[0] != insertQuery || q1[1] != "COMMIT;" {
+		t.Fatalf("expected shard 1 to receive INSERT then COMMIT, got %v", q1)
+	}
+
+	coord.txnMu.Lock()
+	_, stillBound := coord.activeTxns[session]
+	coord.txnMu.Unlock()
+	if stillBound {
+		t.Fatal("expected binding to be cleared after COMMIT")
+	}
+}
+
+// TestCoordinatorBoundTransactionRollbackClearsBindingSmoke verifies that
+// ROLLBACK on a bound transaction routes to the bound shard and clears the binding.
+func TestCoordinatorBoundTransactionRollbackClearsBindingSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	const session = "session-rollback"
+	coord.BindTransaction(session, ShardID(0))
+
+	results, err := coord.Execute(context.Background(), "ROLLBACK;", session)
+	if err != nil {
+		t.Fatalf("ROLLBACK failed: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0], "shard=0 query=ROLLBACK;") {
+		t.Fatalf("expected ROLLBACK to reach shard 0, got %v", results)
+	}
+	if q1 := shard1.recordedQueries(); len(q1) != 0 {
+		t.Fatalf("expected shard 1 to receive nothing, got %v", q1)
+	}
+
+	coord.txnMu.Lock()
+	_, stillBound := coord.activeTxns[session]
+	coord.txnMu.Unlock()
+	if stillBound {
+		t.Fatal("expected binding to be cleared after ROLLBACK")
+	}
+}
+
+// TestCoordinatorDDLScatterGatherFanoutSmoke verifies that DDL statements
+// (CREATE TABLE) fan out to all shards via scatter-gather.
+func TestCoordinatorDDLScatterGatherFanoutSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	ddl := "CREATE TABLE inventory (id INT, qty INT);"
+	results, err := coord.Execute(context.Background(), ddl, "session-ddl")
+	if err != nil {
+		t.Fatalf("DDL Execute failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 shard results for DDL fan-out, got %d", len(results))
+	}
+
+	joined := strings.Join(results, " ")
+	if !strings.Contains(joined, "shard=0") || !strings.Contains(joined, "shard=1") {
+		t.Fatalf("expected both shards to receive DDL, got %v", results)
+	}
+	if q0 := shard0.recordedQueries(); len(q0) != 1 || q0[0] != ddl {
+		t.Fatalf("expected shard 0 to receive exactly the DDL query, got %v", q0)
+	}
+	if q1 := shard1.recordedQueries(); len(q1) != 1 || q1[0] != ddl {
+		t.Fatalf("expected shard 1 to receive exactly the DDL query, got %v", q1)
+	}
+}
+
+// TestCoordinatorThreeShardScatterGatherAggregationSmoke verifies that a
+// scatter-gather query across three shards aggregates all three results.
+func TestCoordinatorThreeShardScatterGatherAggregationSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	shard2 := startTestShardServer(t, 2)
+	defer shard0.close()
+	defer shard1.close()
+	defer shard2.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+	host2, port2 := shard2.hostPort()
+
+	config := NewShardConfig(3, "id")
+	if err := config.CreateUniformShards(
+		[]string{host0, host1, host2},
+		[]int{port0, port1, port2},
+	); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	results, err := coord.Execute(context.Background(), "SELECT * FROM products;", "session-3shard")
+	if err != nil {
+		t.Fatalf("three-shard scatter failed: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 shard results, got %d: %v", len(results), results)
+	}
+
+	joined := strings.Join(results, " ")
+	for _, id := range []int{0, 1, 2} {
+		if !strings.Contains(joined, fmt.Sprintf("shard=%d", id)) {
+			t.Fatalf("missing result from shard %d: %v", id, results)
+		}
+	}
+}
+
+// TestCoordinatorWriteScatterFailsOnDeadShardSmoke verifies that a write
+// scatter-gather (UPDATE without shard key) fails when one shard is unavailable,
+// and that writes are not retried on the failing shard.
+func TestCoordinatorWriteScatterFailsOnDeadShardSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	// Kill shard 0 — close the client and stop the listener so reconnects fail too.
+	coord.mu.RLock()
+	deadClient := coord.clients[ShardID(0)]
+	coord.mu.RUnlock()
+	if deadClient == nil {
+		t.Fatal("expected shard 0 client to exist")
+	}
+	_ = deadClient.Close()
+	shard0.close()
+
+	// UPDATE without a WHERE clause scatters to all shards.
+	_, err := coord.Execute(context.Background(), "UPDATE inventory SET qty=0;", "session-write-scatter-fail")
+	if err == nil {
+		t.Fatal("expected scatter write to fail when shard 0 is unavailable")
+	}
+	if !strings.Contains(err.Error(), "shard 0") {
+		t.Fatalf("expected error to identify dead shard 0, got: %v", err)
+	}
+
+	// Writes must not be silently retried — shard 0 should have received nothing.
+	if q0 := shard0.recordedQueries(); len(q0) != 0 {
+		t.Fatalf("expected no queries on dead shard 0 (no write retry), got %v", q0)
+	}
+}
+
+// TestCoordinatorBoundTransactionDMLExcludesOtherShardsSmoke verifies that
+// DML that would normally scatter (UPDATE without shard-key WHERE) is instead
+// routed exclusively to the bound shard while a transaction is active.
+func TestCoordinatorBoundTransactionDMLExcludesOtherShardsSmoke(t *testing.T) {
+	shard0 := startTestShardServer(t, 0)
+	shard1 := startTestShardServer(t, 1)
+	defer shard0.close()
+	defer shard1.close()
+
+	host0, port0 := shard0.hostPort()
+	host1, port1 := shard1.hostPort()
+
+	config := NewShardConfig(2, "id")
+	if err := config.CreateUniformShards([]string{host0, host1}, []int{port0, port1}); err != nil {
+		t.Fatalf("CreateUniformShards failed: %v", err)
+	}
+
+	coord := NewCoordinator(config)
+	if err := coord.Connect(context.Background()); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	defer func() { _ = coord.Close() }()
+
+	const session = "session-bound-dml-exclusive"
+	coord.BindTransaction(session, ShardID(1))
+
+	// Without a bound transaction, UPDATE with no WHERE would scatter to all shards.
+	// With a bound transaction it must go only to shard 1.
+	updateQuery := "UPDATE inventory SET qty=5;"
+	results, err := coord.Execute(context.Background(), updateQuery, session)
+	if err != nil {
+		t.Fatalf("UPDATE on bound shard failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for bound DML, got %d (scatter should be suppressed)", len(results))
+	}
+	if !strings.Contains(results[0], "shard=1") {
+		t.Fatalf("expected UPDATE to reach shard 1 only, got %v", results)
+	}
+	if q0 := shard0.recordedQueries(); len(q0) != 0 {
+		t.Fatalf("expected shard 0 to receive no DML during bound transaction, got %v", q0)
+	}
+
+	// COMMIT and verify cleanup.
+	if _, err := coord.Execute(context.Background(), "COMMIT;", session); err != nil {
+		t.Fatalf("COMMIT failed: %v", err)
+	}
+	coord.txnMu.Lock()
+	_, stillBound := coord.activeTxns[session]
+	coord.txnMu.Unlock()
+	if stillBound {
+		t.Fatal("expected binding to be cleared after COMMIT")
+	}
+}
