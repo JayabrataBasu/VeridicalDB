@@ -227,7 +227,8 @@ func (s *Session) Authenticate(username, password string) error {
 func (s *Session) ExecuteSQL(input string) (*Result, error) {
 	var stmt Statement
 	var cachedPlan *ExecutionPlan
-	if s.queryCache != nil {
+	useQueryCache := s.queryCache != nil && isQueryCacheCandidateSQL(input)
+	if useQueryCache {
 		if cached, found := s.queryCache.Get(input); found && cached.ParsedAST != nil {
 			stmt = cached.ParsedAST
 			if plan, ok := cached.PreparedPlan.(*ExecutionPlan); ok {
@@ -240,7 +241,9 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 				return nil, fmt.Errorf("syntax error: %w", err)
 			}
 			stmt = parsed
-			_ = s.queryCache.Put(input, stmt)
+			if _, ok := stmt.(*SelectStmt); ok {
+				_ = s.queryCache.Put(input, stmt)
+			}
 		}
 	} else {
 		parser := NewParser(input)
@@ -265,6 +268,17 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 	}
 
 	return s.Execute(stmt)
+}
+
+func isQueryCacheCandidateSQL(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return false
+	}
+	upper := strings.ToUpper(trimmed)
+	return strings.HasPrefix(upper, "SELECT") ||
+		strings.HasPrefix(upper, "WITH") ||
+		strings.HasPrefix(upper, "EXPLAIN")
 }
 
 // QueryCacheStats exposes parsed-SQL cache stats for tests and performance checks.

@@ -864,6 +864,13 @@ func (e *MVCCExecutor) planSelectExecution(stmt *SelectStmt) *ExecutionPlan {
 	if stmt == nil || !canUseIndexExecutionFastPathMVCC(stmt) || e.mtm == nil {
 		return nil
 	}
+	if e.statsMan == nil {
+		return nil
+	}
+	if tableStats, err := e.statsMan.GetTableStats(stmt.TableName); err != nil || tableStats == nil {
+		// Skip cost-based planning when ANALYZE stats are unavailable.
+		return nil
+	}
 
 	meta, err := e.mtm.GetTableMeta(stmt.TableName)
 	if err != nil {
