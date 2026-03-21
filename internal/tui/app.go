@@ -291,6 +291,11 @@ func (m *Model) View() string {
 	// Screen already renders at the correct width (set via WindowSizeMsg).
 	// Do NOT re-wrap with Width/Height/Background — that corrupts ANSI codes.
 	mainContent := m.screen.View()
+	_, isHomeScreen := m.screen.(*HomeScreen)
+	if isHomeScreen {
+		// Add breathing room on the landing screen so the banner and sidebar feel intentional.
+		mainContent = lipgloss.NewStyle().PaddingTop(1).PaddingLeft(1).Render(mainContent)
+	}
 
 	// Render sidebar if not collapsed
 	sidebarWidth := 22
@@ -302,6 +307,10 @@ func (m *Model) View() string {
 	if !m.sidebarCollapsed {
 		side := NewSidebar(m)
 		sidebarContent := side.View(sidebarWidth)
+		if isHomeScreen {
+			// Add a gutter and lower the panel slightly to align with the visual weight of the banner.
+			sidebarContent = lipgloss.NewStyle().PaddingTop(2).PaddingLeft(2).Render(sidebarContent)
+		}
 		layout = lipgloss.JoinHorizontal(lipgloss.Top, mainContent, sidebarContent)
 	} else {
 		layout = mainContent

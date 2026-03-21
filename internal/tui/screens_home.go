@@ -7,7 +7,44 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
+
+var replUnicodeBanner = []string{
+	"██╗   ██╗███████╗██████╗ ██╗██████╗ ██╗ ██████╗ █████╗ ██╗     ██████╗ ██████╗ ",
+	"██║   ██║██╔════╝██╔══██╗██║██╔══██╗██║██╔════╝██╔══██╗██║     ██╔══██╗██╔══██╗",
+	"██║   ██║█████╗  ██████╔╝██║██║  ██║██║██║     ███████║██║     ██║  ██║██████╔╝",
+	"╚██╗ ██╔╝██╔══╝  ██╔══██╗██║██║  ██║██║██║     ██╔══██║██║     ██║  ██║██╔══██╗",
+	" ╚████╔╝ ███████╗██║  ██║██║██████╔╝██║╚██████╗██║  ██║███████╗██████╔╝██████╔╝",
+	"  ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝ ╚═════╝",
+}
+
+func bannerWidth(lines []string) int {
+	max := 0
+	for _, line := range lines {
+		w := lipgloss.Width(line)
+		if w > max {
+			max = w
+		}
+	}
+	return max
+}
+
+func themedBanner(lines []string, leftColor, rightColor string) string {
+	if len(lines) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, line := range lines {
+		b.WriteString(theme.GradientText(line, leftColor, rightColor))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
 
 // HomeScreen is the main menu screen of the TUI.
 type HomeScreen struct {
@@ -165,10 +202,19 @@ func (h *HomeScreen) View() string {
 		muted = t.Muted
 	}
 
-	// Title with gradient - using raw ANSI, no lipgloss blocks
-	gradientTitle := theme.GradientText("▶ VERIDICALDB", accent, highlight)
-	title := styles.FromHexBold(Icons.Database, success) + " " + gradientTitle
-	buf.WriteString(title)
+	// Use full REPL-style Unicode banner when there is enough room; fallback keeps narrow terminals usable.
+	mainWidth := h.app.GetWidth() - 24 // Account for right sidebar + Home gutter.
+	if mainWidth < 0 {
+		mainWidth = h.app.GetWidth()
+	}
+
+	if mainWidth >= bannerWidth(replUnicodeBanner)+1 {
+		buf.WriteString(themedBanner(replUnicodeBanner, accent, highlight))
+	} else {
+		gradientTitle := theme.GradientText("▶ VERIDICALDB", accent, highlight)
+		title := styles.FromHexBold(Icons.Database, success) + " " + gradientTitle
+		buf.WriteString(title)
+	}
 	buf.WriteString("\n\n\n")
 
 	// Menu items - pure ANSI styling, no background blocks
