@@ -13,15 +13,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/build"
 	"github.com/JayabrataBasu/VeridicalDB/internal/cli"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
 
 func main() {
@@ -37,7 +37,7 @@ func main() {
 
 	// Handle version flag
 	if *showVersion {
-		fmt.Printf("VeridicalDB version %s\n", cli.Version)
+		fmt.Printf("VeridicalDB version %s\n", build.Full())
 		os.Exit(0)
 	}
 
@@ -63,7 +63,7 @@ func main() {
 	log.SetDefault(logger)
 
 	logger.Info("VeridicalDB starting",
-		"version", cli.Version,
+		"version", build.Version,
 		"data_dir", cfg.Storage.DataDir,
 		"port", cfg.Server.Port,
 	)
@@ -93,36 +93,25 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// Initialize WAL
-	walLog, err := wal.Open(cfg.Storage.DataDir)
+	// Assemble the database. The server runs in durable mode: WAL, crash
+	// recovery on open, and a background checkpointer that db.Close() stops.
+	db, err := engine.Open(engine.Config{
+		DataDir:  cfg.Storage.DataDir,
+		PageSize: cfg.Storage.PageSize,
+		Durable:  true,
+		Logger:   logger,
+	})
 	if err != nil {
-		logger.Error("Failed to open WAL", "error", err)
+		logger.Error("Failed to open database", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = walLog.Close() }()
+	defer func() { _ = db.Close() }()
 
-	// Initialize TxnManager
-	txnMgr := txn.NewManager()
-
-	// Initialize TxnLogger
-	txnLogger := wal.NewTxnLogger(walLog, txnMgr)
-
-	// Initialize Checkpointer
-	checkpointer := wal.NewCheckpointer(walLog, txnLogger)
-
-	// Initialize TableManager
-	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, cfg.Storage.PageSize, walLog)
-	if err != nil {
-		logger.Error("Failed to initialize TableManager", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("TableManager initialized", "tables", len(tm.ListTables()))
-
-	// Initialize MVCCTableManager
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
+	tm := db.TableManager()
+	logger.Info("Database opened", "tables", len(tm.ListTables()))
 
 	// Initialize SystemCatalog for observability
-	sysCatalog := observability.NewSystemCatalog(txnMgr, nil, tm.Catalog())
+	sysCatalog := observability.NewSystemCatalog(db.TxnManager(), nil, db.Catalog())
 
 	// Register observability HTTP endpoints (always available for monitoring)
 	// These run on a separate port to avoid conflicts with the main server
@@ -149,7 +138,7 @@ func main() {
 				"status":    "healthy",
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 				"tables":    len(tm.ListTables()),
-				"version":   cli.Version,
+				"version":   build.Version,
 			}
 			_ = json.NewEncoder(w).Encode(health)
 		})
@@ -219,7 +208,7 @@ func main() {
 			}
 
 			// Create a temporary session and execute the query (read-only)
-			sess := sql.NewSession(mtm)
+			sess := db.NewSession()
 			res, err := sess.ExecuteSQL(req.SQL)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -278,14 +267,11 @@ func main() {
 		}()
 	}
 
-	// Set up checkpointer
-	checkpointer.SetPageFlusher(tm.Checkpoint)
-	checkpointer.StartBackground()
-	defer checkpointer.StopBackground()
+	// (The WAL checkpointer is started and stopped by engine.Open / db.Close.)
 
 	// Run in interactive mode
 	if *interactive {
-		if err := cli.RunInteractive(logger, tm, txnMgr, txnLogger, cfg.Storage.DataDir); err != nil {
+		if err := cli.RunInteractive(db, cfg.Storage.DataDir); err != nil {
 			logger.Error("REPL error", "error", err)
 			os.Exit(1)
 		}
@@ -303,9 +289,8 @@ func main() {
 		pgServer := pgwire.NewServer(pgwire.ServerConfig{
 			Port:          cfg.Server.Port,
 			Logger:        logger,
-			MTM:           mtm,
-			TxnMgr:        txnMgr,
-			ServerVersion: cli.Version,
+			NewSession:    db.NewSession,
+			ServerVersion: build.Version,
 			TLSConfig:     tlsCfg,
 		})
 
@@ -359,5 +344,5 @@ Configuration File Example (config.yaml):
 
 For more information, visit: https://github.com/JayabrataBasu/VeridicalDB
 
-`, cli.Version)
+`, build.Version)
 }

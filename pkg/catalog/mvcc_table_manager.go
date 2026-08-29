@@ -35,6 +35,29 @@ func (m *MVCCTableManager) TxnManager() *txn.Manager {
 	return m.txnMgr
 }
 
+// CommitTxn commits a transaction. When a WAL transaction logger is attached
+// (durable mode) the COMMIT record is written and flushed to disk before the
+// commit is applied, so the transaction survives a restart. Otherwise it is a
+// plain in-memory commit.
+//
+// Callers that mutate data must use this rather than TxnManager().Commit
+// directly, or their writes will be rolled back by crash recovery.
+func (m *MVCCTableManager) CommitTxn(txid txn.TxID) error {
+	if m.txnLogger != nil {
+		return m.txnLogger.Commit(txid)
+	}
+	return m.txnMgr.Commit(txid)
+}
+
+// AbortTxn aborts a transaction, writing and flushing an ABORT record first
+// when durable.
+func (m *MVCCTableManager) AbortTxn(txid txn.TxID) error {
+	if m.txnLogger != nil {
+		return m.txnLogger.Abort(txid)
+	}
+	return m.txnMgr.Abort(txid)
+}
+
 // MVCCRow represents a row with its MVCC header and decoded values.
 type MVCCRow struct {
 	RID    storage.RID

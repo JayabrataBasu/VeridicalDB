@@ -1,7 +1,7 @@
 # VeridicalDB Design Document
 
-**Version:** 0.1.0-beta  
-**Last Updated:** December 2025  
+**Version:** v2.0.0 (Halcyon)  
+**Last Updated:** August 2026  
 **Author:** Jayabrata Basu  
 **Repository:** https://github.com/JayabrataBasu/VeridicalDB
 
@@ -34,14 +34,15 @@ VeridicalDB is a modern, embeddable database engine written in Go. It aims to pr
 
 ### Tech Stack
 
-- **Language:** Go 1.23+
-- **Dependencies:** 
+- **Language:** Go 1.24+ (CI matrix: 1.24 / 1.25 / 1.26)
+- **Dependencies:**
   - `github.com/chzyer/readline` - REPL line editing
   - `github.com/spf13/cobra` - CLI framework
   - `github.com/spf13/viper` - Configuration
   - `go.uber.org/zap` - Structured logging
-- **Codebase Size:** ~22,000 lines of Go code
-- **Test Coverage:** All packages have passing tests
+  - `github.com/charmbracelet/bubbletea` - TUI
+- **Codebase Size:** ~58,000 lines of non-test Go, ~31,000 lines of tests
+- **Test Coverage:** All 25 test packages pass; `go vet` and `gofmt` clean
 
 ---
 
@@ -84,7 +85,8 @@ VeridicalDB is a modern, embeddable database engine written in Go. It aims to pr
 
 ### Data Flow
 
-1. **Input:** SQL string enters via REPL or (future) network protocol
+1. **Input:** SQL string enters via the REPL, the TUI, or the PostgreSQL wire
+   protocol (`pkg/pgwire`)
 2. **Lexer:** Tokenizes SQL into tokens (keywords, identifiers, literals)
 3. **Parser:** Builds AST (Abstract Syntax Tree) from tokens
 4. **Planner:** (Optional) Optimizes query, chooses indexes
@@ -210,11 +212,27 @@ A hand-written recursive descent parser supporting:
 - Environment variable overrides via Viper
 - Sensible defaults for all settings
 
+> **Known issue:** there are currently two config packages. `internal/config`
+> (viper) is used by the CLI/TUI and carries backup, sharding, and WAL-tuning
+> sections; `pkg/config` is used by `cmd/server` and carries TLS/mTLS and pgwire
+> settings. Neither is a superset. Consolidation is planned (remediation plan
+> phase P3).
+
 ### ✅ Logging (`internal/logger/`, `pkg/log/`)
 
-- Structured logging with Zap
+- Structured logging (`internal/logger` wraps Zap; `pkg/log` is a hand-rolled
+  structured logger)
 - Configurable log levels
 - JSON or console output formats
+
+> **Known issue:** two logging packages coexist. Standardizing on one is planned
+> (phase P3).
+
+### ✅ Version metadata (`internal/build/`)
+
+- Single source of truth for the version string
+- Overridable at link time via `-ldflags -X .../internal/build.Version=...`
+  (wired into the `Makefile` and `scripts/release.sh`)
 
 ### ✅ Observability (`pkg/observability/`)
 
@@ -223,17 +241,29 @@ A hand-written recursive descent parser supporting:
 - Lock information retrieval
 - Basic server status
 
-### ✅ Network Protocol (`pkg/net/`)
+### ✅ PostgreSQL Wire Protocol (`pkg/pgwire/`)
 
-- Basic TCP server framework
-- Request/response message types
-- Connection handling (foundation for future wire protocol)
+- Startup handshake, `SSLRequest`, MD5 password authentication
+- Simple query protocol and extended query protocol (Parse/Bind/Describe/Execute)
+- Prepared statements and portals
+- TLS / mutual-TLS connections
+- Connect with `psql -h localhost -p 5433`
+
+Sessions come from `engine.DB.NewSession` (see `pkg/engine`), so the wire
+protocol has the same capabilities as the REPL and TUI: secondary indexes,
+triggers, stored procedures, full-text search, and multi-database. Because
+multi-database support is wired in, a wire client must `CREATE DATABASE` /
+`USE` before issuing DDL, exactly as in the REPL. `TestWireProtocolFeatureMatrix`
+in `pkg/pgwire` enforces this.
+
+_(The earlier `pkg/net` TCP-framework package was removed; `pkg/pgwire`
+superseded it.)_
 
 ### ✅ Sharding (`pkg/shard/`)
 
-- Consistent hash ring implementation
-- Shard assignment logic
-- Foundation for distributed queries
+- Hash-based sharding (FNV) with uniform hash-range assignment
+- Coordinator that routes and scatters queries and gathers results
+- Two-phase commit lifecycle across shard nodes
 
 ---
 
@@ -241,24 +271,35 @@ A hand-written recursive descent parser supporting:
 
 | Package | Purpose | Key Files |
 |---------|---------|-----------|
-| `cmd/veridicaldb` | Main CLI entry point | `main.go` |
-| `cmd/server` | Standalone server (WIP) | `main.go` |
-| `internal/cli` | REPL implementation | `repl.go` |
-| `internal/config` | Configuration loading | `config.go` |
+| `cmd/veridicaldb` | CLI / REPL / TUI entry point | `main.go` |
+| `cmd/server` | Standalone pgwire server | `main.go` |
+| `internal/build` | Version / build metadata (ldflags target) | `build.go` |
+| `internal/cli` | REPL implementation | `repl.go`, `sharding.go` |
+| `internal/config` | CLI/TUI config loading (viper) | `config.go` |
 | `internal/logger` | Zap logger wrapper | `logger.go` |
-| `pkg/btree` | B-tree index implementation | `btree.go`, `index.go` |
-| `pkg/catalog` | Schema and table metadata | `catalog.go`, `table_manager.go`, `mvcc_table_manager.go` |
-| `pkg/cli` | Shared CLI utilities | `repl.go` |
-| `pkg/config` | Shared config types | `config.go` |
-| `pkg/lock` | Lock manager | `lock.go` |
-| `pkg/log` | Shared logging | `log.go` |
-| `pkg/net` | Network protocol | `server.go`, `protocol.go` |
-| `pkg/observability` | System monitoring | `system_catalog.go` |
-| `pkg/shard` | Sharding utilities | `consistent_hash.go` |
-| `pkg/sql` | SQL parser & executor | `lexer.go`, `parser.go`, `executor.go`, `mvcc_executor.go`, `session.go`, `planner.go` |
-| `pkg/storage` | Storage engines | `storage.go`, `columnar.go` |
-| `pkg/txn` | Transaction management | `txn.go` |
-| `pkg/wal` | Write-ahead logging | `wal.go` |
+| `internal/tui` | Bubble Tea TUI (app, screens, components, theme) | `app.go`, `screens/`, `components/` |
+| `pkg/auth` | Users, bcrypt password hashing, privileges | `auth.go` |
+| `pkg/backup` | Base backups, WAL archiving, PITR restore, S3 | `backup.go`, `restore.go`, `s3.go` |
+| `pkg/btree` | B+ tree index implementation | `btree.go`, `index.go`, `operations.go` |
+| `pkg/catalog` | Schema and table metadata; MVCC table manager | `catalog.go`, `table_manager.go`, `mvcc_table_manager.go` |
+| `pkg/config` | Server config types (pgwire, TLS) | `config.go` |
+| `pkg/engine` | Assembles the database (`Open`) and hands out fully-wired sessions (`NewSession`) | `engine.go` |
+| `pkg/fts` | Full-text search: analyzer, Porter stemmer, inverted index | `analyzer.go`, `index.go`, `manager.go` |
+| `pkg/lock` | Lock manager with timeout/deadlock detection | `lock.go` |
+| `pkg/log` | Hand-rolled structured logger | `log.go` |
+| `pkg/observability` | System catalog, Prometheus metrics, health | `system_catalog.go` |
+| `pkg/pgwire` | PostgreSQL wire protocol server | `server.go`, `protocol.go` |
+| `pkg/shard` | Hash-based sharding, coordinator, 2PC | `coordinator.go`, `shard.go`, `node.go` |
+| `pkg/sql` | Lexer, parser, planner, MVCC executor, session, PL/pgSQL | `lexer.go`, `parser.go`, `planner.go`, `mvcc_executor.go`, `session.go` |
+| `pkg/stats` | Table statistics for the cost model | `stats.go` |
+| `pkg/storage` | Heap + columnar storage engines, buffer pool, pager | `storage.go`, `columnar.go`, `buffer_pool.go` |
+| `pkg/txn` | Transaction manager, MVCC snapshots, visibility | `txn.go`, `visibility.go` |
+| `pkg/vacuum` | Dead-tuple cleanup, auto-vacuum worker | `vacuum.go`, `worker.go` |
+| `pkg/wal` | Write-ahead log, checkpoints, ARIES recovery | `wal.go`, `recovery.go`, `checkpoint.go` |
+
+> **Note:** `pkg/sql` still contains a second, pre-MVCC `executor.go` that is
+> unreachable at runtime (only tests use it). Removing it and splitting the
+> package are plan phases P2 and P4.
 
 ---
 
@@ -513,27 +554,31 @@ tm, _ := catalog.NewTableManager(dir, 4096)
 
 ### Current Limitations
 
-1. **No deadlock detection** - Transactions may hang indefinitely on deadlock (timeout only)
-2. **In-memory indexes** - B-tree indexes rebuilt on startup (persistence is basic JSON)
-3. **Single-threaded executor** - No parallel query execution
-4. **No query cache** - Parsed queries not cached
-5. **Limited error messages** - Some errors lack context
-6. **No VACUUM/compaction** - Deleted rows not reclaimed automatically
+1. **Single-threaded executor** - No parallel query execution
+2. **Snapshot isolation only** - No `SET TRANSACTION ISOLATION LEVEL`; the
+   Read Committed / Repeatable Read / Serializable modes are not selectable
+3. **Catalog metadata is JSON** - `catalog.json`, `indexes.json`, per-database
+   `meta.json` written with `os.WriteFile`; the temp-file-then-rename discipline
+   is inconsistent, so a crash mid-DDL can tear catalog state
+4. **Limited error messages** - Some errors lack context
+5. **BEGIN records are not written** - `Session` opens transactions through the
+   raw `txn.Manager`, so the WAL has COMMIT/ABORT records (via `wal.TxnLogger`)
+   but no matching BEGIN records. Recovery does not require them, but the undo
+   chain for a transaction starts at its first data write rather than a BEGIN.
 
-### Technical Debt
+### Structural Debt & Remediation Plan
 
-1. **Duplicate code** - `pkg/cli` and `internal/cli` have overlap
-2. **Inconsistent error handling** - Some functions return errors, some panic
-3. **Missing validation** - Some edge cases not handled
-4. **Hardcoded limits** - Some buffer sizes are hardcoded
+The known structural problems and the phased plan to address them are tracked
+separately (the "VeridicalDB Atlas" document). In brief:
 
-### Future Refactoring
-
-1. Consolidate `pkg/cli` and `internal/cli`
-2. Add context.Context for cancellation
-3. Implement proper buffer pool management
-4. Add metrics collection throughout
-5. Standardize error types
+| Phase | Scope |
+|-------|-------|
+| P0 | Guardrails: lint config, version consolidation, wire feature-matrix test, this doc — **done** |
+| P1 | `pkg/engine` — `Open`/`NewSession`/`Close` assemble the graph once; all five call sites migrated; the wire protocol now has indexes, FTS, triggers, procedures, and multi-database — **done** |
+| P2 | Collapse the two SQL executors into one. **Larger than first scoped:** `executor.go` (the pre-MVCC path, still the only one the ~148 `NewExecutor` tests exercise) uniquely implements `information_schema` queries and appears to carry other logic — recursive CTEs, `UPDATE ... FROM`, `DELETE ... USING`, some constraint checks — not present in `mvcc_executor.go`. It cannot be deleted until those are ported to the MVCC path behind a parity test suite. The dead `sql.NewExecutor` REPL fallback was already removed in P1. |
+| P3 | One config package, one logger |
+| P4 | Split `pkg/sql` into `token / ast / parse / plan / exec / session` sub-packages |
+| P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
 
 ---
 

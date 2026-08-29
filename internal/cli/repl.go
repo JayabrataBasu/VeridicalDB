@@ -7,34 +7,28 @@ import (
 	"os"
 	"strings"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/build"
 	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 	"github.com/chzyer/readline"
 )
 
-const Version = "v2.0.0 - Halcyon" //please remind me to change it when ever I code. dumb of me
-
 // REPL implements the Read-Eval-Print Loop for VeridicalDB
 type REPL struct {
-	config   *config.Config
-	log      *logger.Logger
-	rl       *readline.Instance
-	catalog  *catalog.Catalog
-	tm       *catalog.TableManager
-	executor *sql.Executor
-	mtm      *catalog.MVCCTableManager
-	session  *sql.Session
-	coord    *shard.Coordinator
+	config  *config.Config
+	log     *logger.Logger
+	rl      *readline.Instance
+	db      *engine.DB
+	ownsDB  bool // true when this REPL opened db and must close it
+	session *sql.Session
+	coord   *shard.Coordinator
 }
+
+func (r *REPL) catalog() *catalog.Catalog { return r.db.Catalog() }
 
 // NewREPL creates a new REPL instance
 func NewREPL(cfg *config.Config, log *logger.Logger) *REPL {
@@ -44,68 +38,19 @@ func NewREPL(cfg *config.Config, log *logger.Logger) *REPL {
 	}
 }
 
-// Initialize sets up the catalog and executor
+// Initialize opens the database engine and creates the REPL's session.
 func (r *REPL) Initialize() error {
-	var err error
-
-	pageSize := r.config.Storage.PageSize
-	if pageSize == 0 {
-		pageSize = 4096 // default
-	}
-
-	r.tm, err = catalog.NewTableManager(r.config.Storage.DataDir, pageSize, nil)
+	db, err := engine.Open(engine.Config{
+		DataDir:  r.config.Storage.DataDir,
+		PageSize: r.config.Storage.PageSize,
+		Logger:   r.log,
+	})
 	if err != nil {
-		return fmt.Errorf("failed to initialize table manager: %w", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
-
-	r.catalog = r.tm.Catalog()
-	r.executor = sql.NewExecutor(r.tm)
-
-	// Create MVCC layer and session to support CREATE DATABASE and CREATE USER
-	txnMgr := txn.NewManager()
-	r.mtm = catalog.NewMVCCTableManager(r.tm, txnMgr, nil)
-	r.session = sql.NewSession(r.mtm)
-
-	// Wire optional DatabaseManager and UserCatalog
-	if dbMgr, err := catalog.NewDatabaseManager(r.config.Storage.DataDir); err == nil {
-		r.session.SetDatabaseManager(dbMgr)
-	} else {
-		r.log.Warn("database manager not available", "error", err)
-	}
-
-	if uc, err := auth.NewUserCatalog(r.config.Storage.DataDir); err == nil {
-		r.session.SetUserCatalog(uc)
-	} else {
-		r.log.Warn("user catalog not available", "error", err)
-	}
-
-	// Wire IndexManager (optional)
-	if idxMgr, err := btree.NewIndexManager(r.config.Storage.DataDir, pageSize); err == nil {
-		r.session.SetIndexManager(idxMgr)
-	} else {
-		r.log.Warn("index manager not available", "error", err)
-	}
-
-	// Wire TriggerCatalog (optional)
-	if tc, err := catalog.NewTriggerCatalog(r.config.Storage.DataDir); err == nil {
-		r.session.SetTriggerCatalog(tc)
-	} else {
-		r.log.Warn("trigger catalog not available", "error", err)
-	}
-
-	// Wire ProcedureCatalog (optional)
-	if pc, err := catalog.NewProcedureCatalog(r.config.Storage.DataDir); err == nil {
-		r.session.SetProcedureCatalog(pc)
-	} else {
-		r.log.Warn("procedure catalog not available", "error", err)
-	}
-
-	// Wire FTSManager (optional)
-	if ftsMgr, err := fts.NewManager(r.config.Storage.DataDir); err == nil {
-		r.session.SetFTSManager(ftsMgr)
-	} else {
-		r.log.Warn("FTS manager not available", "error", err)
-	}
+	r.db = db
+	r.ownsDB = true
+	r.session = db.NewSession()
 
 	coord, err := SetupShardCoordinator(r.config, r.session)
 	if err != nil {
@@ -129,6 +74,11 @@ func (r *REPL) closeResources() {
 	}
 	if r.session != nil {
 		r.session.Close()
+	}
+	if r.ownsDB && r.db != nil {
+		if err := r.db.Close(); err != nil {
+			r.log.Warn("failed to close database", "error", err)
+		}
 	}
 }
 
@@ -254,54 +204,20 @@ func (r *REPL) processCommand(input string) commandResult {
 }
 
 func (r *REPL) executeSQL(input string) commandResult {
-	// Prefer session (MVCC-enabled) over executor
-	if r.session != nil {
-		res, err := r.session.ExecuteSQL(input)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			return commandError
-		}
-		if res.Message != "" {
-			fmt.Println(res.Message)
-		}
-		if len(res.Columns) > 0 {
-			r.printTable(res.Columns, res.Rows)
-		}
-		if res.RowsAffected > 0 && res.Message == "" {
-			fmt.Printf("%d row(s) affected\n", res.RowsAffected)
-		}
-		return commandOK
-	}
-
-	// Fallback to legacy executor if no session
-	// Parse the SQL
-	parser := sql.NewParser(input)
-	stmt, err := parser.Parse()
-	if err != nil {
-		fmt.Printf("Syntax error: %v\n", err)
-		return commandError
-	}
-
-	// Execute the statement
-	result, err := r.executor.Execute(stmt)
+	res, err := r.session.ExecuteSQL(input)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		return commandError
 	}
-
-	// Display the result
-	if result.Message != "" {
-		fmt.Println(result.Message)
+	if res.Message != "" {
+		fmt.Println(res.Message)
 	}
-
-	if len(result.Columns) > 0 {
-		r.printTable(result.Columns, result.Rows)
+	if len(res.Columns) > 0 {
+		r.printTable(res.Columns, res.Rows)
 	}
-
-	if result.RowsAffected > 0 && result.Message == "" {
-		fmt.Printf("%d row(s) affected\n", result.RowsAffected)
+	if res.RowsAffected > 0 && res.Message == "" {
+		fmt.Printf("%d row(s) affected\n", res.RowsAffected)
 	}
-
 	return commandOK
 }
 
@@ -368,7 +284,7 @@ func (r *REPL) handleBackslashCommand(input string) commandResult {
 		return commandOK
 
 	case "\\dt", "\\tables":
-		tables := r.catalog.ListTables()
+		tables := r.catalog().ListTables()
 		if len(tables) == 0 {
 			fmt.Println("No tables found.")
 		} else {
@@ -388,7 +304,7 @@ func (r *REPL) handleBackslashCommand(input string) commandResult {
 	case "\\d":
 		if len(parts) > 1 {
 			tableName := parts[1]
-			meta, err := r.catalog.GetTable(tableName)
+			meta, err := r.catalog().GetTable(tableName)
 			if err != nil {
 				fmt.Printf("Error: %v\n", err)
 				return commandError
@@ -438,10 +354,10 @@ func (r *REPL) printWelcome() {
  ╚████╔╝ ███████╗██║  ██║██║██████╔╝██║╚██████╗██║  ██║███████╗██████╔╝██████╔╝
   ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝ ╚═════╝
 
-    Version %s 
+    Version %s
     Type HELP; or \? for available commands
-    
-`, Version)
+
+`, build.String())
 }
 
 func (r *REPL) printHelp() {
@@ -481,10 +397,10 @@ Note: Commands must end with ; (semicolon)
 }
 
 func (r *REPL) printStatus() {
-	tableCount := len(r.catalog.ListTables())
+	tableCount := len(r.catalog().ListTables())
 	fmt.Println("\nVeridicalDB Status")
 	fmt.Println("==================")
-	fmt.Printf("Version:    %s\n", Version)
+	fmt.Printf("Version:    %s\n", build.String())
 	fmt.Printf("Data Dir:   %s\n", r.config.Storage.DataDir)
 	fmt.Printf("Port:       %d\n", r.config.Server.Port)
 	fmt.Printf("Tables:     %d\n", tableCount)
@@ -553,14 +469,16 @@ func newCompleter() *readline.PrefixCompleter {
 
 // RunInteractive is a compatibility function that starts the REPL in interactive mode.
 // This function provides compatibility with the cmd/server main.go interface.
-func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manager, txnLogger *wal.TxnLogger, dataDir string) error {
-	// Convert pkg/log.Logger to internal/logger.Logger for compatibility
+// RunInteractive starts the REPL against an already-open engine.DB. The caller
+// retains ownership of db and is responsible for closing it.
+func RunInteractive(db *engine.DB, dataDir string) error {
+	// The REPL logs through internal/logger; the caller's pkg/log.Logger is a
+	// different type, so make a matching one.
 	internalLogger, err := logger.New("info", "text", "stdout")
 	if err != nil {
 		internalLogger = logger.NewNop()
 	}
 
-	// Create a minimal config for the REPL
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			DataDir:  dataDir,
@@ -568,42 +486,12 @@ func RunInteractive(lgr *log.Logger, tm *catalog.TableManager, txnMgr *txn.Manag
 		},
 	}
 
-	// Create REPL instance
 	repl := &REPL{
 		config:  cfg,
 		log:     internalLogger,
-		tm:      tm,
-		catalog: tm.Catalog(),
-	}
-
-	// Create executor and MVCC layer
-	repl.executor = sql.NewExecutor(tm)
-	repl.mtm = catalog.NewMVCCTableManager(tm, txnMgr, txnLogger)
-	repl.session = sql.NewSession(repl.mtm)
-
-	// Wire optional components
-	if dbMgr, err := catalog.NewDatabaseManager(dataDir); err == nil {
-		repl.session.SetDatabaseManager(dbMgr)
-	}
-
-	if uc, err := auth.NewUserCatalog(dataDir); err == nil {
-		repl.session.SetUserCatalog(uc)
-	}
-
-	if idxMgr, err := btree.NewIndexManager(dataDir, 4096); err == nil {
-		repl.session.SetIndexManager(idxMgr)
-	}
-
-	if tc, err := catalog.NewTriggerCatalog(dataDir); err == nil {
-		repl.session.SetTriggerCatalog(tc)
-	}
-
-	if pc, err := catalog.NewProcedureCatalog(dataDir); err == nil {
-		repl.session.SetProcedureCatalog(pc)
-	}
-
-	if ftsMgr, err := fts.NewManager(dataDir); err == nil {
-		repl.session.SetFTSManager(ftsMgr)
+		db:      db,
+		ownsDB:  false,
+		session: db.NewSession(),
 	}
 
 	coord, err := SetupShardCoordinator(repl.config, repl.session)

@@ -199,3 +199,7 @@ buildNumber.properties
 
 # Local benchmark artifacts (Phase 3)
 .benchmarks/
+# Source directory: internal/build holds version metadata (see Makefile ldflags).
+# Re-include it; the bare "build/" rules above (Python/Java sections) would hide it.
+!internal/build/
+!internal/build/*.go

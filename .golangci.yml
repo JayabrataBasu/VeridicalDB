@@ -1,16 +1,23 @@
+# golangci-lint v2 configuration.
+# CI pins v2.7.2 (see .github/workflows/ci.yml).
 version: "2"
 
-run:
-  skip-dirs: ["build", "data", ".github"]
-
 linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  # (In v2, gosimple and stylecheck are folded into staticcheck.)
+  default: standard
   enable:
-    - govet
     - errcheck
+    - govet
     - staticcheck
     - unused
+  exclusions:
+    generated: lax
+    # Non-source trees. Replaces the v1 `run.skip-dirs` key.
+    paths:
+      - build
+      - data
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

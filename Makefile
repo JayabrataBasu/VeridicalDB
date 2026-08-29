@@ -4,19 +4,25 @@ BIN=veridicaldb
 BINARY_NAME?=$(BIN)
 VERSION?=v2.0.0
 
+# Version metadata injected into internal/build at link time.
+BUILD_PKG=github.com/JayabrataBasu/VeridicalDB/internal/build
+GIT_COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS=-ldflags "-X $(BUILD_PKG).Version=$(VERSION) -X $(BUILD_PKG).Commit=$(GIT_COMMIT) -X $(BUILD_PKG).Date=$(BUILD_DATE)"
+
 all: build
 
 # Build the CLI binary (default)
 build:
-	go build -o build/$(BIN) ./cmd/veridicaldb
+	go build $(LDFLAGS) -o build/$(BIN) ./cmd/veridicaldb
 
 # Build the CLI binary (explicit)
 build-cli:
-	go build -o build/$(BIN) ./cmd/veridicaldb
+	go build $(LDFLAGS) -o build/$(BIN) ./cmd/veridicaldb
 
 # Build the server binary
 build-server:
-	go build -o build/$(BIN)-server ./cmd/server
+	go build $(LDFLAGS) -o build/$(BIN)-server ./cmd/server
 
 release-local:
 	@echo "Running local release script (cross-compile)..."
@@ -31,10 +37,7 @@ docker:
 
 .PHONY: test clean install run init fmt lint help smoke-test stress-test phase3-benchmark phase3-benchmark-quick phase3-regression-gate phase3-regression-gate-quick
 
-# Build variables
-VERSION?=v2.0.0
-BUILD_DATE=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
-LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.buildDate=$(BUILD_DATE)"
+# (Version/build metadata variables are defined near the top of this file.)
 
 # Where instruments may install binaries (for go install)
 GOBIN := $(shell go env GOBIN)

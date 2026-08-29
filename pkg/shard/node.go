@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
 // ShardNode represents a single shard in the distributed database.
@@ -22,9 +22,7 @@ type ShardNode struct {
 	dataDir  string
 	pageSize int
 
-	tm     *catalog.TableManager
-	mtm    *catalog.MVCCTableManager
-	txnMgr *txn.Manager
+	db *engine.DB
 
 	listener net.Listener
 
@@ -40,13 +38,10 @@ type ShardNode struct {
 
 // NewShardNode creates a new shard node.
 func NewShardNode(info *ShardInfo, dataDir string, pageSize int) (*ShardNode, error) {
-	tm, err := catalog.NewTableManager(dataDir, pageSize, nil)
+	db, err := engine.Open(engine.Config{DataDir: dataDir, PageSize: pageSize})
 	if err != nil {
-		return nil, fmt.Errorf("create table manager: %w", err)
+		return nil, fmt.Errorf("open engine: %w", err)
 	}
-
-	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -54,9 +49,7 @@ func NewShardNode(info *ShardInfo, dataDir string, pageSize int) (*ShardNode, er
 		info:     info,
 		dataDir:  dataDir,
 		pageSize: pageSize,
-		tm:       tm,
-		mtm:      mtm,
-		txnMgr:   txnMgr,
+		db:       db,
 		sessions: make(map[string]*sql.Session),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -154,8 +147,7 @@ func (n *ShardNode) getOrCreateSession(sessionID string) *sql.Session {
 		return session
 	}
 
-	// Use MVCC table manager for session
-	session := sql.NewSession(n.mtm)
+	session := n.db.NewSession()
 	n.sessions[sessionID] = session
 	return session
 }
@@ -244,7 +236,7 @@ func (n *ShardNode) Stop() error {
 	}
 
 	n.wg.Wait()
-	return nil
+	return n.db.Close()
 }
 
 // Info returns the shard info.
@@ -254,5 +246,5 @@ func (n *ShardNode) Info() *ShardInfo {
 
 // TableManager returns the table manager.
 func (n *ShardNode) TableManager() *catalog.TableManager {
-	return n.tm
+	return n.db.TableManager()
 }

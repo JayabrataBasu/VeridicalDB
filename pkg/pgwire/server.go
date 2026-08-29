@@ -42,12 +42,23 @@ type Server struct {
 
 	// TLS configuration
 	tlsConfig *tls.Config
+
+	// newSession produces a fully-wired session per connection (see
+	// ServerConfig.NewSession).
+	newSession func() *sql.Session
 }
 
 // ServerConfig holds configuration for the pgwire server.
 type ServerConfig struct {
-	Port          int
-	Logger        *log.Logger
+	Port   int
+	Logger *log.Logger
+
+	// NewSession, when set, is the source of per-connection sessions. This is
+	// how callers hand the server a fully-wired session (indexes, triggers,
+	// procedures, FTS, multi-database, ...). When nil the server falls back to
+	// a bare sql.NewSession(MTM), which has none of those capabilities.
+	NewSession func() *sql.Session
+
 	MTM           *catalog.MVCCTableManager
 	TxnMgr        *txn.Manager
 	ServerVersion string
@@ -72,6 +83,7 @@ func NewServer(cfg ServerConfig) *Server {
 		cancel:        cancel,
 		serverVersion: serverVersion,
 		tlsConfig:     cfg.TLSConfig,
+		newSession:    cfg.NewSession,
 	}
 }
 
@@ -390,8 +402,12 @@ func (c *Conn) processStartup(params []byte) error {
 		c.parameters[key] = value
 	}
 
-	// Create SQL session
-	c.session = sql.NewSession(c.server.mtm)
+	// Create SQL session — fully wired if the caller supplied a factory.
+	if c.server.newSession != nil {
+		c.session = c.server.newSession()
+	} else {
+		c.session = sql.NewSession(c.server.mtm)
+	}
 
 	// Send AuthenticationOK
 	buf := NewBuffer()

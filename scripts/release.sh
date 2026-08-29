@@ -14,6 +14,11 @@ mkdir -p "$OUT_DIR"
 
 VERSION=${1:-beta}
 
+BUILD_PKG="github.com/JayabrataBasu/VeridicalDB/internal/build"
+GIT_COMMIT=$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+LDFLAGS="-s -w -X ${BUILD_PKG}.Version=${VERSION} -X ${BUILD_PKG}.Commit=${GIT_COMMIT} -X ${BUILD_PKG}.Date=${BUILD_DATE}"
+
 # Target platforms: friendly-name:GOOS:GOARCH
 targets=(
   "linux:linux:amd64"
@@ -36,7 +41,7 @@ for t in "${targets[@]}"; do
 
   # Build to temp location
   TEMP_BIN="$OUT_DIR/build-temp${SUFFIX}"
-  env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "-s -w" -o "$TEMP_BIN" ./cmd/veridicaldb
+  env CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "$TEMP_BIN" ./cmd/veridicaldb
 
   # Create package directory
   PKG_DIR="$OUT_DIR/pkg-temp"

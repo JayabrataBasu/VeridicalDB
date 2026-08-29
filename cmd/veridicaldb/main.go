@@ -9,16 +9,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/JayabrataBasu/VeridicalDB/internal/build"
 	"github.com/JayabrataBasu/VeridicalDB/internal/cli"
 	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/auth"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/backup"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/vacuum"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
@@ -27,10 +25,8 @@ import (
 )
 
 var (
-	version   = "2.0.0"
-	buildDate = "dev"
-	cfgFile   string
-	useTUI    bool
+	cfgFile string
+	useTUI  bool
 )
 
 func main() {
@@ -60,7 +56,7 @@ Start with a specific config file:
 		Use:   "version",
 		Short: "Print version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("VeridicalDB %s (built %s)\n", version, buildDate)
+			fmt.Printf("VeridicalDB %s\n", build.Full())
 		},
 	})
 
@@ -249,7 +245,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	defer func() { _ = log.Sync() }()
 
 	log.Info("Starting VeridicalDB",
-		"version", version,
+		"version", build.Version,
 		"data_dir", cfg.Storage.DataDir,
 		"port", cfg.Server.Port,
 		"interface", func() string {
@@ -886,44 +882,20 @@ func vacuumStatus(cmd *cobra.Command, args []string) {
 
 // runTUI starts the Terminal User Interface
 func runTUI(cfg *config.Config, log *logger.Logger) {
-	// Initialize database components similar to REPL
-	pageSize := cfg.Storage.PageSize
-	if pageSize == 0 {
-		pageSize = 4096 // default
-	}
-
-	// Create table manager
-	tm, err := catalog.NewTableManager(cfg.Storage.DataDir, pageSize, nil)
+	db, err := engine.Open(engine.Config{
+		DataDir:  cfg.Storage.DataDir,
+		PageSize: cfg.Storage.PageSize,
+		Logger:   log,
+	})
 	if err != nil {
-		log.Error("Failed to initialize table manager", "error", err)
+		log.Error("Failed to open database", "error", err)
 		fmt.Fprintf(os.Stderr, "Error: could not initialize database: %v\n", err)
 		os.Exit(1)
 	}
+	defer func() { _ = db.Close() }()
 
-	// Create MVCC layer and session
-	txnMgr := txn.NewManager()
-	mtm := catalog.NewMVCCTableManager(tm, txnMgr, nil)
-	session := sql.NewSession(mtm)
+	session := db.NewSession()
 
-	// Wire optional components
-	if dbMgr, err := catalog.NewDatabaseManager(cfg.Storage.DataDir); err == nil {
-		session.SetDatabaseManager(dbMgr)
-	}
-	if uc, err := auth.NewUserCatalog(cfg.Storage.DataDir); err == nil {
-		session.SetUserCatalog(uc)
-	}
-	if idxMgr, err := btree.NewIndexManager(cfg.Storage.DataDir, pageSize); err == nil {
-		session.SetIndexManager(idxMgr)
-	}
-	if tc, err := catalog.NewTriggerCatalog(cfg.Storage.DataDir); err == nil {
-		session.SetTriggerCatalog(tc)
-	}
-	if pc, err := catalog.NewProcedureCatalog(cfg.Storage.DataDir); err == nil {
-		session.SetProcedureCatalog(pc)
-	}
-	if ftsMgr, err := fts.NewManager(cfg.Storage.DataDir); err == nil {
-		session.SetFTSManager(ftsMgr)
-	}
 	coord, err := cli.SetupShardCoordinator(cfg, session)
 	if err != nil {
 		log.Error("Failed to initialize shard coordinator", "error", err)

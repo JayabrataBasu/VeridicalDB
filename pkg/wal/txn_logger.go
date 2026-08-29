@@ -67,9 +67,16 @@ func (tl *TxnLogger) Begin() (*txn.Transaction, error) {
 // The COMMIT record is written and flushed to disk before returning.
 func (tl *TxnLogger) Commit(txid txn.TxID) error {
 	tl.mu.Lock()
-	prevLSN := tl.prevLSN[txid]
+	prevLSN, logged := tl.prevLSN[txid]
 	delete(tl.prevLSN, txid)
 	tl.mu.Unlock()
+
+	// A transaction that never logged a BEGIN or a data change is read-only:
+	// there is nothing to redo or undo, so no COMMIT record (and no fsync) is
+	// needed. This keeps read-only autocommit statements off the WAL hot path.
+	if !logged {
+		return tl.txnMgr.Commit(txid)
+	}
 
 	// Log COMMIT record
 	rec := &Record{
@@ -95,9 +102,14 @@ func (tl *TxnLogger) Commit(txid txn.TxID) error {
 // Abort aborts a transaction and logs an ABORT record.
 func (tl *TxnLogger) Abort(txid txn.TxID) error {
 	tl.mu.Lock()
-	prevLSN := tl.prevLSN[txid]
+	prevLSN, logged := tl.prevLSN[txid]
 	delete(tl.prevLSN, txid)
 	tl.mu.Unlock()
+
+	// Read-only transaction: nothing was written, nothing to undo.
+	if !logged {
+		return tl.txnMgr.Abort(txid)
+	}
 
 	// Log ABORT record
 	rec := &Record{

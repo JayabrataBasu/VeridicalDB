@@ -422,7 +422,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			if s.lockMgr != nil {
 				s.lockMgr.ReleaseAll(tx.ID)
 			}
-			_ = s.txnMgr.Abort(tx.ID)
+			_ = s.mtm.AbortTxn(tx.ID)
 			s.currentTx = nil
 		}
 		return nil, err
@@ -434,7 +434,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 		if s.lockMgr != nil {
 			s.lockMgr.ReleaseAll(tx.ID)
 		}
-		if err := s.txnMgr.Commit(tx.ID); err != nil {
+		if err := s.mtm.CommitTxn(tx.ID); err != nil {
 			return nil, fmt.Errorf("autocommit failed: %w", err)
 		}
 		s.currentTx = nil
@@ -457,7 +457,7 @@ func (s *Session) executeSelectWithPlan(stmt *SelectStmt, plan *ExecutionPlan) (
 			if s.lockMgr != nil {
 				s.lockMgr.ReleaseAll(tx.ID)
 			}
-			_ = s.txnMgr.Abort(tx.ID)
+			_ = s.mtm.AbortTxn(tx.ID)
 			s.currentTx = nil
 		}
 		return nil, err
@@ -467,7 +467,7 @@ func (s *Session) executeSelectWithPlan(stmt *SelectStmt, plan *ExecutionPlan) (
 		if s.lockMgr != nil {
 			s.lockMgr.ReleaseAll(tx.ID)
 		}
-		if err := s.txnMgr.Commit(tx.ID); err != nil {
+		if err := s.mtm.CommitTxn(tx.ID); err != nil {
 			return nil, fmt.Errorf("autocommit failed: %w", err)
 		}
 		s.currentTx = nil
@@ -544,7 +544,7 @@ func (s *Session) handleCommit() (*Result, error) {
 		s.lockMgr.ReleaseAll(txid)
 	}
 
-	if err := s.txnMgr.Commit(txid); err != nil {
+	if err := s.mtm.CommitTxn(txid); err != nil {
 		return nil, err
 	}
 
@@ -569,7 +569,7 @@ func (s *Session) handleRollback() (*Result, error) {
 		s.lockMgr.ReleaseAll(txid)
 	}
 
-	if err := s.txnMgr.Abort(txid); err != nil {
+	if err := s.mtm.AbortTxn(txid); err != nil {
 		return nil, err
 	}
 
@@ -602,7 +602,7 @@ func (s *Session) Close() {
 		if s.lockMgr != nil {
 			s.lockMgr.ReleaseAll(txid)
 		}
-		_ = s.txnMgr.Abort(txid)
+		_ = s.mtm.AbortTxn(txid)
 		s.currentTx = nil
 	}
 }
@@ -642,7 +642,7 @@ func (s *Session) handleCreateIndex(stmt *CreateIndexStmt) (*Result, error) {
 	// Populate the index with existing data
 	// Use a read-only transaction to scan all visible rows
 	tempTx := s.txnMgr.Begin()
-	defer func() { _ = s.txnMgr.Commit(tempTx.ID) }()
+	defer func() { _ = s.mtm.CommitTxn(tempTx.ID) }()
 
 	rowCount := 0
 	err = s.mtm.Scan(stmt.TableName, tempTx, func(row *catalog.MVCCRow) (bool, error) {
@@ -1322,9 +1322,9 @@ func (s *Session) handleShow(stmt *ShowStmt) (*Result, error) {
 				s.lockMgr.ReleaseAll(tx.ID)
 			}
 			if err == nil {
-				_ = s.txnMgr.Commit(tx.ID)
+				_ = s.mtm.CommitTxn(tx.ID)
 			} else {
-				_ = s.txnMgr.Abort(tx.ID)
+				_ = s.mtm.AbortTxn(tx.ID)
 			}
 			s.currentTx = nil
 		}
