@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/build"
-	"github.com/JayabrataBasu/VeridicalDB/internal/config"
-	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/chzyer/readline"
@@ -20,7 +20,7 @@ import (
 // REPL implements the Read-Eval-Print Loop for VeridicalDB
 type REPL struct {
 	config  *config.Config
-	log     *logger.Logger
+	log     *log.Logger
 	rl      *readline.Instance
 	db      *engine.DB
 	ownsDB  bool // true when this REPL opened db and must close it
@@ -31,7 +31,7 @@ type REPL struct {
 func (r *REPL) catalog() *catalog.Catalog { return r.db.Catalog() }
 
 // NewREPL creates a new REPL instance
-func NewREPL(cfg *config.Config, log *logger.Logger) *REPL {
+func NewREPL(cfg *config.Config, log *log.Logger) *REPL {
 	return &REPL{
 		config: cfg,
 		log:    log,
@@ -404,7 +404,7 @@ func (r *REPL) printStatus() {
 	fmt.Printf("Data Dir:   %s\n", r.config.Storage.DataDir)
 	fmt.Printf("Port:       %d\n", r.config.Server.Port)
 	fmt.Printf("Tables:     %d\n", tableCount)
-	fmt.Printf("Log Level:  %s\n", r.config.Log.Level)
+	fmt.Printf("Log Level:  %s\n", r.config.Logging.Level)
 	fmt.Println()
 }
 
@@ -421,9 +421,9 @@ func (r *REPL) printConfig() {
 	fmt.Printf("  Buffer Pool:      %d MB\n", r.config.Storage.BufferPoolMB)
 	fmt.Printf("  WAL Directory:    %s\n", r.config.Storage.WalDir)
 	fmt.Printf("\nLogging:\n")
-	fmt.Printf("  Level:            %s\n", r.config.Log.Level)
-	fmt.Printf("  Format:           %s\n", r.config.Log.Format)
-	fmt.Printf("  Output:           %s\n", r.config.Log.Output)
+	fmt.Printf("  Level:            %s\n", r.config.Logging.Level)
+	fmt.Printf("  Format:           %s\n", r.config.Logging.Format)
+	fmt.Printf("  Output:           %s\n", r.config.Logging.Output)
 	fmt.Println()
 }
 
@@ -472,11 +472,10 @@ func newCompleter() *readline.PrefixCompleter {
 // RunInteractive starts the REPL against an already-open engine.DB. The caller
 // retains ownership of db and is responsible for closing it.
 func RunInteractive(db *engine.DB, dataDir string) error {
-	// The REPL logs through internal/logger; the caller's pkg/log.Logger is a
-	// different type, so make a matching one.
-	internalLogger, err := logger.New("info", "text", "stdout")
+	// Build a logger for the REPL; the exact level here is not important.
+	replLog, err := log.NewFromConfig("info", "text", "stdout")
 	if err != nil {
-		internalLogger = logger.NewNop()
+		replLog = log.NewNop()
 	}
 
 	cfg := &config.Config{
@@ -488,7 +487,7 @@ func RunInteractive(db *engine.DB, dataDir string) error {
 
 	repl := &REPL{
 		config:  cfg,
-		log:     internalLogger,
+		log:     replLog,
 		db:      db,
 		ownsDB:  false,
 		session: db.NewSession(),

@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/JayabrataBasu/VeridicalDB/internal/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )

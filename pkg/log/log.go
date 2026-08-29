@@ -89,6 +89,16 @@ func New(out io.Writer, level Level, format Format) *Logger {
 	}
 }
 
+// NewNop returns a Logger that discards everything. Useful in tests and as a
+// fallback when logger construction fails.
+func NewNop() *Logger {
+	return New(io.Discard, LevelError, FormatText)
+}
+
+// Sync is a no-op; this logger writes synchronously. It exists so callers can
+// `defer log.Sync()` uniformly.
+func (l *Logger) Sync() error { return nil }
+
 // NewFromConfig creates a Logger from configuration strings.
 func NewFromConfig(levelStr, formatStr, output string) (*Logger, error) {
 	level := ParseLevel(levelStr)

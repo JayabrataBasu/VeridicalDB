@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/JayabrataBasu/VeridicalDB/internal/config"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 )

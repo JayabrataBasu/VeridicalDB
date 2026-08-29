@@ -11,12 +11,12 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/build"
 	"github.com/JayabrataBasu/VeridicalDB/internal/cli"
-	"github.com/JayabrataBasu/VeridicalDB/internal/config"
-	"github.com/JayabrataBasu/VeridicalDB/internal/logger"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/backup"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/vacuum"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
@@ -237,7 +237,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize logger
-	log, err := logger.New(cfg.Log.Level, cfg.Log.Format, cfg.Log.Output)
+	log, err := log.NewFromConfig(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.Output)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing logger: %v\n", err)
 		os.Exit(1)
@@ -881,7 +881,7 @@ func vacuumStatus(cmd *cobra.Command, args []string) {
 }
 
 // runTUI starts the Terminal User Interface
-func runTUI(cfg *config.Config, log *logger.Logger) {
+func runTUI(cfg *config.Config, log *log.Logger) {
 	db, err := engine.Open(engine.Config{
 		DataDir:  cfg.Storage.DataDir,
 		PageSize: cfg.Storage.PageSize,

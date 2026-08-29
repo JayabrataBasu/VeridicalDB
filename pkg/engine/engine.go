@@ -25,7 +25,7 @@ import (
 const defaultPageSize = 4096
 
 // Logger is the minimal logging surface the engine needs. Both
-// *internal/logger.Logger and *pkg/log.Logger satisfy it.
+// *pkg/log.Logger (and any logger with Info/Warn(string, ...any)) satisfy it.
 type Logger interface {
 	Info(msg string, keysAndValues ...any)
 	Warn(msg string, keysAndValues ...any)

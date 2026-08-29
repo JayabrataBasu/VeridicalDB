@@ -1,72 +1,52 @@
-# VeridicalDB Configuration File
-# Copy this to config.yaml and customize as needed
+# VeridicalDB configuration reference.
+# Copy to veridicaldb.yaml (or pass --config <path>) and adjust.
+# Every value shown is the built-in default; VERIDICAL_* env vars override
+# the common scalars (e.g. VERIDICAL_SERVER_PORT, VERIDICAL_LOG_LEVEL).
 
 server:
-  # Port for TCP connections (used in Stage 5+)
-  port: 5432
-  # Host address to bind to
-  host: "127.0.0.1"
-  # Port for observability endpoints (metrics, health, pprof)
-  observability_port: 8081
+  host: 127.0.0.1
+  port: 5432                 # PostgreSQL wire protocol
+  observability_port: 8081   # /metrics, /health, /debug/pprof
+  max_connections: 100       # 0 = unlimited
+  read_timeout_sec: 30
+  write_timeout_sec: 30
 
 storage:
-  # Directory where database files are stored
-  data_dir: "./data"
-  # Page size in bytes (must be power of 2, 1024-65536)
-  page_size: 8192
+  data_dir: ./data
+  page_size: 8192            # power of two, 4096-65536
+  buffer_pool_mb: 128
+  wal_dir: ""                # empty => <data_dir>/wal
+  wal_buffer_kb: 64
+  checkpoint_sec: 300
 
 logging:
-  # Minimum log level: debug, info, warn, error
-  level: "info"
-  # Log format: text or json
-  format: "text"
-  # Output: stdout, stderr, or file path
-  output: "stdout"
+  level: info                # debug, info, warn, error
+  format: text               # text or json
+  output: stderr             # stdout, stderr, or a file path
 
-# Distributed sharding settings
-sharding:
-  # Enable coordinator-based sharding
-  enabled: false
-  # Column used to compute shard routing (must exist in tables)
-  shard_key_column: "id"
-  # Shard endpoints for the coordinator to connect to
-  nodes:
-    # - host: "127.0.0.1"
-    #   port: 15432
-    # - host: "127.0.0.1"
-    #   port: 15433
-
-# PostgreSQL wire protocol settings
 pgwire:
-  # TLS/SSL configuration for secure connections
   tls:
-    # Enable TLS for pgwire connections
     enabled: false
-    
-    # Path to server certificate file (PEM format)
-    # Required when TLS is enabled
-    # cert_file: "/path/to/server.crt"
-    
-    # Path to server private key file (PEM format)
-    # Required when TLS is enabled
-    # key_file: "/path/to/server.key"
-    
-    # Path to CA certificate file for client certificate validation (optional)
-    # Required when client_auth is "verify" or "require_and_verify"
-    # ca_file: "/path/to/ca.crt"
-    
-    # Client authentication policy:
-    # - none: Don't request client certificate (default)
-    # - request: Request client cert but don't require it
-    # - require: Require client cert but don't verify it against CA
-    # - verify: Request and verify client cert if provided
-    # - require_and_verify: Require and verify client cert (mTLS)
-    client_auth: "none"
-    
-    # Minimum TLS version (default: 1.2)
-    # Valid values: "1.0", "1.1", "1.2", "1.3"
-    min_version: "1.2"
-    
-    # Maximum TLS version (optional, defaults to latest supported)
-    # Valid values: "1.0", "1.1", "1.2", "1.3"
+    # cert_file: /path/to/server.crt   # required when enabled
+    # key_file:  /path/to/server.key   # required when enabled
+    # ca_file:   /path/to/ca.crt       # required for client-cert verification
+    # client_auth: none                # none | request | require | verify | require_and_verify
+    # min_version: "1.2"               # 1.0 | 1.1 | 1.2 | 1.3
     # max_version: "1.3"
+
+backup:
+  # backup_dir defaults to <data_dir>/backups
+  # archive_dir defaults to <data_dir>/wal_archive
+  compress: true
+  retention_days: 30          # 0 = keep forever
+  # archive_command: "aws s3 cp %p s3://bucket/wal/%f"
+  # restore_command: "aws s3 cp s3://bucket/wal/%f %p"
+
+sharding:
+  enabled: false
+  shard_key_column: id
+  nodes:
+    # - host: 127.0.0.1
+    #   port: 15432
+    # - host: 127.0.0.1
+    #   port: 15433

@@ -38,11 +38,9 @@ VeridicalDB is a modern, embeddable database engine written in Go. It aims to pr
 - **Dependencies:**
   - `github.com/chzyer/readline` - REPL line editing
   - `github.com/spf13/cobra` - CLI framework
-  - `github.com/spf13/viper` - Configuration
-  - `go.uber.org/zap` - Structured logging
   - `github.com/charmbracelet/bubbletea` - TUI
 - **Codebase Size:** ~58,000 lines of non-test Go, ~31,000 lines of tests
-- **Test Coverage:** All 25 test packages pass; `go vet` and `gofmt` clean
+- **Test Coverage:** all test packages pass; `go vet`, `gofmt`, and `-race` clean
 
 ---
 
@@ -205,28 +203,29 @@ A hand-written recursive descent parser supporting:
 - Multi-line statement support (continues until `;`)
 - Pretty-printed table output
 
-### ✅ Configuration (`internal/config/`, `pkg/config/`)
+### ✅ Configuration (`pkg/config/`)
 
-- YAML configuration file support
-- Command-line flags via Cobra
-- Environment variable overrides via Viper
-- Sensible defaults for all settings
+- One config schema for every entry point (server, CLI, TUI). YAML or JSON file,
+  layered over built-in defaults, then `VERIDICAL_*` environment overrides.
+- Sections: `server`, `storage`, `logging`, `pgwire` (TLS/mTLS), `backup`,
+  `sharding`. Derived paths (`wal_dir`, `backup_dir`, `archive_dir`) default to
+  sub-directories of `data_dir`.
+- `config.example.yaml` is the annotated reference.
+- `pkg/config` also owns data-directory init/validation (`InitDataDir`,
+  `ValidateDataDir`, `CreateDefaultConfig`).
 
-> **Known issue:** there are currently two config packages. `internal/config`
-> (viper) is used by the CLI/TUI and carries backup, sharding, and WAL-tuning
-> sections; `pkg/config` is used by `cmd/server` and carries TLS/mTLS and pgwire
-> settings. Neither is a superset. Consolidation is planned (remediation plan
-> phase P3).
+_(P3 merged the former `internal/config` — which used viper — into this package;
+the viper dependency was dropped.)_
 
-### ✅ Logging (`internal/logger/`, `pkg/log/`)
+### ✅ Logging (`pkg/log/`)
 
-- Structured logging (`internal/logger` wraps Zap; `pkg/log` is a hand-rolled
-  structured logger)
-- Configurable log levels
-- JSON or console output formats
+- One hand-rolled structured logger. `NewFromConfig(level, format, output)`,
+  `NewNop()`, `Info/Warn/Error/Debug(msg, ...any)`, `With`, package-level
+  `SetDefault`/`Default`.
+- Text or JSON, level-filtered, writes to stdout/stderr/file.
 
-> **Known issue:** two logging packages coexist. Standardizing on one is planned
-> (phase P3).
+_(P3 removed `internal/logger`, a zap wrapper — the **zap dependency was
+dropped** along with viper.)_
 
 ### ✅ Version metadata (`internal/build/`)
 
@@ -275,18 +274,16 @@ superseded it.)_
 | `cmd/server` | Standalone pgwire server | `main.go` |
 | `internal/build` | Version / build metadata (ldflags target) | `build.go` |
 | `internal/cli` | REPL implementation | `repl.go`, `sharding.go` |
-| `internal/config` | CLI/TUI config loading (viper) | `config.go` |
-| `internal/logger` | Zap logger wrapper | `logger.go` |
 | `internal/tui` | Bubble Tea TUI (app, screens, components, theme) | `app.go`, `screens/`, `components/` |
 | `pkg/auth` | Users, bcrypt password hashing, privileges | `auth.go` |
 | `pkg/backup` | Base backups, WAL archiving, PITR restore, S3 | `backup.go`, `restore.go`, `s3.go` |
 | `pkg/btree` | B+ tree index implementation | `btree.go`, `index.go`, `operations.go` |
 | `pkg/catalog` | Schema and table metadata; MVCC table manager | `catalog.go`, `table_manager.go`, `mvcc_table_manager.go` |
-| `pkg/config` | Server config types (pgwire, TLS) | `config.go` |
+| `pkg/config` | The single config schema + data-dir init/validation | `config.go`, `datadir.go` |
 | `pkg/engine` | Assembles the database (`Open`) and hands out fully-wired sessions (`NewSession`) | `engine.go` |
 | `pkg/fts` | Full-text search: analyzer, Porter stemmer, inverted index | `analyzer.go`, `index.go`, `manager.go` |
 | `pkg/lock` | Lock manager with timeout/deadlock detection | `lock.go` |
-| `pkg/log` | Hand-rolled structured logger | `log.go` |
+| `pkg/log` | The single structured logger | `log.go` |
 | `pkg/observability` | System catalog, Prometheus metrics, health | `system_catalog.go` |
 | `pkg/pgwire` | PostgreSQL wire protocol server | `server.go`, `protocol.go` |
 | `pkg/shard` | Hash-based sharding, coordinator, 2PC | `coordinator.go`, `shard.go`, `node.go` |
@@ -585,7 +582,7 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.5 | `UPDATE ... FROM` / `DELETE ... USING` qualified-column resolution. |
 | P2.6b | The MVCC path's `GROUPING SETS` / `CUBE` / `ROLLUP` emit only the grand total; `GROUPING()` returns 0 for NULL group columns; `DISTINCT ON` does not deduplicate; window frames compute wrong moving values and `MIN`/`MAX`/`NTH_VALUE` are unsupported as window functions; `MERGE` result differences. **These are substantial — closer to reimplementing than porting.** 14 `sql_test.go` tests remain on `*Executor`, marked `TODO(P2)`. |
 | P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
-| P3 | One config package, one logger |
+| P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
 | P4 | Split `pkg/sql` into `token / ast / parse / plan / exec / session` sub-packages |
 | P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
 

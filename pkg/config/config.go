@@ -8,35 +8,40 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds all configuration settings for VeridicalDB.
+// Config holds all configuration settings for VeridicalDB. It is the single
+// config schema for every entry point (server, CLI, TUI); the former
+// internal/config package was merged into this one (plan phase P3).
 type Config struct {
-	// Server settings
-	Server ServerConfig `json:"server" yaml:"server"`
-
-	// Storage settings
-	Storage StorageConfig `json:"storage" yaml:"storage"`
-
-	// Logging settings
-	Logging LoggingConfig `json:"logging" yaml:"logging"`
-
-	// PgWire settings
-	PgWire PgWireConfig `json:"pgwire" yaml:"pgwire"`
+	Server   ServerConfig   `json:"server" yaml:"server"`
+	Storage  StorageConfig  `json:"storage" yaml:"storage"`
+	Logging  LoggingConfig  `json:"logging" yaml:"logging"`
+	PgWire   PgWireConfig   `json:"pgwire" yaml:"pgwire"`
+	Backup   BackupConfig   `json:"backup" yaml:"backup"`
+	Sharding ShardingConfig `json:"sharding" yaml:"sharding"`
 }
 
 // ServerConfig holds server-related configuration.
 type ServerConfig struct {
-	// Port for TCP connections (used in later stages)
+	// Port for client connections (PostgreSQL wire protocol).
 	Port int `json:"port" yaml:"port"`
 
-	// Host address to bind to
+	// Host address to bind to.
 	Host string `json:"host" yaml:"host"`
 
-	// ObservabilityPort for metrics and health endpoints
+	// ObservabilityPort for the metrics and health endpoints.
 	ObservabilityPort int `json:"observability_port" yaml:"observability_port"`
+
+	// MaxConnections caps concurrent client connections (0 = unlimited).
+	MaxConnections int `json:"max_connections" yaml:"max_connections"`
+
+	// ReadTimeoutSec / WriteTimeoutSec are per-connection socket timeouts.
+	ReadTimeoutSec  int `json:"read_timeout_sec" yaml:"read_timeout_sec"`
+	WriteTimeoutSec int `json:"write_timeout_sec" yaml:"write_timeout_sec"`
 }
 
 // PgWireConfig holds PostgreSQL wire protocol configuration.
@@ -79,40 +84,96 @@ type TLSConfig struct {
 
 // StorageConfig holds storage-related configuration.
 type StorageConfig struct {
-	// DataDir is the directory where database files are stored
+	// DataDir is the directory where database files are stored.
 	DataDir string `json:"data_dir" yaml:"data_dir"`
 
-	// PageSize is the size of each page in bytes (default: 8192)
+	// PageSize is the size of each page in bytes (default: 8192).
 	PageSize int `json:"page_size" yaml:"page_size"`
+
+	// BufferPoolMB is the buffer-pool size in megabytes.
+	BufferPoolMB int `json:"buffer_pool_mb" yaml:"buffer_pool_mb"`
+
+	// WalDir is the write-ahead log directory (empty = DataDir/wal).
+	WalDir string `json:"wal_dir" yaml:"wal_dir"`
+
+	// WalBufferKB is the in-memory WAL buffer size in kilobytes.
+	WalBufferKB int `json:"wal_buffer_kb" yaml:"wal_buffer_kb"`
+
+	// CheckpointSec is the background checkpoint interval in seconds.
+	CheckpointSec int `json:"checkpoint_sec" yaml:"checkpoint_sec"`
 }
 
 // LoggingConfig holds logging-related configuration.
 type LoggingConfig struct {
-	// Level is the minimum log level (debug, info, warn, error)
+	// Level is the minimum log level (debug, info, warn, error).
 	Level string `json:"level" yaml:"level"`
 
-	// Format is the log format (text, json)
+	// Format is the log format (text, json).
 	Format string `json:"format" yaml:"format"`
 
-	// Output is where logs are written (stdout, stderr, or file path)
+	// Output is where logs are written (stdout, stderr, or a file path).
 	Output string `json:"output" yaml:"output"`
+}
+
+// BackupConfig holds backup and point-in-time-recovery configuration.
+type BackupConfig struct {
+	// BackupDir is where base backups are stored (empty = DataDir/backups).
+	BackupDir string `json:"backup_dir" yaml:"backup_dir"`
+
+	// ArchiveDir is where archived WAL segments are stored
+	// (empty = DataDir/wal_archive).
+	ArchiveDir string `json:"archive_dir" yaml:"archive_dir"`
+
+	// Compress enables gzip compression for base backups.
+	Compress bool `json:"compress" yaml:"compress"`
+
+	// RetentionDays is how long to keep backups (0 = forever).
+	RetentionDays int `json:"retention_days" yaml:"retention_days"`
+
+	// ArchiveCommand runs when a WAL segment is archived (%f = filename,
+	// %p = full path).
+	ArchiveCommand string `json:"archive_command" yaml:"archive_command"`
+
+	// RestoreCommand runs to fetch an archived WAL segment (%f = filename,
+	// %p = destination path).
+	RestoreCommand string `json:"restore_command" yaml:"restore_command"`
+}
+
+// ShardingConfig holds the distributed shard-coordinator configuration.
+type ShardingConfig struct {
+	Enabled        bool              `json:"enabled" yaml:"enabled"`
+	ShardKeyColumn string            `json:"shard_key_column" yaml:"shard_key_column"`
+	Nodes          []ShardNodeConfig `json:"nodes" yaml:"nodes"`
+}
+
+// ShardNodeConfig describes a single shard endpoint.
+type ShardNodeConfig struct {
+	Host string `json:"host" yaml:"host"`
+	Port int    `json:"port" yaml:"port"`
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Port: 5432,
-			Host: "127.0.0.1",
+			Port:              5432,
+			Host:              "127.0.0.1",
+			ObservabilityPort: 8081,
+			MaxConnections:    100,
+			ReadTimeoutSec:    30,
+			WriteTimeoutSec:   30,
 		},
 		Storage: StorageConfig{
-			DataDir:  "./data",
-			PageSize: 8192,
+			DataDir:       "./data",
+			PageSize:      8192,
+			BufferPoolMB:  128,
+			WalBufferKB:   64,
+			CheckpointSec: 300,
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "text",
-			Output: "stdout",
+			Output: "stderr",
 		},
 		PgWire: PgWireConfig{
 			TLS: TLSConfig{
@@ -121,49 +182,103 @@ func DefaultConfig() *Config {
 				MinVersion: "1.2",
 			},
 		},
+		Backup: BackupConfig{
+			Compress:      true,
+			RetentionDays: 30,
+		},
+		Sharding: ShardingConfig{
+			Enabled:        false,
+			ShardKeyColumn: "id",
+		},
 	}
 }
 
-// Load reads configuration from a file. Supports YAML and JSON.
+// Load reads configuration, layering: built-in defaults, then the file at path
+// (YAML or JSON; skipped if path is empty or missing), then VERIDICAL_*
+// environment overrides. Derived paths and validation run last.
 func Load(path string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	if path == "" {
-		return cfg, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil // Use defaults if no config file
-		}
-		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	ext := filepath.Ext(path)
-	switch ext {
-	case ".yaml", ".yml":
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse YAML config: %w", err)
-		}
-	case ".json":
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON config: %w", err)
-		}
-	default:
-		// Try YAML first, then JSON
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			if err := json.Unmarshal(data, cfg); err != nil {
-				return nil, fmt.Errorf("failed to parse config file (tried YAML and JSON): %w", err)
+	if path != "" {
+		data, err := os.ReadFile(path)
+		switch {
+		case err == nil:
+			if perr := parseInto(path, data, cfg); perr != nil {
+				return nil, perr
 			}
+		case os.IsNotExist(err):
+			// fall through to defaults + env
+		default:
+			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 	}
+
+	cfg.applyEnvOverrides()
+	cfg.applyDerivedDefaults()
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
 
 	return cfg, nil
+}
+
+func parseInto(path string, data []byte, cfg *Config) error {
+	switch filepath.Ext(path) {
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return fmt.Errorf("failed to parse YAML config: %w", err)
+		}
+	case ".json":
+		if err := json.Unmarshal(data, cfg); err != nil {
+			return fmt.Errorf("failed to parse JSON config: %w", err)
+		}
+	default:
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			if err := json.Unmarshal(data, cfg); err != nil {
+				return fmt.Errorf("failed to parse config file (tried YAML and JSON): %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// applyDerivedDefaults fills paths that default to a subdirectory of DataDir.
+func (c *Config) applyDerivedDefaults() {
+	if c.Storage.WalDir == "" {
+		c.Storage.WalDir = filepath.Join(c.Storage.DataDir, "wal")
+	}
+	if c.Backup.BackupDir == "" {
+		c.Backup.BackupDir = filepath.Join(c.Storage.DataDir, "backups")
+	}
+	if c.Backup.ArchiveDir == "" {
+		c.Backup.ArchiveDir = filepath.Join(c.Storage.DataDir, "wal_archive")
+	}
+}
+
+// applyEnvOverrides applies VERIDICAL_* environment variables over the loaded
+// config. Only the commonly-overridden scalars are supported.
+func (c *Config) applyEnvOverrides() {
+	if v := os.Getenv("VERIDICAL_SERVER_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.Server.Port = n
+		}
+	}
+	if v := os.Getenv("VERIDICAL_SERVER_HOST"); v != "" {
+		c.Server.Host = v
+	}
+	if v := os.Getenv("VERIDICAL_STORAGE_DATA_DIR"); v != "" {
+		c.Storage.DataDir = v
+	}
+	if v := os.Getenv("VERIDICAL_LOG_LEVEL"); v != "" {
+		c.Logging.Level = v
+	}
+	if v := os.Getenv("VERIDICAL_LOG_FORMAT"); v != "" {
+		c.Logging.Format = v
+	}
+	if v := os.Getenv("VERIDICAL_LOG_OUTPUT"); v != "" {
+		c.Logging.Output = v
+	}
 }
 
 // Validate checks if the configuration is valid.
@@ -194,6 +309,27 @@ func (c *Config) Validate() error {
 	// Validate TLS configuration
 	if err := c.PgWire.TLS.Validate(); err != nil {
 		return fmt.Errorf("invalid pgwire TLS config: %w", err)
+	}
+
+	if c.Storage.BufferPoolMB != 0 && c.Storage.BufferPoolMB < 8 {
+		return fmt.Errorf("buffer_pool_mb must be at least 8")
+	}
+
+	if c.Sharding.Enabled {
+		if c.Sharding.ShardKeyColumn == "" {
+			return fmt.Errorf("sharding.shard_key_column is required when sharding is enabled")
+		}
+		if len(c.Sharding.Nodes) == 0 {
+			return fmt.Errorf("sharding.nodes must contain at least one shard when sharding is enabled")
+		}
+		for i, node := range c.Sharding.Nodes {
+			if node.Host == "" {
+				return fmt.Errorf("sharding.nodes[%d].host is required", i)
+			}
+			if node.Port < 1 || node.Port > 65535 {
+				return fmt.Errorf("sharding.nodes[%d].port must be between 1 and 65535", i)
+			}
+		}
 	}
 
 	return nil

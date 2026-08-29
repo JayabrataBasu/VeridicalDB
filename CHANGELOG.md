@@ -7,6 +7,22 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
+### Changed (P3 — config & logging consolidation)
+
+- One config package. `internal/config` (which used viper) was merged into
+  `pkg/config`; the **viper dependency was dropped**. `pkg/config.Config` is now
+  the single schema for the server, CLI, and TUI, with `server`, `storage`,
+  `logging`, `pgwire`, `backup`, and `sharding` sections, layered as
+  defaults → file (YAML/JSON) → `VERIDICAL_*` environment overrides. Data-dir
+  init/validation (`InitDataDir`, `ValidateDataDir`, `CreateDefaultConfig`) moved
+  here too. `config.example.yaml` is the annotated reference.
+- One logger. `internal/logger` (a zap wrapper) was removed; everything uses
+  `pkg/log`, which gained `NewNop()` and a no-op `Sync()`. The **zap dependency
+  was dropped**.
+- **Behavior note:** the CLI's default client port is now 5432 (was 5433); the
+  default log output is `stderr`. Set them explicitly in the config if you
+  relied on the old values.
+
 ### Removed
 
 - Vendored `tools/golangci-lint` (39 MB), the checked-in `server` binary,
