@@ -33,10 +33,14 @@ veridicaldb.toml
 
 # Log files
 *.log
+nohup.out
 
 # Temp files
 *.tmp
 *.temp
+
+# Stray in-memory sentinel dir created by index tests
+:memory:/
 
 #test-files
 test_data/
