@@ -51,9 +51,36 @@ Structural cleanup and the start of a phased remediation plan (see the
   before returning. Read-only transactions still skip the WAL entirely, so
   `SELECT` stays off the fsync path.
 
+- Constraint enforcement on the shipping (MVCC / `Session`) path, which
+  previously accepted violations the pre-MVCC executor rejected (plan phase
+  P2.1):
+  - duplicate **PRIMARY KEY** / **UNIQUE** values, on `INSERT` and `UPDATE`
+  - **FOREIGN KEY** referential integrity, on `INSERT`/`UPDATE`, plus RESTRICT
+    on `DELETE` of a referenced row
+  - **VARCHAR(n)** length
+  - `INSERT ... ON CONFLICT DO NOTHING` / `DO UPDATE` — previously ignored, so a
+    conflicting insert silently created a duplicate-key row
+  - `CREATE TABLE` / `ALTER TABLE ADD COLUMN` now record a column's `UNIQUE` flag
+    and `VARCHAR` length (the MVCC catalog path had been dropping both)
+  - `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE`, and `TEXT` → `DATE` / `TIMESTAMP`
+    coercion on insert, are now handled on the MVCC path
+- More MVCC-path insert fixes (plan phase P2.6):
+  - column **DEFAULT** values are now applied before the NOT NULL check
+  - **AUTO_INCREMENT** columns are now filled (they were left NULL, so an
+    `AUTO_INCREMENT` primary key rejected every insert)
+  - `INSERT ... ON CONFLICT DO UPDATE` now reports `RowsAffected: 1`
+  - `AVG()` of an integer column now returns a float; the pre-MVCC executor did
+    integer division (`AVG(80,90,101)` returned `90`, not `90.33`)
+
 ### Removed
 
 - The unreachable `sql.NewExecutor` fallback path in the REPL (`internal/cli`).
+
+### Internal
+
+- `sqlExec` test interface + `TestExecutorSessionParity` — the P2 consolidation
+  harness that runs the same SQL against both executors. `foreign_key_test.go`
+  and `date_varchar_unique_test.go` now run against `Session`.
 
 ## v2.0.0 - 2026-02-01
 

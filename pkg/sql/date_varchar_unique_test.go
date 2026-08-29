@@ -10,7 +10,7 @@ import (
 // TestDateType tests DATE data type support because the honored idiot never added them
 func TestDateTypeBasic(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	tests := []struct {
 		name    string
@@ -70,7 +70,7 @@ func TestDateTypeBasic(t *testing.T) {
 // TestVarcharLengthValidation tests VARCHAR(n) length constraint validation
 func TestVarcharLengthValidation(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	tests := []struct {
 		name    string
@@ -147,7 +147,7 @@ func TestVarcharLengthValidation(t *testing.T) {
 // TestCombinedFeaturesIntegration tests interaction of DATE, VARCHAR, and UNIQUE
 func TestCombinedFeaturesIntegration(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with all three features
 	parser := NewParser(`
@@ -219,7 +219,7 @@ func BenchmarkDateComparison(b *testing.B) {
 // TestUniqueConstraint tests column-level UNIQUE constraint support
 func TestUniqueConstraint(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	tests := []struct {
 		name    string

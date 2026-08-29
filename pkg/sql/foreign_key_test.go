@@ -8,7 +8,7 @@ import (
 
 func TestForeignKeyConstraints(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create parent table
 	_, err := executor.Execute(&CreateTableStmt{

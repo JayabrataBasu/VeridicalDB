@@ -65,8 +65,28 @@ func TestWireProtocolFeatureMatrix(t *testing.T) {
 		mustWireQuery(t, conn, `CREATE DATABASE scratch`)
 	})
 
+	// P2.1: the wire path must enforce relational constraints, not just the REPL.
+	t.Run("constraints/reject_duplicate_primary_key", func(t *testing.T) {
+		mustWireQuery(t, conn, `CREATE TABLE pk_t (id INT PRIMARY KEY, v TEXT)`)
+		mustWireQuery(t, conn, `INSERT INTO pk_t VALUES (1, 'a')`)
+		mustWireQueryFails(t, conn, `INSERT INTO pk_t VALUES (1, 'b')`)
+	})
+
 	// Terminate cleanly.
 	_, _ = conn.Write([]byte{MsgTerminate, 0, 0, 0, 4})
+}
+
+// mustWireQueryFails asserts the query returns an ErrorResponse over the wire.
+func mustWireQueryFails(t *testing.T, conn net.Conn, query string) {
+	t.Helper()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	msgs, err := sendSimpleQueryAndDrainReady(conn, query)
+	if err != nil {
+		t.Fatalf("transport error running %q: %v", query, err)
+	}
+	if _, ok := firstMessage(msgs, MsgErrorResponse); !ok {
+		t.Fatalf("query %q: expected an ErrorResponse, got none", query)
+	}
 }
 
 // mustWireQuery fails the test if the query produces an ErrorResponse.

@@ -143,7 +143,7 @@ func TestParser(t *testing.T) {
 // TestExecutorCreateTable verifies CREATE TABLE works.
 func TestExecutorCreateTable(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create a table
 	parser := NewParser("CREATE TABLE users (id INT, name TEXT, active BOOL);")
@@ -178,7 +178,7 @@ func TestExecutorCreateTable(t *testing.T) {
 // TestExecutorCreateColumnarTable verifies CREATE TABLE USING COLUMN works.
 func TestExecutorCreateColumnarTable(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create a columnar table
 	parser := NewParser("CREATE TABLE analytics (id INT, value INT) USING COLUMN;")
@@ -285,7 +285,7 @@ func TestParseUsingColumn(t *testing.T) {
 // TestExecutorInsertSelect verifies INSERT and SELECT work.
 func TestExecutorInsertSelect(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT);")
@@ -308,7 +308,7 @@ func TestExecutorInsertSelect(t *testing.T) {
 // TestExecutorSelectWhere verifies SELECT with WHERE clause.
 func TestExecutorSelectWhere(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT, age INT);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice', 25);")
@@ -337,7 +337,7 @@ func TestExecutorSelectWhere(t *testing.T) {
 // TestExecutorSelectColumns verifies SELECT with specific columns.
 func TestExecutorSelectColumns(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT, email TEXT);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice', 'alice@test.com');")
@@ -355,7 +355,7 @@ func TestExecutorSelectColumns(t *testing.T) {
 // TestExecutorUpdate verifies UPDATE works.
 func TestExecutorUpdate(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice');")
@@ -380,7 +380,7 @@ func TestExecutorUpdate(t *testing.T) {
 // TestExecutorDelete verifies DELETE works.
 func TestExecutorDelete(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice');")
@@ -403,7 +403,7 @@ func TestExecutorDelete(t *testing.T) {
 // TestExecutorDropTable verifies DROP TABLE works.
 func TestExecutorDropTable(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT);")
 
@@ -424,7 +424,7 @@ func TestExecutorDropTable(t *testing.T) {
 // TestExecutorAndCondition verifies AND in WHERE clause.
 func TestExecutorAndCondition(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT, active BOOL);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice', true);")
@@ -441,7 +441,7 @@ func TestExecutorAndCondition(t *testing.T) {
 // TestExecutorOrCondition verifies OR in WHERE clause.
 func TestExecutorOrCondition(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT);")
 	executeSQL(t, executor, "INSERT INTO users VALUES (1, 'alice');")
@@ -458,7 +458,7 @@ func TestExecutorOrCondition(t *testing.T) {
 // TestExecutorTableNotFound verifies error on missing table.
 func TestExecutorTableNotFound(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	parser := NewParser("SELECT * FROM nonexistent;")
 	stmt, err := parser.Parse()
@@ -475,7 +475,7 @@ func TestExecutorTableNotFound(t *testing.T) {
 // TestExecutorInsertWithColumns verifies INSERT with column list.
 func TestExecutorInsertWithColumns(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE users (id INT, name TEXT, email TEXT);")
 	executeSQL(t, executor, "INSERT INTO users (id, name) VALUES (1, 'alice');")
@@ -493,7 +493,7 @@ func TestExecutorInsertWithColumns(t *testing.T) {
 // TestMultiRowInsert tests INSERT with multiple value rows.
 func TestMultiRowInsert(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE products (id INT, name TEXT, price INT);")
 
@@ -598,7 +598,7 @@ func TestMultiRowInsert(t *testing.T) {
 // TestInsertOnConflict tests INSERT ... ON CONFLICT (UPSERT).
 func TestInsertOnConflict(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with primary key
 	executeSQL(t, executor, "CREATE TABLE upsert_test (id INT PRIMARY KEY, name TEXT, amount INT);")
@@ -691,7 +691,7 @@ func TestInsertOnConflict(t *testing.T) {
 // TestUpdateWithFrom tests UPDATE ... FROM ... WHERE (PostgreSQL style).
 func TestUpdateWithFrom(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create test tables
 	executeSQL(t, executor, "CREATE TABLE orders (id INT, customer_id INT, status TEXT);")
@@ -770,7 +770,7 @@ func TestUpdateWithFrom(t *testing.T) {
 // TestDeleteWithUsing tests DELETE ... USING ... WHERE (PostgreSQL style).
 func TestDeleteWithUsing(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create test tables
 	executeSQL(t, executor, "CREATE TABLE orders2 (id INT, customer_id INT, amount INT);")
@@ -848,7 +848,7 @@ func setupTestTableManager(t *testing.T) *catalog.TableManager {
 }
 
 // Helper: execute SQL and check for errors
-func executeSQL(t *testing.T, executor *Executor, query string) *Result {
+func executeSQL(t *testing.T, executor sqlExec, query string) *Result {
 	t.Helper()
 	parser := NewParser(query)
 	stmt, err := parser.Parse()
@@ -863,7 +863,7 @@ func executeSQL(t *testing.T, executor *Executor, query string) *Result {
 }
 
 // Helper: execute SQL that may return an error
-func executeSQLWithError(executor *Executor, query string) (*Result, error) {
+func executeSQLWithError(executor sqlExec, query string) (*Result, error) {
 	parser := NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
@@ -875,7 +875,7 @@ func executeSQLWithError(executor *Executor, query string) (*Result, error) {
 // TestOrderBy verifies ORDER BY clause parsing and execution.
 func TestOrderBy(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table and insert data
 	executeSQL(t, executor, "CREATE TABLE scores (name TEXT, score INT);")
@@ -918,7 +918,7 @@ func TestOrderBy(t *testing.T) {
 // TestLimit verifies LIMIT clause.
 func TestLimit(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE items (id INT, name TEXT);")
 	for i := 1; i <= 10; i++ {
@@ -947,7 +947,7 @@ func TestLimit(t *testing.T) {
 // TestOffset verifies OFFSET clause.
 func TestOffset(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE nums (val INT);")
 	for i := 1; i <= 5; i++ {
@@ -979,7 +979,7 @@ func TestOffset(t *testing.T) {
 // TestOrderByLimitOffset tests combining ORDER BY, LIMIT, and OFFSET.
 func TestOrderByLimitOffset(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE products (name TEXT, price INT);")
 	executeSQL(t, executor, "INSERT INTO products VALUES ('apple', 100);")
@@ -1034,7 +1034,7 @@ func TestParseOrderByLimitOffset(t *testing.T) {
 // TestAggregateCount tests COUNT aggregate function.
 func TestAggregateCount(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE items (id INT, name TEXT);")
 	executeSQL(t, executor, "INSERT INTO items VALUES (1, 'apple');")
@@ -1066,7 +1066,7 @@ func TestAggregateCount(t *testing.T) {
 // TestAggregateSumAvg tests SUM and AVG aggregate functions.
 func TestAggregateSumAvg(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE scores (name TEXT, score INT);")
 	executeSQL(t, executor, "INSERT INTO scores VALUES ('alice', 80);")
@@ -1075,27 +1075,27 @@ func TestAggregateSumAvg(t *testing.T) {
 
 	// SUM
 	result := executeSQL(t, executor, "SELECT SUM(score) FROM scores;")
-	if result.Rows[0][0].Int64 != 270 {
-		t.Errorf("SUM(score) should be 270, got %d", result.Rows[0][0].Int64)
+	if numVal(result.Rows[0][0]) != 270 {
+		t.Errorf("SUM(score) should be 270, got %v", numVal(result.Rows[0][0]))
 	}
 
 	// AVG
 	result = executeSQL(t, executor, "SELECT AVG(score) FROM scores;")
-	if result.Rows[0][0].Int64 != 90 {
-		t.Errorf("AVG(score) should be 90, got %d", result.Rows[0][0].Int64)
+	if numVal(result.Rows[0][0]) != 90 {
+		t.Errorf("AVG(score) should be 90, got %v", numVal(result.Rows[0][0]))
 	}
 
 	// SUM with WHERE
 	result = executeSQL(t, executor, "SELECT SUM(score) FROM scores WHERE score >= 90;")
-	if result.Rows[0][0].Int64 != 190 {
-		t.Errorf("SUM(score) with WHERE should be 190, got %d", result.Rows[0][0].Int64)
+	if numVal(result.Rows[0][0]) != 190 {
+		t.Errorf("SUM(score) with WHERE should be 190, got %v", numVal(result.Rows[0][0]))
 	}
 }
 
 // TestAggregateMinMax tests MIN and MAX aggregate functions.
 func TestAggregateMinMax(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE temps (city TEXT, temp INT);")
 	executeSQL(t, executor, "INSERT INTO temps VALUES ('NYC', 32);")
@@ -1130,7 +1130,7 @@ func TestAggregateMinMax(t *testing.T) {
 // TestAggregateMultiple tests multiple aggregate functions in one query.
 func TestAggregateMultiple(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE stats (val INT);")
 	executeSQL(t, executor, "INSERT INTO stats VALUES (10);")
@@ -1144,27 +1144,27 @@ func TestAggregateMultiple(t *testing.T) {
 	}
 
 	row := result.Rows[0]
-	if row[0].Int64 != 4 {
-		t.Errorf("COUNT(*) should be 4, got %d", row[0].Int64)
+	if numVal(row[0]) != 4 {
+		t.Errorf("COUNT(*) should be 4, got %v", numVal(row[0]))
 	}
-	if row[1].Int64 != 100 {
-		t.Errorf("SUM(val) should be 100, got %d", row[1].Int64)
+	if numVal(row[1]) != 100 {
+		t.Errorf("SUM(val) should be 100, got %v", numVal(row[1]))
 	}
-	if row[2].Int64 != 25 {
-		t.Errorf("AVG(val) should be 25, got %d", row[2].Int64)
+	if numVal(row[2]) != 25 {
+		t.Errorf("AVG(val) should be 25, got %v", numVal(row[2]))
 	}
-	if row[3].Int32 != 10 {
-		t.Errorf("MIN(val) should be 10, got %d", row[3].Int32)
+	if numVal(row[3]) != 10 {
+		t.Errorf("MIN(val) should be 10, got %v", numVal(row[3]))
 	}
-	if row[4].Int32 != 40 {
-		t.Errorf("MAX(val) should be 40, got %d", row[4].Int32)
+	if numVal(row[4]) != 40 {
+		t.Errorf("MAX(val) should be 40, got %v", numVal(row[4]))
 	}
 }
 
 // TestAggregateEmptyTable tests aggregates on empty tables.
 func TestAggregateEmptyTable(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE empty (val INT);")
 
@@ -1212,7 +1212,7 @@ func TestParseAggregates(t *testing.T) {
 // TestGroupBy tests GROUP BY with aggregates.
 func TestGroupBy(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE sales (product TEXT, region TEXT, amount INT);")
 	executeSQL(t, executor, "INSERT INTO sales VALUES ('apple', 'north', 100);")
@@ -1274,7 +1274,7 @@ func TestGroupBy(t *testing.T) {
 // TestGroupByWithWhere tests GROUP BY with WHERE clause.
 func TestGroupByWithWhere(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE orders (category TEXT, price INT);")
 	executeSQL(t, executor, "INSERT INTO orders VALUES ('electronics', 500);")
@@ -1334,7 +1334,7 @@ func TestParseGroupBy(t *testing.T) {
 // TestDistinct tests DISTINCT clause for removing duplicate rows.
 func TestDistinct(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE colors (name TEXT, category TEXT);")
 	executeSQL(t, executor, "INSERT INTO colors VALUES ('red', 'warm');")
@@ -1372,7 +1372,7 @@ func TestDistinct(t *testing.T) {
 // TestDistinctWithOrderBy tests DISTINCT combined with ORDER BY.
 func TestDistinctWithOrderBy(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE items (name TEXT, price INT);")
 	executeSQL(t, executor, "INSERT INTO items VALUES ('apple', 100);")
@@ -1398,7 +1398,7 @@ func TestDistinctWithOrderBy(t *testing.T) {
 // TestDistinctAll tests that all rows with same values are deduplicated.
 func TestDistinctAll(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE dupes (x INT, y INT);")
 	// Insert same row 5 times
@@ -1459,7 +1459,7 @@ func TestParseDistinct(t *testing.T) {
 // TestPrimaryKey tests PRIMARY KEY constraint enforcement.
 func TestPrimaryKey(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with primary key
 	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
@@ -1495,7 +1495,7 @@ func TestPrimaryKey(t *testing.T) {
 // TestPrimaryKeyNull tests that primary key columns cannot be NULL.
 func TestPrimaryKeyNull(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE items (id INT PRIMARY KEY, value TEXT);")
 
@@ -1509,7 +1509,7 @@ func TestPrimaryKeyNull(t *testing.T) {
 // TestPrimaryKeyTypes tests PRIMARY KEY with different data types.
 func TestPrimaryKeyTypes(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Text primary key
 	executeSQL(t, executor, "CREATE TABLE products (sku TEXT PRIMARY KEY, name TEXT);")
@@ -1563,7 +1563,7 @@ func TestParsePrimaryKey(t *testing.T) {
 // TestDefaultValues tests DEFAULT value constraint.
 func TestDefaultValues(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with default values (avoiding reserved words like key, value, count)
 	executeSQL(t, executor, "CREATE TABLE settings (name TEXT, data TEXT DEFAULT 'none', num INT DEFAULT 0);")
@@ -1594,7 +1594,7 @@ func TestDefaultValues(t *testing.T) {
 // TestDefaultWithNotNull tests DEFAULT combined with NOT NULL.
 func TestDefaultWithNotNull(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with NOT NULL and DEFAULT
 	executeSQL(t, executor, "CREATE TABLE scores (player TEXT NOT NULL, score INT DEFAULT 100 NOT NULL);")
@@ -1647,7 +1647,7 @@ func TestParseDefault(t *testing.T) {
 // TestAutoIncrement tests AUTO_INCREMENT column constraint.
 func TestAutoIncrement(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with auto-increment
 	executeSQL(t, executor, "CREATE TABLE items (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT);")
@@ -1675,7 +1675,7 @@ func TestAutoIncrement(t *testing.T) {
 // TestAutoIncrementWithExplicitValue tests inserting explicit values with AUTO_INCREMENT.
 func TestAutoIncrementWithExplicitValue(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE logs (id INT AUTO_INCREMENT PRIMARY KEY, msg TEXT);")
 
@@ -1733,7 +1733,7 @@ func TestParseAutoIncrement(t *testing.T) {
 // TestInnerJoin tests INNER JOIN functionality.
 func TestInnerJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create users table
 	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
@@ -1769,7 +1769,7 @@ func TestInnerJoin(t *testing.T) {
 // TestInnerJoinWithWhere tests INNER JOIN with WHERE clause.
 func TestInnerJoinWithWhere(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept_id INT);")
 	executeSQL(t, executor, "INSERT INTO employees VALUES (1, 'Alice', 10);")
@@ -1791,7 +1791,7 @@ func TestInnerJoinWithWhere(t *testing.T) {
 // TestInnerJoinSelectStar tests INNER JOIN with SELECT *.
 func TestInnerJoinSelectStar(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE a (x INT, y TEXT);")
 	executeSQL(t, executor, "INSERT INTO a VALUES (1, 'one');")
@@ -3611,7 +3611,7 @@ func TestViewParsing(t *testing.T) {
 // TestViewExecution tests CREATE VIEW execution and SELECT from views.
 func TestViewExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create base table
 	executeSQL(t, executor, "CREATE TABLE employees (id INT, name TEXT, department TEXT, salary INT);")
@@ -3695,7 +3695,7 @@ func TestViewExecution(t *testing.T) {
 // TestLeftJoin tests LEFT JOIN functionality.
 func TestLeftJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create users table
 	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
@@ -3732,7 +3732,7 @@ func TestLeftJoin(t *testing.T) {
 // TestRightJoin tests RIGHT JOIN functionality.
 func TestRightJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create users table - only Alice and Bob
 	executeSQL(t, executor, "CREATE TABLE users (id INT PRIMARY KEY, name TEXT);")
@@ -3768,7 +3768,7 @@ func TestRightJoin(t *testing.T) {
 // TestLeftOuterJoinSyntax tests LEFT OUTER JOIN syntax.
 func TestLeftOuterJoinSyntax(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE a (x INT PRIMARY KEY);")
 	executeSQL(t, executor, "INSERT INTO a VALUES (1);")
@@ -3800,7 +3800,7 @@ func TestLeftOuterJoinSyntax(t *testing.T) {
 // TestFullOuterJoin tests FULL OUTER JOIN functionality.
 func TestFullOuterJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create employees table
 	executeSQL(t, executor, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT);")
@@ -3859,7 +3859,7 @@ func TestFullOuterJoin(t *testing.T) {
 // TestFullJoinSyntax tests FULL JOIN without OUTER keyword.
 func TestFullJoinSyntax(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create simple tables
 	executeSQL(t, executor, "CREATE TABLE t1 (x INT PRIMARY KEY);")
@@ -3882,7 +3882,7 @@ func TestFullJoinSyntax(t *testing.T) {
 // TestHavingClause tests HAVING clause filtering on aggregates.
 func TestHavingClause(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create table with sales data
 	executeSQL(t, executor, "CREATE TABLE sales (id INT PRIMARY KEY, region TEXT, amount INT);")
@@ -3925,7 +3925,7 @@ func TestHavingClause(t *testing.T) {
 // TestHavingWithWhere tests HAVING combined with WHERE.
 func TestHavingWithWhere(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE orders (id INT PRIMARY KEY, category TEXT, value INT);")
 
@@ -4055,7 +4055,7 @@ func TestParseHaving(t *testing.T) {
 // TestSubqueryIN tests IN subquery functionality.
 func TestSubqueryIN(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create departments table
 	executeSQL(t, executor, "CREATE TABLE departments (id INT PRIMARY KEY, name TEXT);")
@@ -4090,7 +4090,7 @@ func TestSubqueryIN(t *testing.T) {
 // TestScalarSubquery tests scalar subqueries in expressions.
 func TestScalarSubquery(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create products table
 	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT);")
@@ -4112,7 +4112,7 @@ func TestScalarSubquery(t *testing.T) {
 // TestExistsSubquery tests EXISTS subquery functionality.
 func TestExistsSubquery(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create products table
 	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, in_stock INT);")
@@ -4141,7 +4141,7 @@ func TestExistsSubquery(t *testing.T) {
 // TestNotExistsSubquery tests NOT EXISTS subquery functionality.
 func TestNotExistsSubquery(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create products table
 	executeSQL(t, executor, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT);")
@@ -4313,7 +4313,7 @@ func TestParseLimitExpression(t *testing.T) {
 // TestCrossJoinExecution verifies CROSS JOIN execution.
 func TestCrossJoinExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create and populate tables
 	executeSQL(t, executor, "CREATE TABLE cross_t1 (id INT, name TEXT);")
@@ -4336,7 +4336,7 @@ func TestCrossJoinExecution(t *testing.T) {
 // TestDistinctOnExecution verifies DISTINCT ON execution.
 func TestDistinctOnExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create and populate table
 	executeSQL(t, executor, "CREATE TABLE distinct_on_t (category TEXT, value INT, name TEXT);")
@@ -4427,7 +4427,7 @@ func TestParseWindowFunctions(t *testing.T) {
 // TestWindowFunctionExecution verifies window function execution.
 func TestWindowFunctionExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, executor, "CREATE TABLE window_test (dept TEXT, emp TEXT, salary INT);")
@@ -4456,7 +4456,7 @@ func TestWindowFunctionExecution(t *testing.T) {
 // TestWindowFunctionPartitionBy tests PARTITION BY functionality.
 func TestWindowFunctionPartitionBy(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, executor, "CREATE TABLE partition_test (dept TEXT, emp TEXT, salary INT);")
@@ -4493,7 +4493,7 @@ func TestWindowFunctionPartitionBy(t *testing.T) {
 // TestWindowFunctionRank tests RANK and DENSE_RANK.
 func TestWindowFunctionRank(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE rank_test (name TEXT, score INT);")
 
@@ -4524,7 +4524,7 @@ func TestWindowFunctionRank(t *testing.T) {
 // TestWindowFunctionAggregate tests aggregate functions as window functions.
 func TestWindowFunctionAggregate(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE agg_window_test (id INT, amount INT);")
 
@@ -4555,7 +4555,7 @@ func TestWindowFunctionAggregate(t *testing.T) {
 // TestWindowFrameExecution tests window frame specification execution.
 func TestWindowFrameExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	executeSQL(t, executor, "CREATE TABLE frame_test (id INT, value INT);")
 
@@ -4739,7 +4739,7 @@ func TestWindowFrameExecution(t *testing.T) {
 // TestNthValue tests NTH_VALUE window function.
 func TestNthValue(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	executeSQL(t, executor, "CREATE TABLE nth_test (id INT, department TEXT, salary INT);")
 
@@ -4806,7 +4806,7 @@ func TestNthValue(t *testing.T) {
 // TestLateralJoin tests LATERAL join functionality.
 func TestLateralJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	// Create test tables
 	executeSQL(t, executor, "CREATE TABLE departments (dept_id INT, dept_name TEXT);")
@@ -4842,7 +4842,7 @@ func TestLateralJoin(t *testing.T) {
 // TestLateralJoinWithLeftJoin tests LEFT LATERAL join.
 func TestLateralJoinWithLeftJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	executeSQL(t, executor, "CREATE TABLE products (product_id INT, product_name TEXT);")
 	executeSQL(t, executor, "CREATE TABLE orders (order_id INT, product_id INT, quantity INT);")
@@ -4873,7 +4873,7 @@ func TestLateralJoinWithLeftJoin(t *testing.T) {
 // TestMergeBasic tests basic MERGE statement functionality.
 func TestMergeBasic(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create target and source tables
 	executeSQL(t, executor, "CREATE TABLE inventory (product_id INT, quantity INT);")
@@ -4939,7 +4939,7 @@ func TestMergeBasic(t *testing.T) {
 // TestMergeDelete tests MERGE with DELETE action.
 func TestMergeDelete(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE target (id INT, status TEXT);")
 	executeSQL(t, executor, "CREATE TABLE remove_list (id INT);")
@@ -4973,7 +4973,7 @@ func TestMergeDelete(t *testing.T) {
 // TestMergeWithSubquery tests MERGE using a subquery as the source.
 func TestMergeWithSubquery(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	executeSQL(t, executor, "CREATE TABLE accounts (account_id INT, balance INT);")
 	executeSQL(t, executor, "CREATE TABLE transactions (account_id INT, amount INT);")
@@ -5002,7 +5002,7 @@ func TestMergeWithSubquery(t *testing.T) {
 // TestMergeDoNothing tests MERGE with DO NOTHING action.
 func TestMergeDoNothing(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm)
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE data (id INT, value INT);")
 	executeSQL(t, executor, "CREATE TABLE updates (id INT, value INT);")
@@ -5143,7 +5143,7 @@ func TestLateralParsing(t *testing.T) {
 // TestGroupingSets tests GROUP BY GROUPING SETS functionality.
 func TestGroupingSets(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create a sales table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
@@ -5184,7 +5184,7 @@ func TestGroupingSets(t *testing.T) {
 // TestCube tests GROUP BY CUBE functionality.
 func TestCube(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
@@ -5228,7 +5228,7 @@ func TestCube(t *testing.T) {
 // TestRollup tests GROUP BY ROLLUP functionality.
 func TestRollup(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (yr INT, quarter TEXT, amount INT)")
@@ -5281,7 +5281,7 @@ func TestRollup(t *testing.T) {
 // TestGroupingFunction tests the GROUPING() function.
 func TestGroupingFunction(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
@@ -5393,7 +5393,7 @@ func TestGroupingSetsParsing(t *testing.T) {
 // TestCTEBasic tests basic CTE (WITH clause) functionality.
 func TestCTEBasic(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create a table
 	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept TEXT, salary INT)")
@@ -5541,7 +5541,7 @@ func TestCTEParsing(t *testing.T) {
 // TestCTEWithColumnAliases tests CTE with explicit column aliases.
 func TestCTEWithColumnAliases(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := newParitySession(t, tm)
 
 	// Create a table
 	executeSQL(t, exec, "CREATE TABLE nums (a INT, b INT)")
@@ -5569,7 +5569,7 @@ func TestCTEWithColumnAliases(t *testing.T) {
 // TestCTEMultiple tests queries with multiple CTEs.
 func TestCTEMultiple(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := newParitySession(t, tm)
 
 	// Create tables
 	executeSQL(t, exec, "CREATE TABLE products (id INT PRIMARY KEY, name TEXT, price INT)")
@@ -5595,7 +5595,7 @@ func TestCTEMultiple(t *testing.T) {
 // TestRecursiveCTE tests recursive CTE execution.
 func TestRecursiveCTE(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm)
+	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
 
 	// Create a hierarchy table for recursive CTE testing
 	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, manager_id INT)")

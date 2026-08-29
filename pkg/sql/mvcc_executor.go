@@ -250,6 +250,8 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 			ID:            i,
 			Name:          def.Name,
 			Type:          def.Type,
+			Length:        def.Length,
+			Unique:        def.Unique,
 			NotNull:       def.NotNull,
 			PrimaryKey:    def.PrimaryKey,
 			HasDefault:    def.HasDefault,
@@ -437,6 +439,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 	}
 
 	totalInserted := 0
+	totalUpdated := 0 // rows changed by ON CONFLICT DO UPDATE
 
 	// Helper to process and insert a single row of values
 	processAndInsert := func(rowValues []catalog.Value, rowIdx int) error {
@@ -479,12 +482,59 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 			}
 		}
 
+		// Apply column DEFAULTs to anything still NULL (P2.6).
+		for i, col := range meta.Schema.Columns {
+			if i < len(values) && values[i].IsNull && col.HasDefault && col.DefaultValue != nil {
+				values[i] = *col.DefaultValue
+			}
+		}
+
+		// Fill AUTO_INCREMENT columns left NULL (P2.6).
+		if err := e.applyAutoIncrement(stmt.TableName, meta.Schema, values, tx); err != nil {
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
 		// Validate CHECK constraints
 		if err := e.validateCheckConstraints(meta.Schema, values); err != nil {
 			return fmt.Errorf("row %d: %w", rowIdx+1, err)
 		}
 
+		// VARCHAR(n) length (P2.1)
+		if err := e.checkVarcharLengths(meta.Schema, values); err != nil {
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+
 		targetTable := stmt.TableName
+
+		// Primary-key / UNIQUE conflict handling (P2.1). Look for an existing
+		// row that collides on the conflict columns (or the primary key).
+		conflictRID, conflictRow, hasConflict, err := e.findConflictRID(stmt, meta.Schema, values, tx)
+		if err != nil {
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+		if hasConflict {
+			switch {
+			case stmt.OnConflict == nil:
+				return fmt.Errorf("row %d: duplicate key value violates unique constraint", rowIdx+1)
+			case stmt.OnConflict.DoNothing:
+				return nil
+			default:
+				if err := e.applyOnConflictUpdate(stmt, meta, conflictRID, conflictRow, values, tx, rowIdx); err != nil {
+					return err
+				}
+				totalUpdated++
+				return nil
+			}
+		}
+
+		// UNIQUE constraints not covered by the conflict check above, plus
+		// foreign keys.
+		if err := e.checkUniqueness(targetTable, meta.Schema, values, storage.RID{}, tx); err != nil {
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
+		if err := e.checkForeignKeys(meta, values, tx); err != nil {
+			return fmt.Errorf("row %d: %w", rowIdx+1, err)
+		}
 
 		// Fire BEFORE INSERT triggers
 		if err := e.fireBeforeInsertTriggers(targetTable, values, meta.Schema); err != nil {
@@ -539,13 +589,25 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 		}
 	}
 
-	if totalInserted == 1 {
+	switch {
+	case totalInserted > 0 && totalUpdated > 0:
+		return &Result{
+			Message:      fmt.Sprintf("%d row(s) inserted, %d row(s) updated.", totalInserted, totalUpdated),
+			RowsAffected: totalInserted + totalUpdated,
+		}, nil
+	case totalUpdated > 0:
+		return &Result{
+			Message:      fmt.Sprintf("%d row(s) updated.", totalUpdated),
+			RowsAffected: totalUpdated,
+		}, nil
+	case totalInserted == 1:
 		return &Result{Message: "1 row inserted.", RowsAffected: 1}, nil
+	default:
+		return &Result{
+			Message:      fmt.Sprintf("%d rows inserted.", totalInserted),
+			RowsAffected: totalInserted,
+		}, nil
 	}
-	return &Result{
-		Message:      fmt.Sprintf("%d rows inserted.", totalInserted),
-		RowsAffected: totalInserted,
-	}, nil
 }
 
 func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
@@ -1453,6 +1515,17 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 
 	// Perform updates: mark old tuple deleted, insert new tuple
 	for _, u := range toUpdate {
+		// Constraint checks on the new row (P2.1).
+		if err := e.checkVarcharLengths(meta.Schema, u.newRow); err != nil {
+			return nil, err
+		}
+		if err := e.checkUniqueness(stmt.TableName, meta.Schema, u.newRow, u.rid, tx); err != nil {
+			return nil, err
+		}
+		if err := e.checkForeignKeys(meta, u.newRow, tx); err != nil {
+			return nil, err
+		}
+
 		// Fire BEFORE UPDATE triggers
 		if err := e.fireBeforeUpdateTriggers(stmt.TableName, u.oldRow, u.newRow, meta.Schema); err != nil {
 			return nil, fmt.Errorf("BEFORE UPDATE trigger failed: %w", err)
@@ -1548,6 +1621,11 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 
 	// Mark tuples as deleted and clean up indexes
 	for _, d := range toDelete {
+		// RESTRICT: refuse to delete a row still referenced by a foreign key (P2.1).
+		if err := e.checkReferencingForeignKeys(meta, d.values, tx); err != nil {
+			return nil, err
+		}
+
 		// Fire BEFORE DELETE triggers
 		if err := e.fireBeforeDeleteTriggers(stmt.TableName, d.values, meta.Schema); err != nil {
 			return nil, fmt.Errorf("BEFORE DELETE trigger failed: %w", err)
@@ -2227,6 +2305,26 @@ func coerceValueMVCC(v catalog.Value, targetType catalog.DataType) (catalog.Valu
 			return catalog.Value{}, fmt.Errorf("value %d out of INT32 range", v.Int64)
 		}
 		return catalog.NewInt32(int32(v.Int64)), nil
+	}
+
+	// TEXT -> DATE ("YYYY-MM-DD")
+	if v.Type == catalog.TypeText && targetType == catalog.TypeDate {
+		d, err := time.Parse("2006-01-02", v.Text)
+		if err != nil {
+			return catalog.Value{}, fmt.Errorf("invalid date format: expected YYYY-MM-DD, got %q", v.Text)
+		}
+		return catalog.NewDate(d), nil
+	}
+
+	// TEXT -> TIMESTAMP (RFC3339, then "YYYY-MM-DD HH:MM:SS")
+	if v.Type == catalog.TypeText && targetType == catalog.TypeTimestamp {
+		ts, err := time.Parse(time.RFC3339, v.Text)
+		if err != nil {
+			if ts, err = time.Parse("2006-01-02 15:04:05", v.Text); err != nil {
+				return catalog.Value{}, fmt.Errorf("invalid timestamp format: %q", v.Text)
+			}
+		}
+		return catalog.NewTimestamp(ts), nil
 	}
 
 	return catalog.Value{}, fmt.Errorf("cannot coerce %v to %v", v.Type, targetType)
@@ -3048,6 +3146,8 @@ func (e *MVCCExecutor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 		newCol := catalog.Column{
 			Name:       stmt.ColumnDef.Name,
 			Type:       stmt.ColumnDef.Type,
+			Length:     stmt.ColumnDef.Length,
+			Unique:     stmt.ColumnDef.Unique,
 			NotNull:    stmt.ColumnDef.NotNull,
 			HasDefault: stmt.ColumnDef.HasDefault,
 		}
@@ -3113,6 +3213,29 @@ func (e *MVCCExecutor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 			return nil, fmt.Errorf("failed to update table metadata: %w", err)
 		}
 		return &Result{Message: fmt.Sprintf("Column %q renamed to %q in table %q.", stmt.ColumnName, stmt.NewName, stmt.TableName)}, nil
+
+	case "ADD CONSTRAINT":
+		if stmt.ConstraintType != "UNIQUE" {
+			return nil, fmt.Errorf("unsupported constraint type: %s", stmt.ConstraintType)
+		}
+		for _, colName := range stmt.ConstraintCols {
+			found := false
+			for i, col := range meta.Schema.Columns {
+				if strings.EqualFold(col.Name, colName) {
+					meta.Schema.Columns[i].Unique = true
+					found = true
+					break
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("column %q does not exist in table %q", colName, stmt.TableName)
+			}
+		}
+		meta.Columns = meta.Schema.Columns
+		if err := e.mtm.UpdateTableMeta(meta); err != nil {
+			return nil, fmt.Errorf("failed to update table metadata: %w", err)
+		}
+		return &Result{Message: fmt.Sprintf("Unique constraint %q added to table %q.", stmt.ConstraintName, stmt.TableName)}, nil
 
 	default:
 		return nil, fmt.Errorf("unsupported ALTER TABLE action: %s", stmt.Action)

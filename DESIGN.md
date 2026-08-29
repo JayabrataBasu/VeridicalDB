@@ -575,7 +575,16 @@ separately (the "VeridicalDB Atlas" document). In brief:
 |-------|-------|
 | P0 | Guardrails: lint config, version consolidation, wire feature-matrix test, this doc — **done** |
 | P1 | `pkg/engine` — `Open`/`NewSession`/`Close` assemble the graph once; all five call sites migrated; the wire protocol now has indexes, FTS, triggers, procedures, and multi-database — **done** |
-| P2 | Collapse the two SQL executors into one. **Larger than first scoped:** `executor.go` (the pre-MVCC path, still the only one the ~148 `NewExecutor` tests exercise) uniquely implements `information_schema` queries and appears to carry other logic — recursive CTEs, `UPDATE ... FROM`, `DELETE ... USING`, some constraint checks — not present in `mvcc_executor.go`. It cannot be deleted until those are ported to the MVCC path behind a parity test suite. The dead `sql.NewExecutor` REPL fallback was already removed in P1. |
+| P2 | Collapse the two SQL executors into one. **Larger than first scoped** — `executor.go` (the pre-MVCC path) is the only one that enforced several relational constraints and implements features (`information_schema`, recursive CTEs, `UPDATE ... FROM`, `DELETE ... USING`, `AUTO_INCREMENT`, `NTH_VALUE`, …) missing from `mvcc_executor.go`. Broken into sub-phases with a parity harness (`TestExecutorSessionParity`) as the gate. |
+| P2.0 | Parity harness: `sqlExec` interface + `newParitySession` helper + `TestExecutorSessionParity`. **Done.** |
+| P2.1 | Constraint enforcement on the MVCC path — PK/UNIQUE/FK/VARCHAR on INSERT+UPDATE, FK-RESTRICT on DELETE, `ON CONFLICT`, plus the catalog `UNIQUE`/`Length` and DATE-coercion fixes it exposed. **Done.** `foreign_key_test.go` + `date_varchar_unique_test.go` migrated to `Session`. |
+| P2.6a | Column DEFAULTs, `AUTO_INCREMENT`, `ON CONFLICT` row count, `AVG`-returns-float on the MVCC path. **Done.** 60 of 74 `sql_test.go` tests migrated to `Session`. |
+| P2.2 | `information_schema.*` via SQL string (only reachable via hand-built AST today, on either path). |
+| P2.3 | `LATERAL` + `LEFT JOIN` column resolution on the MVCC path. |
+| P2.4 | CTE parity: single-column CTE feeding an aggregate; recursive self-reference visible to a JOIN in the recursive term. |
+| P2.5 | `UPDATE ... FROM` / `DELETE ... USING` qualified-column resolution. |
+| P2.6b | The MVCC path's `GROUPING SETS` / `CUBE` / `ROLLUP` emit only the grand total; `GROUPING()` returns 0 for NULL group columns; `DISTINCT ON` does not deduplicate; window frames compute wrong moving values and `MIN`/`MAX`/`NTH_VALUE` are unsupported as window functions; `MERGE` result differences. **These are substantial — closer to reimplementing than porting.** 14 `sql_test.go` tests remain on `*Executor`, marked `TODO(P2)`. |
+| P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
 | P3 | One config package, one logger |
 | P4 | Split `pkg/sql` into `token / ast / parse / plan / exec / session` sub-packages |
 | P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
