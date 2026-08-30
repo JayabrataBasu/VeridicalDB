@@ -4836,17 +4836,26 @@ func TestLateralJoin(t *testing.T) {
 	`)
 
 	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 rows (one per department), got %d", len(result.Rows))
-		for _, row := range result.Rows {
-			t.Logf("Row: %v", row)
-		}
+		t.Fatalf("Expected 2 rows (one per department), got %d: %v", len(result.Rows), result.Rows)
+	}
+	// The LATERAL subquery must be re-correlated per left row: Engineering's top
+	// earner is Bob (90k), Sales' is Dave (70k).
+	top := map[string]string{}
+	for _, row := range result.Rows {
+		top[row[0].Text] = row[1].Text
+	}
+	if top["Engineering"] != "Bob" {
+		t.Errorf("Engineering top earner: want Bob, got %q", top["Engineering"])
+	}
+	if top["Sales"] != "Dave" {
+		t.Errorf("Sales top earner: want Dave, got %q", top["Sales"])
 	}
 }
 
 // TestLateralJoinWithLeftJoin tests LEFT LATERAL join.
 func TestLateralJoinWithLeftJoin(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE products (product_id INT, product_name TEXT);")
 	executeSQL(t, executor, "CREATE TABLE orders (order_id INT, product_id INT, quantity INT);")
@@ -4869,8 +4878,21 @@ func TestLateralJoinWithLeftJoin(t *testing.T) {
 		) AS o ON TRUE;
 	`)
 
-	if len(result.Rows) < 3 {
-		t.Errorf("Expected at least 3 rows, got %d", len(result.Rows))
+	if len(result.Rows) != 3 {
+		t.Fatalf("Expected 3 rows (one per product), got %d: %v", len(result.Rows), result.Rows)
+	}
+	got := map[string]catalog.Value{}
+	for _, row := range result.Rows {
+		got[row[0].Text] = row[1]
+	}
+	if v, ok := got["Widget"]; !ok || v.IsNull || v.Int32 != 5 {
+		t.Errorf("Widget quantity: want 5, got %v", got["Widget"])
+	}
+	if v, ok := got["Gadget"]; !ok || v.IsNull || v.Int32 != 2 {
+		t.Errorf("Gadget quantity: want 2, got %v", got["Gadget"])
+	}
+	if v, ok := got["Gizmo"]; !ok || !v.IsNull {
+		t.Errorf("Gizmo quantity: want NULL (no orders), got %v", got["Gizmo"])
 	}
 }
 

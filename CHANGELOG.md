@@ -9,6 +9,14 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- **LATERAL-join correlation fixed on the MVCC path.** A `CROSS`/`LEFT JOIN
+  LATERAL (…)` subquery was re-using the *first* left row's result for every
+  row — `substituteExpressionValuesMVCC` also replaced the subquery's own
+  unqualified columns (e.g. the inner `dept_id` in `WHERE dept_id = d.dept_id`)
+  with outer values, collapsing the correlation. It now uses the inner-schema-aware
+  `substituteExpressionValuesCorrelated`, and `evalJoinConditionMVCC` accepts a
+  bare boolean literal (`… ON TRUE`). `TestLateralJoin` / `TestLateralJoinWithLeftJoin`
+  now assert the correlated values, not just the row count.
 - `information_schema` now works on the shipping MVCC/`Session` path (previously
   it existed only on the dead pre-MVCC executor and was reachable only via
   hand-built AST). `SELECT … FROM information_schema.tables` and friends parse and

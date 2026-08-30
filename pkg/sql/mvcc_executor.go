@@ -2950,6 +2950,12 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 // evalJoinConditionMVCC evaluates a join condition for MVCC executor.
 func (e *MVCCExecutor) evalJoinConditionMVCC(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
 	switch ex := expr.(type) {
+	case *ast.LiteralExpr:
+		// A bare literal as the join condition, e.g. `... ON TRUE`.
+		if ex.Value.Type == catalog.TypeBool {
+			return ex.Value.Bool, nil
+		}
+		return !ex.Value.IsNull, nil
 	case *ast.BinaryExpr:
 		switch ex.Op {
 		case token.TOKEN_AND:
@@ -5080,68 +5086,33 @@ func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *ast.SelectStmt,
 	newQuery.OrderBy = make([]ast.OrderByClause, len(subquery.OrderBy))
 	copy(newQuery.OrderBy, subquery.OrderBy)
 
-	if subquery.Where != nil {
-		newQuery.Where = e.substituteExpressionValuesMVCC(subquery.Where, leftMeta, leftRow, leftTableName, leftTableAlias)
+	// Fetch the inner (subquery) table schema so that an unqualified column that
+	// belongs to the inner table (e.g. `WHERE dept_id = d.dept_id`, where the
+	// left side is the inner column) is left alone and only the correlated
+	// reference to the outer row is replaced with a literal.
+	var innerSchema *catalog.Schema
+	if subquery.TableName != "" {
+		if meta, err := e.mtm.Catalog().GetTable(subquery.TableName); err == nil {
+			innerSchema = meta.Schema
+		}
+	}
+	subst := func(x ast.Expression) ast.Expression {
+		return e.substituteExpressionValuesCorrelated(x, leftMeta.Schema, leftRow, innerSchema, subquery.TableName)
 	}
 
+	if subquery.Where != nil {
+		newQuery.Where = subst(subquery.Where)
+	}
 	if subquery.Having != nil {
-		newQuery.Having = e.substituteExpressionValuesMVCC(subquery.Having, leftMeta, leftRow, leftTableName, leftTableAlias)
+		newQuery.Having = subst(subquery.Having)
+	}
+	for i := range newQuery.Columns {
+		if newQuery.Columns[i].Expression != nil {
+			newQuery.Columns[i].Expression = subst(newQuery.Columns[i].Expression)
+		}
 	}
 
 	return newQuery
-}
-
-// substituteExpressionValuesMVCC substitutes column references from the left table with actual values.
-func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr ast.Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) ast.Expression {
-	switch ex := expr.(type) {
-	case *ast.ColumnRef:
-		colName := ex.Name
-		parts := splitQualifiedName(colName)
-		var lookupName string
-		if len(parts) == 2 {
-			tablePart := parts[0]
-			columnPart := parts[1]
-			if tablePart == leftTableName || tablePart == leftTableAlias {
-				lookupName = columnPart
-			}
-		} else {
-			lookupName = colName
-		}
-
-		for i, col := range leftMeta.Schema.Columns {
-			if col.Name == lookupName {
-				return &ast.LiteralExpr{Value: leftRow[i]}
-			}
-		}
-		return ex
-
-	case *ast.BinaryExpr:
-		return &ast.BinaryExpr{
-			Left:  e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
-			Op:    ex.Op,
-			Right: e.substituteExpressionValuesMVCC(ex.Right, leftMeta, leftRow, leftTableName, leftTableAlias),
-		}
-
-	case *ast.UnaryExpr:
-		return &ast.UnaryExpr{
-			Op:   ex.Op,
-			Expr: e.substituteExpressionValuesMVCC(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
-		}
-
-	case *ast.InExpr:
-		newValues := make([]ast.Expression, len(ex.Values))
-		for i, v := range ex.Values {
-			newValues[i] = e.substituteExpressionValuesMVCC(v, leftMeta, leftRow, leftTableName, leftTableAlias)
-		}
-		return &ast.InExpr{
-			Left:   e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
-			Values: newValues,
-			Not:    ex.Not,
-		}
-
-	default:
-		return expr
-	}
 }
 
 // substituteExpressionValuesCorrelated substitutes outer values into expressions, but avoids

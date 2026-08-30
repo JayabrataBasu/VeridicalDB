@@ -17,13 +17,9 @@ import (
 // runs (guarding the reference against regressions), the *Session half is
 // skipped, tagged with the owning sub-phase. Clear the tag when it lands.
 //
-// Remaining P2 backlog. 60 of the 74 sql_test.go tests now run against
-// *Session; the 14 below still fail on it and are marked TODO(P2) in
-// sql_test.go, still running on *Executor. Each is a real MVCC-executor gap,
-// not a test artifact:
+// Remaining P2 backlog. The tests below still run on *Executor, marked TODO(P2)
+// in sql_test.go. Each is a real MVCC-executor gap, not a test artifact:
 //
-//	P2.3 joins   TestLateralJoinWithLeftJoin
-//	             — LATERAL subquery + LEFT JOIN column resolution.
 //	P2.4 CTEs    TestCTEBasic  — a single-column CTE consumed by an aggregate
 //	             ("unknown column in CTE"); column count wrong for column-list CTE.
 //	             TestRecursiveCTE — the recursive self-reference is not visible
@@ -87,6 +83,32 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.3: LATERAL subquery, CROSS and LEFT ----
+		{
+			name: "lateral_left_join_keeps_unmatched",
+			setup: []string{
+				`CREATE TABLE p (pid INT, pname TEXT)`,
+				`CREATE TABLE o (oid INT, pid INT, qty INT)`,
+				`INSERT INTO p VALUES (1,'a'),(2,'b'),(3,'c')`,
+				`INSERT INTO o VALUES (1,1,5),(2,2,7)`,
+			},
+			probe: `SELECT p.pname, x.qty FROM p LEFT JOIN LATERAL ` +
+				`(SELECT qty FROM o WHERE pid = p.pid LIMIT 1) AS x ON TRUE`,
+			wantRows: 3,
+		},
+		{
+			name: "lateral_cross_join_correlated_per_row",
+			setup: []string{
+				`CREATE TABLE dep (did INT, dname TEXT)`,
+				`CREATE TABLE emp (eid INT, did INT, sal INT)`,
+				`INSERT INTO dep VALUES (1,'eng'),(2,'sales')`,
+				`INSERT INTO emp VALUES (1,1,80),(2,1,90),(3,2,60),(4,2,70)`,
+			},
+			probe: `SELECT d.dname, t.sal FROM dep d CROSS JOIN LATERAL ` +
+				`(SELECT sal FROM emp WHERE did = d.did ORDER BY sal DESC LIMIT 1) AS t`,
+			wantRows: 2,
 		},
 
 		// ---- P2.2: information_schema.* via parsed SQL ----
