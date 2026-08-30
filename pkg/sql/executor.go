@@ -707,7 +707,7 @@ func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
 		// Check if it's an information_schema table
-		if infoMeta, ok := e.getInformationSchemaTable(stmt.TableName); ok {
+		if infoMeta, ok := informationSchemaTable(stmt.TableName); ok {
 			meta = infoMeta
 		} else {
 			// Check if it's a CTE reference
@@ -4430,8 +4430,10 @@ func (e *Executor) executeShow(stmt *ast.ShowStmt) (*Result, error) {
 // This is a simple sequential scan implementation.
 func (e *Executor) scanTable(tableName string, _ *catalog.Schema, fn func(rid storage.RID, row []catalog.Value) (bool, error)) error {
 	// Check for information_schema tables
-	if strings.HasPrefix(strings.ToLower(tableName), "information_schema.") {
-		return e.scanInformationSchema(tableName, fn)
+	if isInformationSchemaTable(tableName) {
+		e.viewsMu.RLock()
+		defer e.viewsMu.RUnlock()
+		return scanInformationSchema(tableName, e.tm.Catalog(), e.views, fn)
 	}
 
 	// We need to scan through pages. For now, use a simple approach:

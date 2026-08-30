@@ -619,6 +619,11 @@ func (e *MVCCExecutor) executeSelect(stmt *ast.SelectStmt, tx *txn.Transaction) 
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
 
+	// information_schema.* virtual tables are answered from catalog metadata.
+	if isInformationSchemaTable(stmt.TableName) && len(stmt.Joins) == 0 {
+		return e.executeSelectInformationSchema(stmt, tx)
+	}
+
 	// Handle WITH clause (CTEs)
 	if stmt.With != nil {
 		return e.executeSelectWithCTEs(stmt, tx)
@@ -4175,6 +4180,114 @@ func (e *MVCCExecutor) executeSelectFromView(outerStmt *ast.SelectStmt, viewDef 
 			pos++
 		}
 		outRows = append(outRows, outRow)
+	}
+
+	return &Result{Columns: outCols, Rows: outRows}, nil
+}
+
+// executeSelectInformationSchema answers a SELECT against an information_schema.*
+// virtual table. Rows are synthesised from catalog metadata, then filtered,
+// ordered, projected and limited in memory.
+func (e *MVCCExecutor) executeSelectInformationSchema(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
+	meta, ok := informationSchemaTable(stmt.TableName)
+	if !ok {
+		return nil, fmt.Errorf("unknown information_schema table: %s", stmt.TableName)
+	}
+	schema := meta.Schema
+
+	var rows [][]catalog.Value
+	e.viewsMu.RLock()
+	err := scanInformationSchema(stmt.TableName, e.mtm.Catalog(), e.views, func(_ storage.RID, row []catalog.Value) (bool, error) {
+		rows = append(rows, row)
+		return true, nil
+	})
+	e.viewsMu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+
+	// WHERE
+	if stmt.Where != nil {
+		var filtered [][]catalog.Value
+		for _, row := range rows {
+			match, err := e.evalCondition(stmt.Where, schema, row, tx)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+
+	// ORDER BY (on the full synthetic schema, before projection)
+	if len(stmt.OrderBy) > 0 {
+		idxs := make([]int, len(stmt.OrderBy))
+		for i, ob := range stmt.OrderBy {
+			if _, idx := schema.ColumnByName(ob.Column); idx >= 0 {
+				idxs[i] = idx
+			} else {
+				return nil, fmt.Errorf("unknown column in ORDER BY: %s", ob.Column)
+			}
+		}
+		sortRowsMVCC(rows, stmt.OrderBy, idxs)
+	}
+
+	// Projection
+	star := len(stmt.Columns) == 1 && stmt.Columns[0].Star
+	var outCols []string
+	var outIdx []int
+	if star {
+		for _, c := range schema.Columns {
+			outCols = append(outCols, c.Name)
+		}
+	} else {
+		for _, sc := range stmt.Columns {
+			_, idx := schema.ColumnByName(sc.Name)
+			if idx < 0 {
+				return nil, fmt.Errorf("unknown column: %s", sc.Name)
+			}
+			name := sc.Name
+			if sc.Alias != "" {
+				name = sc.Alias
+			}
+			outCols = append(outCols, name)
+			outIdx = append(outIdx, idx)
+		}
+	}
+
+	outRows := make([][]catalog.Value, 0, len(rows))
+	for _, row := range rows {
+		if star {
+			outRows = append(outRows, row)
+			continue
+		}
+		outRow := make([]catalog.Value, len(outIdx))
+		for i, idx := range outIdx {
+			outRow[i] = row[idx]
+		}
+		outRows = append(outRows, outRow)
+	}
+
+	if stmt.Distinct {
+		outRows = deduplicateRows(outRows)
+	}
+
+	// OFFSET / LIMIT
+	if stmt.Offset != nil && *stmt.Offset > 0 {
+		off := int(*stmt.Offset)
+		if off >= len(outRows) {
+			outRows = nil
+		} else {
+			outRows = outRows[off:]
+		}
+	}
+	if stmt.Limit != nil {
+		lim := int(*stmt.Limit)
+		if lim >= 0 && lim < len(outRows) {
+			outRows = outRows[:lim]
+		}
 	}
 
 	return &Result{Columns: outCols, Rows: outRows}, nil

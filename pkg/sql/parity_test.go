@@ -89,6 +89,23 @@ func TestExecutorSessionParity(t *testing.T) {
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
 		},
 
+		// ---- P2.2: information_schema.* via parsed SQL ----
+		{
+			name: "information_schema_tables_via_sql",
+			setup: []string{
+				`CREATE TABLE aa (id INT PRIMARY KEY)`,
+				`CREATE TABLE bb (id INT PRIMARY KEY)`,
+			},
+			probe: `SELECT table_name FROM information_schema.tables ORDER BY table_name`, wantRows: 2,
+		},
+		{
+			name: "information_schema_columns_filtered",
+			setup: []string{
+				`CREATE TABLE aa (id INT PRIMARY KEY, label TEXT)`,
+			},
+			probe: `SELECT column_name FROM information_schema.columns WHERE table_name = 'aa'`, wantRows: 2,
+		},
+
 		// ---- P2.1: constraint enforcement (verified: executor rejects, session does not) ----
 		{
 			name:    "reject_duplicate_primary_key",

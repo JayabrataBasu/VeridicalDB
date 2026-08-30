@@ -315,6 +315,19 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*ast.SelectStmt, er
 	if err != nil {
 		return nil, err
 	}
+	// Qualified table name, e.g. information_schema.tables. Only the schema-
+	// qualified form is meaningful today (VeridicalDB has a single "public"
+	// schema); the joined name is stored verbatim in TableName. The part after
+	// the dot may lex as a keyword (e.g. "tables", "columns"), so match on the
+	// literal rather than the token type.
+	if p.cur.Literal == "." {
+		p.nextToken() // consume '.'
+		if !isNamePart(p.cur.Literal) {
+			return nil, fmt.Errorf("expected name after '.', got %v (%q)", p.cur.Type, p.cur.Literal)
+		}
+		tableName = tableName + "." + p.cur.Literal
+		p.nextToken()
+	}
 	stmt.TableName = tableName
 
 	// Optional table alias: AS alias or just alias
@@ -943,6 +956,25 @@ func (p *Parser) parseIdentifier() (string, error) {
 		return name, nil
 	}
 	return "", fmt.Errorf("expected identifier, got %v (%q)", p.cur.Type, p.cur.Literal)
+}
+
+// isNamePart reports whether s is shaped like an identifier ([A-Za-z_][A-Za-z0-9_]*).
+// Used for the part after a dot in a schema-qualified name, which may lex as a
+// keyword token but still carries its text in Literal.
+func isNamePart(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r == '_':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // parseSelectStatement parses a SELECT statement when the cursor is on token.TOKEN_SELECT.

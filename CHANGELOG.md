@@ -9,6 +9,14 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- `information_schema` now works on the shipping MVCC/`Session` path (previously
+  it existed only on the dead pre-MVCC executor and was reachable only via
+  hand-built AST). `SELECT … FROM information_schema.tables` and friends parse and
+  execute as ordinary SQL — the parser now accepts a schema-qualified table name
+  in `FROM`. The virtual-table set grew from 3 (`tables`, `columns`,
+  `table_constraints`) to 7, adding `schemata`, `views`, `key_column_usage`, and
+  `referential_constraints` for psql / ORM introspection. `information_schema.go`
+  is now receiver-free free functions shared by both paths.
 - Shared helpers that the shipping MVCC engine (`mvcc_executor.go` / `session.go`)
   depended on were moved out of the dead pre-MVCC `executor.go` into eight
   self-contained `pkg/sql/exec_*.go` files: `Result` / `ViewDef` (`exec_result.go`),

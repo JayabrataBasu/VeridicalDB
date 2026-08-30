@@ -222,6 +222,10 @@ INSERT INTO child_orders (id, user_id, amount) VALUES (1, 1, 100);
 
 SELECT table_name FROM information_schema.tables;
 SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'users';
+SELECT table_type FROM information_schema.tables WHERE table_name = 'users';
+SELECT constraint_type FROM information_schema.table_constraints WHERE table_name = 'child_orders';
+SELECT delete_rule FROM information_schema.referential_constraints;
+SELECT schema_name FROM information_schema.schemata;
 
 
 SHOW CREATE TABLE users;
@@ -543,6 +547,10 @@ echo ""
 echo "--- information_schema ---"
 check "information_schema.tables" "users\|products\|orders"
 check "information_schema.columns" "name\|age\|email"
+check "information_schema.tables table_type" "BASE TABLE"
+check "information_schema.table_constraints" "FOREIGN KEY"
+check "information_schema.referential_constraints" "NO ACTION"
+check "information_schema.schemata" "public"
 
 echo ""
 echo "--- SHOW CREATE TABLE ---"

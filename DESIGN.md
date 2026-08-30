@@ -583,7 +583,7 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.0 | Parity harness: `sqlExec` interface + `newParitySession` helper + `TestExecutorSessionParity`. **Done.** |
 | P2.1 | Constraint enforcement on the MVCC path — PK/UNIQUE/FK/VARCHAR on INSERT+UPDATE, FK-RESTRICT on DELETE, `ON CONFLICT`, plus the catalog `UNIQUE`/`Length` and DATE-coercion fixes it exposed. **Done.** `foreign_key_test.go` + `date_varchar_unique_test.go` migrated to `Session`. |
 | P2.6a | Column DEFAULTs, `AUTO_INCREMENT`, `ON CONFLICT` row count, `AVG`-returns-float on the MVCC path. **Done.** 60 of 74 `sql_test.go` tests migrated to `Session`. |
-| P2.2 | `information_schema.*` via SQL string (only reachable via hand-built AST today, on either path). |
+| P2.2 | **Done.** Shared executor helpers relocated to `exec_*.go`; `information_schema.*` works on the MVCC/`Session` path via parsed SQL (schema-qualified `FROM` name now parses), receiver-free functions, and the virtual-table set expanded to 7 (added `schemata`, `views`, `key_column_usage`, `referential_constraints`). `information_schema_test.go` migrated to `Session`. |
 | P2.3 | `LATERAL` + `LEFT JOIN` column resolution on the MVCC path. |
 | P2.4 | CTE parity: single-column CTE feeding an aggregate; recursive self-reference visible to a JOIN in the recursive term. |
 | P2.5 | `UPDATE ... FROM` / `DELETE ... USING` qualified-column resolution. |
