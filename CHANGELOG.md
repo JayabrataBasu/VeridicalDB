@@ -9,6 +9,11 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- `MERGE` now matches the pre-MVCC executor. The MVCC path failed
+  `WHEN MATCHED THEN UPDATE SET c = a + b` with "column expects INT, got BIGINT" —
+  computed values weren't coerced to the target column type. Coercion added on
+  every `MERGE` UPDATE/INSERT assignment, and `evalMergeExprMVCC` now handles
+  scalar function calls.
 - Window functions on the MVCC path gained frame support (`ROWS BETWEEN …`) and
   the full function set — `MIN` / `MAX` / `FIRST_VALUE` / `LAST_VALUE` /
   `NTH_VALUE` / `LAG` / `LEAD` / `NTILE` (previously only `ROW_NUMBER` / `RANK` /

@@ -587,7 +587,7 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.3 | **Done.** Fixed MVCC LATERAL-join correlation (was reusing the first left row's subquery result for all rows); `… ON TRUE` join conditions now evaluate. `TestLateralJoinWithLeftJoin` migrated to `Session`. |
 | P2.4 | CTE parity: single-column CTE feeding an aggregate; recursive self-reference visible to a JOIN in the recursive term. |
 | P2.5 | **Done.** `UPDATE … FROM` / `DELETE … USING` on the MVCC path via new `exec_combined.go` (shared `combinedSchema`, combined-row evaluators, `applyMVCCUpdates` / `applyMVCCDeletes` so constraints + triggers + indexes still run). `TestUpdateWithFrom` / `TestDeleteWithUsing` migrated to `Session`. |
-| P2.6b | Four slices. **DISTINCT ON**, **GROUPING SETS / CUBE / ROLLUP + `GROUPING()`**, and **window frames + full window-function set** are done (`exec_grouping_sets.go`, `exec_window.go`). Remaining: `MERGE` result differences. |
+| P2.6b | **Done.** DISTINCT ON; GROUPING SETS / CUBE / ROLLUP + `GROUPING()` (`exec_grouping_sets.go`); window frames + full window-function set (`exec_window.go`); `MERGE` value coercion + function-call args. |
 | P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
 | P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
 | P4 | Split `pkg/sql` into `token / lex / ast / parse / planner / exec / session` sub-packages. `token`, `lex`, `ast`, `parse`, `planner` extracted; `exec`/`session` deferred until P2 deletes `executor.go` — **front half done** |

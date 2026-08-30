@@ -4909,7 +4909,7 @@ func TestLateralJoinWithLeftJoin(t *testing.T) {
 // TestMergeBasic tests basic MERGE statement functionality.
 func TestMergeBasic(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	// Create target and source tables
 	executeSQL(t, executor, "CREATE TABLE inventory (product_id INT, quantity INT);")
@@ -5009,7 +5009,7 @@ func TestMergeDelete(t *testing.T) {
 // TestMergeWithSubquery tests MERGE using a subquery as the source.
 func TestMergeWithSubquery(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE accounts (account_id INT, balance INT);")
 	executeSQL(t, executor, "CREATE TABLE transactions (account_id INT, amount INT);")

@@ -5176,6 +5176,10 @@ func (e *MVCCExecutor) executeMerge(stmt *ast.MergeStmt, tx *txn.Transaction) (*
 							if err != nil {
 								return nil, err
 							}
+							val, err = coerceValueMVCC(val, targetMeta.Schema.Columns[colIdx].Type)
+							if err != nil {
+								return nil, fmt.Errorf("MERGE UPDATE column %s: %w", assign.Column, err)
+							}
 							newRow[colIdx] = val
 						}
 
@@ -5263,6 +5267,10 @@ func (e *MVCCExecutor) executeMerge(stmt *ast.MergeStmt, tx *txn.Transaction) (*
 							if err != nil {
 								return nil, err
 							}
+							val, err = coerceValueMVCC(val, targetMeta.Schema.Columns[colIdx].Type)
+							if err != nil {
+								return nil, fmt.Errorf("MERGE INSERT column %s: %w", colName, err)
+							}
 							newRow[colIdx] = val
 						}
 					} else {
@@ -5274,6 +5282,10 @@ func (e *MVCCExecutor) executeMerge(stmt *ast.MergeStmt, tx *txn.Transaction) (*
 							val, err := e.evalMergeExprMVCC(valExpr, combinedSchema, evalRow, colMap)
 							if err != nil {
 								return nil, err
+							}
+							val, err = coerceValueMVCC(val, targetMeta.Schema.Columns[j].Type)
+							if err != nil {
+								return nil, fmt.Errorf("MERGE INSERT column %s: %w", targetMeta.Schema.Columns[j].Name, err)
 							}
 							newRow[j] = val
 						}
@@ -5321,6 +5333,17 @@ func (e *MVCCExecutor) evalMergeExprMVCC(expr ast.Expression, schema *catalog.Sc
 			return catalog.Value{}, err
 		}
 		return evalBinaryExprValueMVCC(left, ex.Op, right)
+
+	case *ast.FunctionExpr:
+		args := make([]catalog.Value, len(ex.Args))
+		for i, a := range ex.Args {
+			v, err := e.evalMergeExprMVCC(a, schema, row, colMap)
+			if err != nil {
+				return catalog.Value{}, err
+			}
+			args[i] = v
+		}
+		return evalFunction(ex.Name, args)
 
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported expression type in MERGE: %T", expr)

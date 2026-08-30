@@ -17,18 +17,18 @@ import (
 // runs (guarding the reference against regressions), the *Session half is
 // skipped, tagged with the owning sub-phase. Clear the tag when it lands.
 //
-// Remaining P2 backlog. The tests below still run on *Executor, marked TODO(P2)
-// in sql_test.go. Each is a real MVCC-executor gap, not a test artifact:
+// Remaining P2 backlog — the last tests still on *Executor, marked TODO(P2) in
+// sql_test.go (plan sub-phase 9):
 //
 //	P2.4 CTEs    TestCTEBasic  — a single-column CTE consumed by an aggregate
 //	             ("unknown column in CTE"); column count wrong for column-list CTE.
 //	             TestRecursiveCTE — the recursive self-reference is not visible
 //	             to a JOIN inside the recursive term.
-//	P2.6 tail    TestMergeBasic / TestMergeWithSubquery — MERGE result differences.
 //
-// Fixed on the MVCC path during P2.1/P2.6: constraint enforcement, ON CONFLICT,
-// column DEFAULTs, AUTO_INCREMENT, ALTER ADD CONSTRAINT, TEXT->DATE coercion,
-// and AVG now returns a float (the pre-MVCC executor did integer division).
+// Landed on the MVCC path during P2.1–P2.6: constraint enforcement, ON CONFLICT,
+// DEFAULTs, AUTO_INCREMENT, TEXT->DATE coercion, AVG-as-float, information_schema,
+// LATERAL correlation, UPDATE/DELETE with FROM/USING, DISTINCT ON, GROUPING SETS /
+// CUBE / ROLLUP + GROUPING(), window frames + full window-function set, and MERGE.
 func TestExecutorSessionParity(t *testing.T) {
 	type kase struct {
 		name        string
@@ -74,6 +74,37 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.6b: MERGE ----
+		{
+			name: "merge_matched_update_not_matched_insert",
+			setup: []string{
+				`CREATE TABLE inv (pid INT, qty INT)`,
+				`CREATE TABLE ship (pid INT, qty INT)`,
+				`INSERT INTO inv VALUES (1,100),(2,50)`,
+				`INSERT INTO ship VALUES (1,25),(3,75)`,
+				`MERGE INTO inv AS i USING ship AS s ON i.pid = s.pid ` +
+					`WHEN MATCHED THEN UPDATE SET qty = i.qty + s.qty ` +
+					`WHEN NOT MATCHED THEN INSERT (pid, qty) VALUES (s.pid, s.qty)`,
+			},
+			probe:    `SELECT pid, qty FROM inv ORDER BY pid`,
+			wantRows: 3,
+		},
+		{
+			name: "merge_from_aggregating_subquery",
+			setup: []string{
+				`CREATE TABLE acct (aid INT, bal INT)`,
+				`CREATE TABLE txns (aid INT, amt INT)`,
+				`INSERT INTO acct VALUES (1,1000),(2,2000)`,
+				`INSERT INTO txns VALUES (1,100),(1,50),(3,500)`,
+				`MERGE INTO acct AS a USING (SELECT aid, SUM(amt) AS total FROM txns GROUP BY aid) AS t ` +
+					`ON a.aid = t.aid ` +
+					`WHEN MATCHED THEN UPDATE SET bal = a.bal + t.total ` +
+					`WHEN NOT MATCHED THEN INSERT (aid, bal) VALUES (t.aid, t.total)`,
+			},
+			probe:    `SELECT aid, bal FROM acct ORDER BY aid`,
+			wantRows: 3,
 		},
 
 		// ---- P2.6b: window frames + extended window functions ----
