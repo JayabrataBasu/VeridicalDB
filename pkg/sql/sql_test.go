@@ -5179,7 +5179,7 @@ func TestLateralParsing(t *testing.T) {
 // TestGroupingSets tests GROUP BY GROUPING SETS functionality.
 func TestGroupingSets(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create a sales table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
@@ -5220,7 +5220,7 @@ func TestGroupingSets(t *testing.T) {
 // TestCube tests GROUP BY CUBE functionality.
 func TestCube(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")
@@ -5264,7 +5264,7 @@ func TestCube(t *testing.T) {
 // TestRollup tests GROUP BY ROLLUP functionality.
 func TestRollup(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (yr INT, quarter TEXT, amount INT)")
@@ -5317,7 +5317,7 @@ func TestRollup(t *testing.T) {
 // TestGroupingFunction tests the GROUPING() function.
 func TestGroupingFunction(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, exec, "CREATE TABLE sales (region TEXT, product TEXT, amount INT)")

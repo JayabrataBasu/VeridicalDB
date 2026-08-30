@@ -24,10 +24,7 @@ import (
 //	             ("unknown column in CTE"); column count wrong for column-list CTE.
 //	             TestRecursiveCTE — the recursive self-reference is not visible
 //	             to a JOIN inside the recursive term.
-//	P2.6 tail    TestGroupingSets / TestCube / TestRollup — the MVCC path emits
-//	             only the grand-total grouping, not one row per set.
-//	             TestGroupingFunction — GROUPING() returns 0 for a NULL group col.
-//	             TestWindowFrameExecution — moving-window arithmetic off; MIN/MAX
+//	P2.6 tail    TestWindowFrameExecution — moving-window arithmetic off; MIN/MAX
 //	             unsupported as window functions.
 //	             TestNthValue — NTH_VALUE window function unsupported.
 //	             TestMergeBasic / TestMergeWithSubquery — MERGE result differences.
@@ -80,6 +77,35 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.6b: GROUPING SETS / CUBE / ROLLUP + GROUPING() ----
+		{
+			name: "grouping_sets_row_per_set",
+			setup: []string{
+				`CREATE TABLE g (region TEXT, product TEXT, amount INT)`,
+				`INSERT INTO g VALUES ('E','W',100),('E','G',200),('W','W',300),('W','G',250)`,
+			},
+			probe:    `SELECT region, product, SUM(amount) FROM g GROUP BY GROUPING SETS ((region),(product),())`,
+			wantRows: 5,
+		},
+		{
+			name: "cube_all_combinations",
+			setup: []string{
+				`CREATE TABLE g2 (a TEXT, b TEXT, n INT)`,
+				`INSERT INTO g2 VALUES ('x','p',1),('x','q',2),('y','p',3),('y','q',4)`,
+			},
+			probe:    `SELECT a, b, SUM(n) FROM g2 GROUP BY CUBE(a, b)`,
+			wantRows: 9,
+		},
+		{
+			name: "rollup_hierarchy",
+			setup: []string{
+				`CREATE TABLE g3 (yr INT, q TEXT, n INT)`,
+				`INSERT INTO g3 VALUES (2023,'Q1',100),(2023,'Q2',150),(2024,'Q1',250)`,
+			},
+			probe:    `SELECT yr, q, SUM(n) FROM g3 GROUP BY ROLLUP(yr, q)`,
+			wantRows: 6,
 		},
 
 		// ---- P2.6b: DISTINCT ON ----

@@ -9,6 +9,10 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- `GROUP BY GROUPING SETS` / `CUBE` / `ROLLUP` and the `GROUPING()` function now
+  work on the MVCC path (it previously emitted only a single grand-total row).
+  The ~250-line multi-set aggregator moved to a shared `pkg/sql/exec_grouping_sets.go`
+  (`computeGroupingSets`) that both executors call after their own scan + WHERE.
 - `SELECT DISTINCT ON (cols)` now deduplicates on the MVCC path (it was accepted
   but silently deduplicated on all columns, i.e. behaved like plain `DISTINCT`).
   It keeps the first row of each distinct-key group in `ORDER BY` / scan order,

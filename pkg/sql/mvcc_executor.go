@@ -676,7 +676,7 @@ func (e *MVCCExecutor) executeSelect(stmt *ast.SelectStmt, tx *txn.Transaction) 
 			break
 		}
 	}
-	if hasAggregates || len(stmt.GroupBy) > 0 {
+	if hasAggregates || len(stmt.GroupBy) > 0 || len(stmt.GroupingSets) > 0 {
 		return e.executeSelectWithAggregatesMVCC(stmt, tx)
 	}
 
@@ -1008,6 +1008,33 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *ast.SelectStmt, tx 
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
+	}
+
+	// GROUP BY GROUPING SETS / CUBE / ROLLUP: scan + WHERE here, then hand the
+	// materialised rows to the shared multi-set aggregator.
+	if len(stmt.GroupingSets) > 0 {
+		var allRows [][]catalog.Value
+		if err := e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
+			if stmt.Where != nil {
+				match, err := e.evalCondition(stmt.Where, meta.Schema, row.Values, tx)
+				if err != nil {
+					return false, err
+				}
+				if !match {
+					return true, nil
+				}
+			}
+			rc := make([]catalog.Value, len(row.Values))
+			copy(rc, row.Values)
+			allRows = append(allRows, rc)
+			return true, nil
+		}); err != nil {
+			return nil, err
+		}
+		return computeGroupingSets(allRows, meta.Schema, stmt,
+			func(expr ast.Expression, sch *catalog.Schema, r []catalog.Value) (bool, error) {
+				return e.evalCondition(expr, sch, r, tx)
+			})
 	}
 
 	// If GROUP BY is not present, keep the old global-aggregate behavior
