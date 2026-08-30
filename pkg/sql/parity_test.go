@@ -7,26 +7,22 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 )
 
-// TestExecutorSessionParity runs one battery of SQL against both execution
-// paths — the legacy *Executor and the shipping *Session — and asserts they
-// agree. It is the P2 gate: every sql_test.go test has now been migrated to
-// *Session, and every case here passes on both paths with no sessionTODO. The
-// only thing left before executor.go can be deleted (plan sub-phase 10) is the
-// two *Executor-internals tests in integration_test.go.
-//
-// Landed on the MVCC path during P2.1–P2.6: constraint enforcement, ON CONFLICT,
-// DEFAULTs, AUTO_INCREMENT, TEXT->DATE coercion, AVG-as-float, information_schema,
-// LATERAL correlation, UPDATE/DELETE with FROM/USING, DISTINCT ON, GROUPING SETS /
-// CUBE / ROLLUP + GROUPING(), window frames + full window-function set, MERGE, and
-// CTEs consumed by aggregates / ORDER BY / a recursive-term JOIN.
-func TestExecutorSessionParity(t *testing.T) {
+// TestSessionSQLBattery is a broad regression battery for the single SQL engine
+// (*Session over *MVCCExecutor). It began life as the P2 executor-parity gate —
+// every case was cross-checked against the pre-MVCC *Executor before that file
+// was deleted — and stays as a compact end-to-end guard over the features that
+// collapse exposed: constraint enforcement, ON CONFLICT, DEFAULTs, AUTO_INCREMENT,
+// information_schema, LATERAL correlation, UPDATE/DELETE ... FROM/USING,
+// DISTINCT ON, GROUPING SETS / CUBE / ROLLUP + GROUPING(), window frames + the
+// full window-function set, MERGE, and CTEs feeding aggregates / ORDER BY / a
+// recursive-term JOIN.
+func TestSessionSQLBattery(t *testing.T) {
 	type kase struct {
-		name        string
-		setup       []string
-		probe       string
-		wantErr     bool // probe must error on both paths
-		wantRows    int  // -1 = don't check
-		sessionTODO string
+		name     string
+		setup    []string
+		probe    string
+		wantErr  bool // probe must error
+		wantRows int  // -1 = don't check
 	}
 
 	cases := []kase{
@@ -352,15 +348,7 @@ func TestExecutorSessionParity(t *testing.T) {
 	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
-			t.Run("executor", func(t *testing.T) {
-				runOne(t, NewExecutor(newParityTM(t)), c)
-			})
-			t.Run("session", func(t *testing.T) {
-				if c.sessionTODO != "" {
-					t.Skipf("verified Session gap — plan phase %s", c.sessionTODO)
-				}
-				runOne(t, newParitySession(t, newParityTM(t)), c)
-			})
+			runOne(t, newParitySession(t, newParityTM(t)), c)
 		})
 	}
 }

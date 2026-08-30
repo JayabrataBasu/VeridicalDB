@@ -7,8 +7,19 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
-### Changed (P2 — collapsing the two SQL executors, in progress)
+### Changed (P2 — one SQL executor)
 
+- **Removed the pre-MVCC `pkg/sql/executor.go`.** `Session` over `MVCCExecutor`
+  is now the only SQL engine. `executor.go` had been dead at runtime for a while
+  but was the reference oracle for a set of tests exercising features the MVCC
+  path implemented partially or not at all; those gaps (below) were closed first,
+  every `pkg/sql` test moved to `Session`, and the dual-path parity harness
+  collapsed to a single-path regression battery (`TestSessionSQLBattery`).
+  Reusable pieces of the old executor were relocated into `exec_*.go` files
+  (`exec_result.go`, `exec_values.go`, `exec_functions.go`, `exec_window.go`,
+  `exec_grouping_sets.go`, `exec_cte.go`, `exec_combined.go`, …), which also sets
+  up P4's `exec` package. Two `*Executor`-internals tests in `integration_test.go`
+  were removed (redundant with the `Session` query-cache tests) / rewritten.
 - CTE parity on the MVCC path. `SELECT` against a `WITH` CTE now supports
   aggregates / `GROUP BY` / `HAVING` / `ORDER BY` / `OFFSET` (previously WHERE +
   bare-column projection + LIMIT only — `SELECT SUM(x) FROM cte` errored with

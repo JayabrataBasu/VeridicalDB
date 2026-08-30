@@ -11,27 +11,21 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
-// sqlExec is the common surface of the two SQL execution paths — the pre-MVCC
-// *Executor and the *Session (which drives *MVCCExecutor). The shared test
-// helpers below accept it so a test migrates from one path to the other by
-// changing a single constructor call.
-//
-// This is the P2 consolidation harness: once every historical *Executor test
-// runs green against a *Session, executor.go can be deleted.
+// sqlExec is the two-method execution surface the shared test helpers accept.
+// The pre-MVCC *Executor also satisfied it during the P2 consolidation; now only
+// *Session does. Kept as documentation of the surface and for any future
+// alternative implementation.
 type sqlExec interface {
 	Execute(stmt ast.Statement) (*Result, error)
 	ExecuteSQL(input string) (*Result, error)
 }
 
-var (
-	_ sqlExec = (*Executor)(nil)
-	_ sqlExec = (*Session)(nil)
-)
+var _ sqlExec = (*Session)(nil)
 
 // newParitySession builds a fully-wired Session over the given TableManager:
 // index manager, user/trigger/procedure catalogs, and FTS, but deliberately no
-// DatabaseManager so DDL works without a preceding USE (matching how bare
-// *Executor tests are written). Use this in place of NewExecutor(tm).
+// DatabaseManager so DDL works without a preceding USE. This is the standard
+// executor fixture for the pkg/sql tests.
 func newParitySession(t *testing.T, tm *catalog.TableManager) *Session {
 	t.Helper()
 

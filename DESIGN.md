@@ -299,11 +299,13 @@ superseded it.)_
 | `pkg/vacuum` | Dead-tuple cleanup, auto-vacuum worker | `vacuum.go`, `worker.go` |
 | `pkg/wal` | Write-ahead log, checkpoints, ARIES recovery | `wal.go`, `recovery.go`, `checkpoint.go` |
 
-> **Note:** `pkg/sql` still contains a second, pre-MVCC `executor.go` that is
-> unreachable at runtime (only tests use it). Removing it is plan phase P2.
+> **Note:** the pre-MVCC `executor.go` was deleted in P2 — `Session` over
+> `MVCCExecutor` is the single SQL engine. Its reusable helpers now live in
+> `exec_*.go` files (`exec_result.go`, `exec_values.go`, `exec_functions.go`,
+> `exec_window.go`, `exec_grouping_sets.go`, `exec_cte.go`, `exec_combined.go`, …).
 > P4 splits `pkg/sql` into sub-packages in dependency order; `token`, `lex`,
-> `ast`, `parse`, and `planner` are done. `exec`/`session` follow after P2
-> deletes `executor.go`.
+> `ast`, `parse`, and `planner` are done. The `exec` / `session` split (which the
+> `exec_*.go` naming anticipates) is now unblocked.
 
 ---
 
@@ -392,7 +394,7 @@ These ensure data correctness and consistency.
 
 | Feature | Difficulty | Description | Files to Modify |
 |---------|------------|-------------|-----------------|
-| **PRIMARY KEY enforcement** | Medium | Auto-create unique index, enforce on INSERT | `pkg/catalog/catalog.go`, `pkg/sql/executor.go` |
+| **PRIMARY KEY enforcement** | Medium | Auto-create unique index, enforce on INSERT | `pkg/catalog/catalog.go`, `pkg/sql/mvcc_constraints.go` |
 | **UNIQUE constraints** | Medium | Candidate keys | Similar to PRIMARY KEY |
 | **FOREIGN KEY** | Hard | Referential integrity | Parser + catalog + executor checks |
 | **CHECK constraints** | Medium | Boolean conditions | Parser + executor validation |
@@ -579,8 +581,8 @@ separately (the "VeridicalDB Atlas" document). In brief:
 |-------|-------|
 | P0 | Guardrails: lint config, version consolidation, wire feature-matrix test, this doc — **done** |
 | P1 | `pkg/engine` — `Open`/`NewSession`/`Close` assemble the graph once; all five call sites migrated; the wire protocol now has indexes, FTS, triggers, procedures, and multi-database — **done** |
-| P2 | Collapse the two SQL executors into one. **Larger than first scoped** — `executor.go` (the pre-MVCC path) is the only one that enforced several relational constraints and implements features (`information_schema`, recursive CTEs, `UPDATE ... FROM`, `DELETE ... USING`, `AUTO_INCREMENT`, `NTH_VALUE`, …) missing from `mvcc_executor.go`. Broken into sub-phases with a parity harness (`TestExecutorSessionParity`) as the gate. |
-| P2.0 | Parity harness: `sqlExec` interface + `newParitySession` helper + `TestExecutorSessionParity`. **Done.** |
+| P2 | **Done.** Collapsed the two SQL executors into one: brought the MVCC/`Session` path to full behavioural parity, then deleted `executor.go` (~5.1k LOC after the shared-helper relocation). Every `pkg/sql` test runs on `Session`; `TestSessionSQLBattery` (27 cases, formerly the dual-path parity gate) remains as a regression battery. |
+| P2.0 | Parity harness: `sqlExec` interface + `newParitySession` helper + `TestSessionSQLBattery`. **Done.** |
 | P2.1 | Constraint enforcement on the MVCC path — PK/UNIQUE/FK/VARCHAR on INSERT+UPDATE, FK-RESTRICT on DELETE, `ON CONFLICT`, plus the catalog `UNIQUE`/`Length` and DATE-coercion fixes it exposed. **Done.** `foreign_key_test.go` + `date_varchar_unique_test.go` migrated to `Session`. |
 | P2.6a | Column DEFAULTs, `AUTO_INCREMENT`, `ON CONFLICT` row count, `AVG`-returns-float on the MVCC path. **Done.** 60 of 74 `sql_test.go` tests migrated to `Session`. |
 | P2.2 | **Done.** Shared executor helpers relocated to `exec_*.go`; `information_schema.*` works on the MVCC/`Session` path via parsed SQL (schema-qualified `FROM` name now parses), receiver-free functions, and the virtual-table set expanded to 7 (added `schemata`, `views`, `key_column_usage`, `referential_constraints`). `information_schema_test.go` migrated to `Session`. |
@@ -588,9 +590,9 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.4 | **Done.** CTE-select supports aggregates / GROUP BY / HAVING / ORDER BY (shared `exec_cte.go`); `joinInput` makes a CTE (incl. a recursive CTE's partial result) resolvable by a JOIN; joined-projection columns are unqualified so recursive-term `UNION ALL` lines up. `TestCTEBasic` / `TestRecursiveCTE` migrated. All `sql_test.go` tests now on `Session`. |
 | P2.5 | **Done.** `UPDATE … FROM` / `DELETE … USING` on the MVCC path via new `exec_combined.go` (shared `combinedSchema`, combined-row evaluators, `applyMVCCUpdates` / `applyMVCCDeletes` so constraints + triggers + indexes still run). `TestUpdateWithFrom` / `TestDeleteWithUsing` migrated to `Session`. |
 | P2.6b | **Done.** DISTINCT ON; GROUPING SETS / CUBE / ROLLUP + `GROUPING()` (`exec_grouping_sets.go`); window frames + full window-function set (`exec_window.go`); `MERGE` value coercion + function-call args. |
-| P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
+| P2.7 | **Done.** `git rm pkg/sql/executor.go`; parity harness collapsed to a single-path battery (`TestSessionSQLBattery`); `integration_test.go`'s two `*Executor`-internals tests removed/rewritten against `Session`. |
 | P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
-| P4 | Split `pkg/sql` into `token / lex / ast / parse / planner / exec / session` sub-packages. `token`, `lex`, `ast`, `parse`, `planner` extracted; `exec`/`session` deferred until P2 deletes `executor.go` — **front half done** |
+| P4 | Split `pkg/sql` into `token / lex / ast / parse / planner / exec / session` sub-packages. `token`, `lex`, `ast`, `parse`, `planner` extracted. `exec`/`session` now **unblocked** (P2 deleted `executor.go`; the surviving helpers are already in `exec_*.go` files ready to `git mv`). |
 | P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
 
 ---

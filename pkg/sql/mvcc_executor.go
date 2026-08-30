@@ -3986,7 +3986,7 @@ func (e *MVCCExecutor) evalJSONExists(expr *ast.JSONExistsExpr, schema *catalog.
 
 // executeCreateView creates a new view (MVCC version).
 func (e *MVCCExecutor) executeCreateView(_ *ast.CreateViewStmt) (*Result, error) {
-	return nil, fmt.Errorf("CREATE VIEW should be created via Session/Executor; use CREATE VIEW via Session")
+	return nil, fmt.Errorf("CREATE VIEW is handled by Session, not MVCCExecutor")
 }
 
 // executeDropView drops a view (MVCC version).
