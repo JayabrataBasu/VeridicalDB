@@ -5429,7 +5429,7 @@ func TestGroupingSetsParsing(t *testing.T) {
 // TestCTEBasic tests basic CTE (WITH clause) functionality.
 func TestCTEBasic(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create a table
 	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, dept TEXT, salary INT)")
@@ -5631,7 +5631,7 @@ func TestCTEMultiple(t *testing.T) {
 // TestRecursiveCTE tests recursive CTE execution.
 func TestRecursiveCTE(t *testing.T) {
 	tm := setupTestTableManager(t)
-	exec := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	exec := newParitySession(t, tm)
 
 	// Create a hierarchy table for recursive CTE testing
 	executeSQL(t, exec, "CREATE TABLE employees (id INT PRIMARY KEY, name TEXT, manager_id INT)")

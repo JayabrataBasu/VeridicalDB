@@ -2607,6 +2607,29 @@ func (e *MVCCExecutor) filterExcludeBoundary(rids []storage.RID, _ []byte, _ boo
 }
 
 // executeSelectWithJoins handles SELECT with JOIN clauses for MVCC executor.
+// joinInput resolves a name used on either side of a JOIN to its metadata and
+// its rows. It looks in the catalog first (a base table), then in the current
+// query's CTE data (so a CTE — including a recursive CTE's partial result — is
+// visible to a JOIN).
+func (e *MVCCExecutor) joinInput(name string, tx *txn.Transaction) (*catalog.TableMeta, [][]catalog.Value, error) {
+	if meta, err := e.mtm.Catalog().GetTable(name); err == nil {
+		rows, err := e.materializeRows(name, tx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return meta, rows, nil
+	}
+	e.cteMu.RLock()
+	cteRes, ok := e.cteData[name]
+	e.cteMu.RUnlock()
+	if ok {
+		rows := make([][]catalog.Value, len(cteRes.Rows))
+		copy(rows, cteRes.Rows)
+		return cteResultMeta(name, cteRes), rows, nil
+	}
+	return nil, nil, fmt.Errorf("table %q does not exist", name)
+}
+
 func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	if len(stmt.Joins) != 1 {
 		return nil, fmt.Errorf("only single JOIN is currently supported")
@@ -2617,18 +2640,20 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 		return nil, fmt.Errorf("unsupported JOIN type: %s", join.JoinType)
 	}
 
-	cat := e.mtm.Catalog()
-	leftMeta, err := cat.GetTable(stmt.TableName)
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle LATERAL joins with subquery
+	// Handle LATERAL joins with subquery (left side is always a base table).
 	if join.Lateral && join.Subquery != nil {
+		leftMeta, err := e.mtm.Catalog().GetTable(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
 		return e.executeSelectWithLateralJoin(stmt, tx, leftMeta, join)
 	}
 
-	rightMeta, err := cat.GetTable(join.TableName)
+	leftMeta, leftRows, err := e.joinInput(stmt.TableName, tx)
+	if err != nil {
+		return nil, err
+	}
+	rightMeta, rightRows, err := e.joinInput(join.TableName, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -2642,6 +2667,9 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 	for i, col := range leftMeta.Schema.Columns {
 		combinedSchema.Columns = append(combinedSchema.Columns, col)
 		colTableMap[stmt.TableName+"."+col.Name] = i
+		if stmt.TableAlias != "" {
+			colTableMap[stmt.TableAlias+"."+col.Name] = i
+		}
 		colTableMap[col.Name] = i
 	}
 
@@ -2650,6 +2678,9 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 	for i, col := range rightMeta.Schema.Columns {
 		combinedSchema.Columns = append(combinedSchema.Columns, col)
 		colTableMap[join.TableName+"."+col.Name] = leftLen + i
+		if join.TableAlias != "" {
+			colTableMap[join.TableAlias+"."+col.Name] = leftLen + i
+		}
 		if _, exists := colTableMap[col.Name]; !exists {
 			colTableMap[col.Name] = leftLen + i
 		}
@@ -2665,28 +2696,7 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 		nullLeftRow[i] = catalog.Null(col.Type)
 	}
 
-	// Collect rows from both tables
-	var leftRows [][]catalog.Value
-	err = e.mtm.Scan(stmt.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
-		rowCopy := make([]catalog.Value, len(row.Values))
-		copy(rowCopy, row.Values)
-		leftRows = append(leftRows, rowCopy)
-		return true, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	var rightRows [][]catalog.Value
-	err = e.mtm.Scan(join.TableName, tx, func(row *catalog.MVCCRow) (bool, error) {
-		rowCopy := make([]catalog.Value, len(row.Values))
-		copy(rowCopy, row.Values)
-		rightRows = append(rightRows, rowCopy)
-		return true, nil
-	})
-	if err != nil {
-		return nil, err
-	}
+	// leftRows / rightRows were materialised by joinInput above.
 
 	// Perform join based on type
 	var joinedRows [][]catalog.Value
@@ -2851,7 +2861,11 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 			if sc.Alias != "" {
 				outputCols = append(outputCols, sc.Alias)
 			} else {
-				outputCols = append(outputCols, sc.Name)
+				// Drop any table qualifier so a joined projection's column names
+				// match those of a single-table SELECT (matters for UNION and for
+				// a recursive CTE whose recursive term is a JOIN).
+				parts := splitQualifiedName(sc.Name)
+				outputCols = append(outputCols, parts[len(parts)-1])
 			}
 			colIndices = append(colIndices, idx)
 		}
@@ -4794,7 +4808,11 @@ func (e *MVCCExecutor) executeSelectWithLateralJoin(stmt *ast.SelectStmt, tx *tx
 			if sc.Alias != "" {
 				outputCols = append(outputCols, sc.Alias)
 			} else {
-				outputCols = append(outputCols, sc.Name)
+				// Drop any table qualifier so a joined projection's column names
+				// match those of a single-table SELECT (matters for UNION and for
+				// a recursive CTE whose recursive term is a JOIN).
+				parts := splitQualifiedName(sc.Name)
+				outputCols = append(outputCols, parts[len(parts)-1])
 			}
 			colIndices = append(colIndices, idx)
 		}
@@ -6121,63 +6139,17 @@ func (e *MVCCExecutor) executeSelectWithCTEs(stmt *ast.SelectStmt, tx *txn.Trans
 	return result, err
 }
 
-// executeSelectFromCTE executes a SELECT query against a CTE result set.
+// executeSelectFromCTE executes a SELECT (WHERE / projection / aggregates /
+// GROUP BY / HAVING / ORDER BY / LIMIT) against a materialised CTE result.
 func (e *MVCCExecutor) executeSelectFromCTE(stmt *ast.SelectStmt, cteResult *Result) (*Result, error) {
-	// Create a temporary schema for the CTE result
-	cols := make([]catalog.Column, len(cteResult.Columns))
-	for i, name := range cteResult.Columns {
-		// We don't know the types easily, so we'll use TypeUnknown or try to infer from first row
-		colType := catalog.TypeText
-		if len(cteResult.Rows) > 0 {
-			colType = cteResult.Rows[0][i].Type
-		}
-		cols[i] = catalog.Column{ID: i, Name: name, Type: colType}
-	}
-	schema := &catalog.Schema{Columns: cols}
-
-	// Filter and project rows from the CTE result
-	var rows [][]catalog.Value
-	for _, row := range cteResult.Rows {
-		// Apply WHERE filter
-		if stmt.Where != nil {
-			match, err := e.evalCondition(stmt.Where, schema, row, nil) // tx=nil since CTE is already materialized
-			if err != nil {
-				return nil, err
-			}
-			if !match {
-				continue
-			}
-		}
-
-		// Project columns
-		var outRow []catalog.Value
-		if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
-			outRow = row
-		} else {
-			outRow = make([]catalog.Value, len(stmt.Columns))
-			for i, sc := range stmt.Columns {
-				_, idx := schema.ColumnByName(sc.Name)
-				if idx < 0 {
-					return nil, fmt.Errorf("unknown column in CTE: %s", sc.Name)
-				}
-				outRow[i] = row[idx]
-			}
-		}
-		rows = append(rows, outRow)
-	}
-
-	// Apply ORDER BY, LIMIT, OFFSET (simplified)
-	if stmt.Limit != nil {
-		limit := int(*stmt.Limit)
-		if limit < len(rows) {
-			rows = rows[:limit]
-		}
-	}
-
-	return &Result{
-		Columns: cteResult.Columns,
-		Rows:    rows,
-	}, nil
+	// The CTE rows are already materialised; a nil tx is fine for evaluation.
+	return selectFromCTE(stmt, cteResult,
+		func(x ast.Expression, s *catalog.Schema, r []catalog.Value) (catalog.Value, error) {
+			return e.evalExpr(x, s, r, nil)
+		},
+		func(x ast.Expression, s *catalog.Schema, r []catalog.Value) (bool, error) {
+			return e.evalCondition(x, s, r, nil)
+		})
 }
 
 // executeRecursiveCTEMVCC executes a recursive CTE with iterative fixed-point evaluation for MVCC.

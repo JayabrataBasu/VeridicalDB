@@ -9,6 +9,14 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- CTE parity on the MVCC path. `SELECT` against a `WITH` CTE now supports
+  aggregates / `GROUP BY` / `HAVING` / `ORDER BY` / `OFFSET` (previously WHERE +
+  bare-column projection + LIMIT only — `SELECT SUM(x) FROM cte` errored with
+  "unknown column in CTE"). A CTE — including a recursive CTE's growing partial
+  result — is now visible to a `JOIN` (`… FROM t JOIN cte …`), which makes
+  `WITH RECURSIVE` with a self-join in the recursive term work. The rich
+  CTE-select logic moved to a shared `pkg/sql/exec_cte.go`; joined-projection
+  column names are now unqualified so `UNION` and recursive terms line up.
 - `MERGE` now matches the pre-MVCC executor. The MVCC path failed
   `WHEN MATCHED THEN UPDATE SET c = a + b` with "column expects INT, got BIGINT" —
   computed values weren't coerced to the target column type. Coercion added on

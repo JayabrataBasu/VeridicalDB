@@ -9,26 +9,16 @@ import (
 
 // TestExecutorSessionParity runs one battery of SQL against both execution
 // paths — the legacy *Executor and the shipping *Session — and asserts they
-// agree. It is the gate for P2: executor.go can be deleted once every case here
-// passes on *Session with no sessionTODO, and the migrated sql_test.go cases do
-// too.
-//
-// A case with sessionTODO is a *verified* Session gap: the *Executor half still
-// runs (guarding the reference against regressions), the *Session half is
-// skipped, tagged with the owning sub-phase. Clear the tag when it lands.
-//
-// Remaining P2 backlog — the last tests still on *Executor, marked TODO(P2) in
-// sql_test.go (plan sub-phase 9):
-//
-//	P2.4 CTEs    TestCTEBasic  — a single-column CTE consumed by an aggregate
-//	             ("unknown column in CTE"); column count wrong for column-list CTE.
-//	             TestRecursiveCTE — the recursive self-reference is not visible
-//	             to a JOIN inside the recursive term.
+// agree. It is the P2 gate: every sql_test.go test has now been migrated to
+// *Session, and every case here passes on both paths with no sessionTODO. The
+// only thing left before executor.go can be deleted (plan sub-phase 10) is the
+// two *Executor-internals tests in integration_test.go.
 //
 // Landed on the MVCC path during P2.1–P2.6: constraint enforcement, ON CONFLICT,
 // DEFAULTs, AUTO_INCREMENT, TEXT->DATE coercion, AVG-as-float, information_schema,
 // LATERAL correlation, UPDATE/DELETE with FROM/USING, DISTINCT ON, GROUPING SETS /
-// CUBE / ROLLUP + GROUPING(), window frames + full window-function set, and MERGE.
+// CUBE / ROLLUP + GROUPING(), window frames + full window-function set, MERGE, and
+// CTEs consumed by aggregates / ORDER BY / a recursive-term JOIN.
 func TestExecutorSessionParity(t *testing.T) {
 	type kase struct {
 		name        string
@@ -74,6 +64,39 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.4: CTE consumed by an aggregate / ORDER BY; recursive CTE + JOIN ----
+		{
+			name: "cte_feeds_aggregate",
+			setup: []string{
+				`CREATE TABLE emp (id INT PRIMARY KEY, dept TEXT, sal INT)`,
+				`INSERT INTO emp VALUES (1,'eng',100),(2,'eng',90),(3,'sales',80)`,
+			},
+			probe:    `WITH e AS (SELECT sal FROM emp WHERE dept = 'eng') SELECT SUM(sal) AS total FROM e`,
+			wantRows: 1,
+		},
+		{
+			name: "cte_with_order_by_limit",
+			setup: []string{
+				`CREATE TABLE emp2 (id INT PRIMARY KEY, name TEXT, sal INT)`,
+				`INSERT INTO emp2 VALUES (1,'a',100),(2,'b',90),(3,'c',85),(4,'d',70)`,
+			},
+			probe:    `WITH all_e AS (SELECT name, sal FROM emp2) SELECT name FROM all_e ORDER BY sal DESC LIMIT 2`,
+			wantRows: 2,
+		},
+		{
+			name: "recursive_cte_join_in_recursive_term",
+			setup: []string{
+				`CREATE TABLE org (id INT PRIMARY KEY, name TEXT, mgr INT)`,
+				`INSERT INTO org VALUES (1,'ceo',0),(2,'vp',1),(3,'mgr',2),(4,'ic',3)`,
+			},
+			probe: `WITH RECURSIVE rpt AS (` +
+				`SELECT id, name, mgr FROM org WHERE mgr = 1 ` +
+				`UNION ALL ` +
+				`SELECT o.id, o.name, o.mgr FROM org o JOIN rpt r ON o.mgr = r.id) ` +
+				`SELECT * FROM rpt`,
+			wantRows: 3,
 		},
 
 		// ---- P2.6b: MERGE ----
