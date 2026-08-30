@@ -24,10 +24,7 @@ import (
 //	             ("unknown column in CTE"); column count wrong for column-list CTE.
 //	             TestRecursiveCTE — the recursive self-reference is not visible
 //	             to a JOIN inside the recursive term.
-//	P2.6 tail    TestWindowFrameExecution — moving-window arithmetic off; MIN/MAX
-//	             unsupported as window functions.
-//	             TestNthValue — NTH_VALUE window function unsupported.
-//	             TestMergeBasic / TestMergeWithSubquery — MERGE result differences.
+//	P2.6 tail    TestMergeBasic / TestMergeWithSubquery — MERGE result differences.
 //
 // Fixed on the MVCC path during P2.1/P2.6: constraint enforcement, ON CONFLICT,
 // column DEFAULTs, AUTO_INCREMENT, ALTER ADD CONSTRAINT, TEXT->DATE coercion,
@@ -77,6 +74,27 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.6b: window frames + extended window functions ----
+		{
+			name: "window_moving_sum_frame",
+			setup: []string{
+				`CREATE TABLE w (id INT, v INT)`,
+				`INSERT INTO w VALUES (1,10),(2,20),(3,30),(4,40),(5,50)`,
+			},
+			probe:    `SELECT id, SUM(v) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM w`,
+			wantRows: 5,
+		},
+		{
+			name: "window_nth_value",
+			setup: []string{
+				`CREATE TABLE w2 (dept TEXT, sal INT)`,
+				`INSERT INTO w2 VALUES ('e',80),('e',90),('e',70),('s',60),('s',65)`,
+			},
+			probe: `SELECT dept, NTH_VALUE(sal, 2) OVER (PARTITION BY dept ORDER BY sal DESC ` +
+				`ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM w2`,
+			wantRows: 5,
 		},
 
 		// ---- P2.6b: GROUPING SETS / CUBE / ROLLUP + GROUPING() ----

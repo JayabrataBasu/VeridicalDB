@@ -4569,7 +4569,7 @@ func TestWindowFunctionAggregate(t *testing.T) {
 // TestWindowFrameExecution tests window frame specification execution.
 func TestWindowFrameExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE frame_test (id INT, value INT);")
 
@@ -4753,7 +4753,7 @@ func TestWindowFrameExecution(t *testing.T) {
 // TestNthValue tests NTH_VALUE window function.
 func TestNthValue(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	executeSQL(t, executor, "CREATE TABLE nth_test (id INT, department TEXT, salary INT);")
 

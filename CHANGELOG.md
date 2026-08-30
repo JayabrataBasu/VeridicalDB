@@ -9,6 +9,12 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- Window functions on the MVCC path gained frame support (`ROWS BETWEEN …`) and
+  the full function set — `MIN` / `MAX` / `FIRST_VALUE` / `LAST_VALUE` /
+  `NTH_VALUE` / `LAG` / `LEAD` / `NTILE` (previously only `ROW_NUMBER` / `RANK` /
+  `DENSE_RANK` / `SUM` / `COUNT` / `AVG`, all frame-blind). `computeWindowFunction`
+  and its frame helpers are now a shared `pkg/sql/exec_window.go`; both executors
+  call it with a scalar-argument evaluator callback.
 - `GROUP BY GROUPING SETS` / `CUBE` / `ROLLUP` and the `GROUPING()` function now
   work on the MVCC path (it previously emitted only a single grand-total row).
   The ~250-line multi-set aggregator moved to a shared `pkg/sql/exec_grouping_sets.go`
