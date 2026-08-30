@@ -24,8 +24,6 @@ import (
 //	             ("unknown column in CTE"); column count wrong for column-list CTE.
 //	             TestRecursiveCTE — the recursive self-reference is not visible
 //	             to a JOIN inside the recursive term.
-//	P2.5 DML     TestUpdateWithFrom, TestDeleteWithUsing — qualified columns
-//	             (emp.dept) unresolved in the multi-table DML path.
 //	P2.6 tail    TestGroupingSets / TestCube / TestRollup — the MVCC path emits
 //	             only the grand-total grouping, not one row per set.
 //	             TestGroupingFunction — GROUPING() returns 0 for a NULL group col.
@@ -83,6 +81,43 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.5: UPDATE ... FROM / DELETE ... USING ----
+		{
+			name: "update_from_qualified_columns",
+			setup: []string{
+				`CREATE TABLE ord (id INT, cust INT, status TEXT)`,
+				`CREATE TABLE cust (id INT, country TEXT)`,
+				`INSERT INTO ord VALUES (1,10,'p'),(2,11,'p'),(3,12,'p')`,
+				`INSERT INTO cust VALUES (10,'US'),(11,'CA'),(12,'US')`,
+			},
+			probe:    `UPDATE ord SET status = 'ship' FROM cust WHERE ord.cust = cust.id AND cust.country = 'US'`,
+			wantRows: 0,
+		},
+		{
+			name: "delete_using_qualified_columns",
+			setup: []string{
+				`CREATE TABLE ord2 (id INT, cust INT)`,
+				`CREATE TABLE gone (id INT)`,
+				`INSERT INTO ord2 VALUES (1,10),(2,11),(3,10)`,
+				`INSERT INTO gone VALUES (10)`,
+			},
+			probe:    `DELETE FROM ord2 USING gone WHERE ord2.cust = gone.id`,
+			wantRows: 0,
+		},
+		{
+			name: "update_from_still_enforces_fk",
+			setup: []string{
+				`CREATE TABLE par (id INT PRIMARY KEY)`,
+				`CREATE TABLE chi (id INT, pid INT REFERENCES par(id))`,
+				`CREATE TABLE src (bad INT)`,
+				`INSERT INTO par VALUES (1)`,
+				`INSERT INTO chi VALUES (1,1)`,
+				`INSERT INTO src VALUES (99)`,
+			},
+			probe:   `UPDATE chi SET pid = src.bad FROM src WHERE chi.id = 1`,
+			wantErr: true,
 		},
 
 		// ---- P2.3: LATERAL subquery, CROSS and LEFT ----

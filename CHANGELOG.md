@@ -9,6 +9,15 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- **`UPDATE … FROM` and `DELETE … USING` now work on the MVCC path.** The
+  PostgreSQL multi-table forms were silently ignored (the `FROM` / `USING` clause
+  dropped, qualified columns like `orders.customer_id` unresolved). New
+  `pkg/sql/exec_combined.go` holds a shared `combinedSchema` (moved out of
+  `executor.go`), MVCC combined-row evaluators, and the two new execution paths.
+  The write-back reuses the normal MVCC apply loop (extracted as
+  `applyMVCCUpdates` / `applyMVCCDeletes`), so PK/UNIQUE/FK/VARCHAR checks,
+  triggers, and index maintenance all still run — verified by a parity case that
+  an FK-violating `UPDATE … FROM` is rejected.
 - **LATERAL-join correlation fixed on the MVCC path.** A `CROSS`/`LEFT JOIN
   LATERAL (…)` subquery was re-using the *first* left row's result for every
   row — `substituteExpressionValuesMVCC` also replaced the subquery's own

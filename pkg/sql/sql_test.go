@@ -695,7 +695,7 @@ func TestInsertOnConflict(t *testing.T) {
 // TestUpdateWithFrom tests UPDATE ... FROM ... WHERE (PostgreSQL style).
 func TestUpdateWithFrom(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	// Create test tables
 	executeSQL(t, executor, "CREATE TABLE orders (id INT, customer_id INT, status TEXT);")
@@ -774,7 +774,7 @@ func TestUpdateWithFrom(t *testing.T) {
 // TestDeleteWithUsing tests DELETE ... USING ... WHERE (PostgreSQL style).
 func TestDeleteWithUsing(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	// Create test tables
 	executeSQL(t, executor, "CREATE TABLE orders2 (id INT, customer_id INT, amount INT);")

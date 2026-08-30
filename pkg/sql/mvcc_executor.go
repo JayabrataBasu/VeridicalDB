@@ -1446,12 +1446,13 @@ func (e *MVCCExecutor) executeUpdate(stmt *ast.UpdateStmt, tx *txn.Transaction) 
 		return nil, err
 	}
 
-	// Collect rows to update
-	var toUpdate []struct {
-		rid    storage.RID
-		oldRow []catalog.Value
-		newRow []catalog.Value
+	// UPDATE ... FROM (PostgreSQL multi-table update)
+	if stmt.FromTable != "" {
+		return e.executeUpdateWithFromMVCC(stmt, meta, tx)
 	}
+
+	// Collect rows to update
+	var toUpdate []mvccUpdateCandidate
 
 	collectUpdateCandidate := func(row *catalog.MVCCRow) error {
 		oldRow := make([]catalog.Value, len(row.Values))
@@ -1480,11 +1481,7 @@ func (e *MVCCExecutor) executeUpdate(stmt *ast.UpdateStmt, tx *txn.Transaction) 
 			return err
 		}
 
-		toUpdate = append(toUpdate, struct {
-			rid    storage.RID
-			oldRow []catalog.Value
-			newRow []catalog.Value
-		}{rid: row.RID, oldRow: oldRow, newRow: newRow})
+		toUpdate = append(toUpdate, mvccUpdateCandidate{rid: row.RID, oldRow: oldRow, newRow: newRow})
 		return nil
 	}
 
@@ -1522,49 +1519,9 @@ func (e *MVCCExecutor) executeUpdate(stmt *ast.UpdateStmt, tx *txn.Transaction) 
 		return nil, err
 	}
 
-	// Perform updates: mark old tuple deleted, insert new tuple
-	for _, u := range toUpdate {
-		// Constraint checks on the new row (P2.1).
-		if err := e.checkVarcharLengths(meta.Schema, u.newRow); err != nil {
-			return nil, err
-		}
-		if err := e.checkUniqueness(stmt.TableName, meta.Schema, u.newRow, u.rid, tx); err != nil {
-			return nil, err
-		}
-		if err := e.checkForeignKeys(meta, u.newRow, tx); err != nil {
-			return nil, err
-		}
-
-		// Fire BEFORE UPDATE triggers
-		if err := e.fireBeforeUpdateTriggers(stmt.TableName, u.oldRow, u.newRow, meta.Schema); err != nil {
-			return nil, fmt.Errorf("BEFORE UPDATE trigger failed: %w", err)
-		}
-
-		// Remove old index entries
-		if err := e.updateIndexesOnDelete(stmt.TableName, u.rid, u.oldRow, meta.Schema); err != nil {
-			return nil, fmt.Errorf("update index remove failed: %w", err)
-		}
-
-		// Mark old tuple as deleted
-		if err := e.mtm.MarkDeleted(u.rid, tx); err != nil {
-			return nil, fmt.Errorf("update failed: %w", err)
-		}
-
-		// Insert new version
-		newRID, err := e.mtm.Insert(stmt.TableName, u.newRow, tx)
-		if err != nil {
-			return nil, fmt.Errorf("update insert failed: %w", err)
-		}
-
-		// Add new index entries
-		if err := e.updateIndexesOnInsert(stmt.TableName, newRID, u.newRow, meta.Schema); err != nil {
-			return nil, fmt.Errorf("update index insert failed: %w", err)
-		}
-
-		// Fire AFTER UPDATE triggers
-		if err := e.fireAfterUpdateTriggers(stmt.TableName, u.oldRow, u.newRow, meta.Schema); err != nil {
-			return nil, fmt.Errorf("AFTER UPDATE trigger failed: %w", err)
-		}
+	// Perform updates: constraints, triggers, index maintenance, MVCC write-back.
+	if err := e.applyMVCCUpdates(stmt.TableName, meta, toUpdate, tx); err != nil {
+		return nil, err
 	}
 
 	return &Result{
@@ -1584,19 +1541,18 @@ func (e *MVCCExecutor) executeDelete(stmt *ast.DeleteStmt, tx *txn.Transaction) 
 		return nil, err
 	}
 
-	// Collect rows to delete (need values for index cleanup)
-	var toDelete []struct {
-		rid    storage.RID
-		values []catalog.Value
+	// DELETE ... USING (PostgreSQL multi-table delete)
+	if stmt.UsingTable != "" {
+		return e.executeDeleteWithUsingMVCC(stmt, meta, tx)
 	}
+
+	// Collect rows to delete (need values for index cleanup)
+	var toDelete []mvccDeleteCandidate
 
 	collectDeleteCandidate := func(row *catalog.MVCCRow) {
 		values := make([]catalog.Value, len(row.Values))
 		copy(values, row.Values)
-		toDelete = append(toDelete, struct {
-			rid    storage.RID
-			values []catalog.Value
-		}{rid: row.RID, values: values})
+		toDelete = append(toDelete, mvccDeleteCandidate{rid: row.RID, values: values})
 	}
 
 	indexedRows, usedIndex, err := e.collectIndexedMutationCandidates(stmt.TableName, stmt.Where, meta.Schema, tx)
@@ -1628,31 +1584,9 @@ func (e *MVCCExecutor) executeDelete(stmt *ast.DeleteStmt, tx *txn.Transaction) 
 		return nil, err
 	}
 
-	// Mark tuples as deleted and clean up indexes
-	for _, d := range toDelete {
-		// RESTRICT: refuse to delete a row still referenced by a foreign key (P2.1).
-		if err := e.checkReferencingForeignKeys(meta, d.values, tx); err != nil {
-			return nil, err
-		}
-
-		// Fire BEFORE DELETE triggers
-		if err := e.fireBeforeDeleteTriggers(stmt.TableName, d.values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("BEFORE DELETE trigger failed: %w", err)
-		}
-
-		// Remove index entries
-		if err := e.updateIndexesOnDelete(stmt.TableName, d.rid, d.values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("delete index cleanup failed: %w", err)
-		}
-
-		if err := e.mtm.MarkDeleted(d.rid, tx); err != nil {
-			return nil, fmt.Errorf("delete failed: %w", err)
-		}
-
-		// Fire AFTER DELETE triggers
-		if err := e.fireAfterDeleteTriggers(stmt.TableName, d.values, meta.Schema); err != nil {
-			return nil, fmt.Errorf("AFTER DELETE trigger failed: %w", err)
-		}
+	// Mark tuples deleted: FK-RESTRICT, triggers, index cleanup, MVCC write-back.
+	if err := e.applyMVCCDeletes(stmt.TableName, meta, toDelete, tx); err != nil {
+		return nil, err
 	}
 
 	return &Result{

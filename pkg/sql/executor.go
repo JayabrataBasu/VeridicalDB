@@ -3381,7 +3381,7 @@ func (e *Executor) executeUpdateWithFrom(stmt *ast.UpdateStmt, targetMeta *catal
 	}
 
 	// Build combined schema for expression evaluation
-	combinedSchema := e.buildCombinedSchema(
+	combinedSchema := buildCombinedSchema(
 		stmt.TableName, stmt.TableAlias, targetMeta.Schema,
 		stmt.FromTable, stmt.FromAlias, fromMeta.Schema,
 	)
@@ -3485,67 +3485,6 @@ func (e *Executor) executeUpdateWithFrom(stmt *ast.UpdateStmt, targetMeta *catal
 		Message:      fmt.Sprintf("%d row(s) updated.", len(ridsToUpdate)),
 		RowsAffected: len(ridsToUpdate),
 	}, nil
-}
-
-// buildCombinedSchema creates a schema that combines two tables for join operations.
-// Both qualified (table.column) and unqualified column names are supported.
-// The combined schema maps both forms to the correct indices in combined rows.
-func (e *Executor) buildCombinedSchema(table1, alias1 string, schema1 *catalog.Schema, table2, alias2 string, schema2 *catalog.Schema) *combinedSchema {
-	combined := &combinedSchema{
-		Schema: &catalog.Schema{
-			Columns: make([]catalog.Column, len(schema1.Columns)+len(schema2.Columns)),
-		},
-		columnMap: make(map[string]int),
-	}
-
-	// Add columns from first table
-	prefix1 := table1
-	if alias1 != "" {
-		prefix1 = alias1
-	}
-	for i, col := range schema1.Columns {
-		newCol := col
-		newCol.Name = prefix1 + "." + col.Name
-		combined.Schema.Columns[i] = newCol
-		// Map qualified name to index
-		combined.columnMap[strings.ToUpper(prefix1+"."+col.Name)] = i
-		// Also map unqualified name (may be overwritten if ambiguous)
-		combined.columnMap[strings.ToUpper(col.Name)] = i
-	}
-
-	// Add columns from second table
-	prefix2 := table2
-	if alias2 != "" {
-		prefix2 = alias2
-	}
-	offset := len(schema1.Columns)
-	for i, col := range schema2.Columns {
-		newCol := col
-		newCol.Name = prefix2 + "." + col.Name
-		combined.Schema.Columns[offset+i] = newCol
-		// Map qualified name to index
-		combined.columnMap[strings.ToUpper(prefix2+"."+col.Name)] = offset + i
-		// Map unqualified name only if not ambiguous (not in schema1)
-		if _, idx := schema1.ColumnByName(col.Name); idx < 0 {
-			combined.columnMap[strings.ToUpper(col.Name)] = offset + i
-		}
-	}
-
-	return combined
-}
-
-// combinedSchema wraps a schema with a column name to index map for efficient lookups.
-type combinedSchema struct {
-	Schema    *catalog.Schema
-	columnMap map[string]int
-}
-
-// ColumnByName finds a column by name (supports both qualified and unqualified names).
-func (cs *combinedSchema) ColumnByName(name string) (*catalog.Column, int) {
-	if idx, ok := cs.columnMap[strings.ToUpper(name)]; ok {
-		return &cs.Schema.Columns[idx], idx
-	}
-	return nil, -1
 }
 
 // evalExprCombined evaluates an expression using a combined schema.
@@ -3721,7 +3660,7 @@ func (e *Executor) executeDeleteWithUsing(stmt *ast.DeleteStmt, targetMeta *cata
 	}
 
 	// Build combined schema for expression evaluation
-	combinedSchema := e.buildCombinedSchema(
+	combinedSchema := buildCombinedSchema(
 		stmt.TableName, stmt.TableAlias, targetMeta.Schema,
 		stmt.UsingTable, stmt.UsingAlias, usingMeta.Schema,
 	)
