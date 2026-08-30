@@ -27,7 +27,6 @@ import (
 //	P2.6 tail    TestGroupingSets / TestCube / TestRollup — the MVCC path emits
 //	             only the grand-total grouping, not one row per set.
 //	             TestGroupingFunction — GROUPING() returns 0 for a NULL group col.
-//	             TestDistinctOnExecution — DISTINCT ON does not deduplicate.
 //	             TestWindowFrameExecution — moving-window arithmetic off; MIN/MAX
 //	             unsupported as window functions.
 //	             TestNthValue — NTH_VALUE window function unsupported.
@@ -81,6 +80,17 @@ func TestExecutorSessionParity(t *testing.T) {
 				`INSERT INTO p VALUES (1,100),(2,200),(3,150)`,
 			},
 			probe: `SELECT id FROM p WHERE price = (SELECT MAX(price) FROM p)`, wantRows: 1,
+		},
+
+		// ---- P2.6b: DISTINCT ON ----
+		{
+			name: "distinct_on_keeps_one_per_group",
+			setup: []string{
+				`CREATE TABLE d (cat TEXT, v INT)`,
+				`INSERT INTO d VALUES ('a',1),('a',2),('b',3),('b',4),('c',5)`,
+			},
+			probe:    `SELECT DISTINCT ON (cat) cat, v FROM d`,
+			wantRows: 3,
 		},
 
 		// ---- P2.5: UPDATE ... FROM / DELETE ... USING ----

@@ -864,18 +864,24 @@ func (e *MVCCExecutor) executeSelectTableScan(stmt *ast.SelectStmt, tx *txn.Tran
 		sortRowsMVCC(rows, stmt.OrderBy, orderByIndices)
 	}
 
-	// Apply DISTINCT
+	// Apply DISTINCT / DISTINCT ON
 	if stmt.Distinct {
-		uniqueRows := make(map[string]bool)
-		var distinctRows [][]catalog.Value
-		for _, row := range rows {
-			key := groupKeyString(row)
-			if !uniqueRows[key] {
-				uniqueRows[key] = true
-				distinctRows = append(distinctRows, row)
+		if len(stmt.DistinctOn) > 0 {
+			// DISTINCT ON (cols): keep the first row of each distinct-key group,
+			// in the order produced above (ORDER BY, else scan order).
+			rows = deduplicateRowsOn(rows, stmt.DistinctOn, outCols)
+		} else {
+			uniqueRows := make(map[string]bool)
+			var distinctRows [][]catalog.Value
+			for _, row := range rows {
+				key := groupKeyString(row)
+				if !uniqueRows[key] {
+					uniqueRows[key] = true
+					distinctRows = append(distinctRows, row)
+				}
 			}
+			rows = distinctRows
 		}
-		rows = distinctRows
 	}
 
 	// Apply OFFSET/LIMIT if not already handled during the scan.
@@ -2870,9 +2876,13 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Tran
 		}
 	}
 
-	// Apply DISTINCT
+	// Apply DISTINCT / DISTINCT ON
 	if stmt.Distinct {
-		resultRows = deduplicateRows(resultRows)
+		if len(stmt.DistinctOn) > 0 {
+			resultRows = deduplicateRowsOn(resultRows, stmt.DistinctOn, outputCols)
+		} else {
+			resultRows = deduplicateRows(resultRows)
+		}
 	}
 
 	return &Result{

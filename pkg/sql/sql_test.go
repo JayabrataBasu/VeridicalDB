@@ -4340,7 +4340,7 @@ func TestCrossJoinExecution(t *testing.T) {
 // TestDistinctOnExecution verifies DISTINCT ON execution.
 func TestDistinctOnExecution(t *testing.T) {
 	tm := setupTestTableManager(t)
-	executor := NewExecutor(tm) // TODO(P2): MVCC executor gap — see parity_test.go backlog
+	executor := newParitySession(t, tm)
 
 	// Create and populate table
 	executeSQL(t, executor, "CREATE TABLE distinct_on_t (category TEXT, value INT, name TEXT);")
@@ -4350,11 +4350,21 @@ func TestDistinctOnExecution(t *testing.T) {
 	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('B', 3, 'third');")
 	executeSQL(t, executor, "INSERT INTO distinct_on_t VALUES ('B', 4, 'fourth');")
 
-	// Test DISTINCT ON (category) - should get one row per category
+	// Test DISTINCT ON (category) - one row per category, first per group.
 	result := executeSQL(t, executor, "SELECT DISTINCT ON (category) category, value, name FROM distinct_on_t;")
 
 	if len(result.Rows) != 2 {
-		t.Errorf("Expected 2 rows from DISTINCT ON (category), got %d", len(result.Rows))
+		t.Fatalf("Expected 2 rows from DISTINCT ON (category), got %d: %v", len(result.Rows), result.Rows)
+	}
+	first := map[string]string{}
+	for _, r := range result.Rows {
+		first[r[0].Text] = r[2].Text
+	}
+	if first["A"] != "first" {
+		t.Errorf("DISTINCT ON should keep the first A row ('first'), got %q", first["A"])
+	}
+	if first["B"] != "third" {
+		t.Errorf("DISTINCT ON should keep the first B row ('third'), got %q", first["B"])
 	}
 }
 

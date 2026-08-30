@@ -9,6 +9,10 @@ Structural cleanup and the start of a phased remediation plan (see the
 
 ### Changed (P2 — collapsing the two SQL executors, in progress)
 
+- `SELECT DISTINCT ON (cols)` now deduplicates on the MVCC path (it was accepted
+  but silently deduplicated on all columns, i.e. behaved like plain `DISTINCT`).
+  It keeps the first row of each distinct-key group in `ORDER BY` / scan order,
+  via the relocated `deduplicateRowsOn`.
 - **`UPDATE … FROM` and `DELETE … USING` now work on the MVCC path.** The
   PostgreSQL multi-table forms were silently ignored (the `FROM` / `USING` clause
   dropped, qualified columns like `orders.customer_id` unresolved). New
