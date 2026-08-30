@@ -13,6 +13,8 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/planner"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
@@ -902,13 +904,13 @@ func (e *MVCCExecutor) executeSelectTableScan(stmt *ast.SelectStmt, tx *txn.Tran
 	}, nil
 }
 
-func (e *MVCCExecutor) executeSelectWithPlan(stmt *ast.SelectStmt, tx *txn.Transaction, plan *ExecutionPlan) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithPlan(stmt *ast.SelectStmt, tx *txn.Transaction, plan *planner.ExecutionPlan) (*Result, error) {
 	if plan == nil {
 		return e.executeSelectTableScan(stmt, tx)
 	}
 
 	switch plan.Type {
-	case PlanIndexScan:
+	case planner.PlanIndexScan:
 		result, used, err := e.executeSelectWithIndex(stmt, tx)
 		if err != nil {
 			return nil, err
@@ -917,14 +919,14 @@ func (e *MVCCExecutor) executeSelectWithPlan(stmt *ast.SelectStmt, tx *txn.Trans
 			return result, nil
 		}
 		return e.executeSelectTableScan(stmt, tx)
-	case PlanTableScan:
+	case planner.PlanTableScan:
 		return e.executeSelectTableScan(stmt, tx)
 	default:
 		return e.executeSelectTableScan(stmt, tx)
 	}
 }
 
-func (e *MVCCExecutor) planSelectExecution(stmt *ast.SelectStmt) *ExecutionPlan {
+func (e *MVCCExecutor) planSelectExecution(stmt *ast.SelectStmt) *planner.ExecutionPlan {
 	if stmt == nil || !canUseIndexExecutionFastPathMVCC(stmt) || e.mtm == nil {
 		return nil
 	}
@@ -941,15 +943,15 @@ func (e *MVCCExecutor) planSelectExecution(stmt *ast.SelectStmt) *ExecutionPlan 
 		return nil
 	}
 
-	planner := NewPlanner(e.indexMgr)
+	pl := planner.NewPlanner(e.indexMgr)
 	if e.statsMan != nil {
-		planner.SetStatsManager(e.statsMan)
+		pl.SetStatsManager(e.statsMan)
 	}
 	if storeStats := e.getStorageBufferStats(); storeStats != nil {
-		planner.SetBufferHitRatio(storeStats.HitRate / 100.0)
+		pl.SetBufferHitRatio(storeStats.HitRate / 100.0)
 	}
 
-	return planner.Plan(stmt, meta)
+	return pl.Plan(stmt, meta)
 }
 
 func isUniqueEqualityFilterMVCC(where ast.Expression, schema *catalog.Schema) bool {
@@ -3358,17 +3360,17 @@ func (e *MVCCExecutor) executeExplain(stmt *ast.ExplainStmt, tx *txn.Transaction
 	}
 
 	// Create a planner with statistics manager if available
-	planner := NewPlanner(e.indexMgr)
+	pl := planner.NewPlanner(e.indexMgr)
 	if e.statsMan != nil {
-		planner.SetStatsManager(e.statsMan)
+		pl.SetStatsManager(e.statsMan)
 	}
 
 	// Set dynamic buffer hit ratio from storage if available
 	if storeStats := e.getStorageBufferStats(); storeStats != nil {
-		planner.SetBufferHitRatio(storeStats.HitRate / 100.0) // Convert percentage to ratio
+		pl.SetBufferHitRatio(storeStats.HitRate / 100.0) // Convert percentage to ratio
 	}
 
-	plan := planner.Plan(selectStmt, meta)
+	plan := pl.Plan(selectStmt, meta)
 
 	// Build the explanation
 	var details []string
@@ -3377,7 +3379,7 @@ func (e *MVCCExecutor) executeExplain(stmt *ast.ExplainStmt, tx *txn.Transaction
 	planExplain := plan.Explain()
 	details = append(details, planExplain)
 
-	if plan.Type == PlanIndexScan {
+	if plan.Type == planner.PlanIndexScan {
 		details = append(details, "  Using index: "+plan.IndexName)
 	}
 
@@ -3473,8 +3475,8 @@ func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values [
 		}
 
 		// Parse the CHECK expression directly
-		parser := NewParser(col.CheckExpr)
-		expr, err := parser.parseExpression()
+		parser := parse.NewParser(col.CheckExpr)
+		expr, err := parser.ParseExpression()
 		if err != nil {
 			return fmt.Errorf("invalid CHECK expression for column %s: %w", col.Name, err)
 		}
@@ -5580,7 +5582,7 @@ func (e *MVCCExecutor) executeTriggerFunction(trigger *catalog.TriggerMeta, ctx 
 	}
 
 	// Parse the function body
-	body, err := NewParser(funcMeta.Body).parsePLBlock()
+	body, err := parse.NewParser(funcMeta.Body).ParsePLBlock()
 	if err != nil {
 		return fmt.Errorf("error parsing trigger function body: %v", err)
 	}

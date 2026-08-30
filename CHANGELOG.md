@@ -7,7 +7,7 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
-### Changed (P4 — splitting `pkg/sql`, in progress)
+### Changed (P4 — splitting `pkg/sql`: front half done)
 
 - The SQL lexer moved out of the monolithic `pkg/sql` package. `pkg/sql/lexer.go`
   is now two leaf packages: `pkg/sql/token` (the `TokenType` enum, the keyword
@@ -18,9 +18,22 @@ Structural cleanup and the start of a phased remediation plan (see the
   `PLStatement` interfaces, and the partition / grouping-set / trigger / parameter
   enums now live there; the parser, planner, executors, session, `pkg/pgwire`, and
   `pkg/shard` reference them through `ast.` qualifiers.
-- No behavior change — token values, lexer output, and AST shape are identical;
-  this is plan phase P4, which splits `pkg/sql` into
-  `token / lex / ast / parse / plan / exec / session` in dependency order.
+- The recursive-descent parser moved to `pkg/sql/parse` (`pkg/sql/parser.go` →
+  `pkg/sql/parse/parser.go`). `parseExpression` and `parsePLBlock` are now exported
+  (`ParseExpression`, `ParsePLBlock`) because the executors call them. Callers use
+  `parse.NewParser`.
+- The cost-based planner moved to `pkg/sql/planner` (`pkg/sql/planner.go` +
+  `planner_test.go` / `planner_cost_test.go` / `planner_bench_test.go` →
+  `pkg/sql/planner/`). The index-key encoder `encodeValueForIndex` moved here too
+  as `planner.EncodeValueForIndex` (it was in `session.go` but shared with the
+  planner). Callers use `planner.NewPlanner`, `planner.ExecutionPlan`, etc. The
+  package is named `planner`, not `plan`, because `plan` is a pervasive local
+  variable name in the executors.
+- No behavior change — token values, lexer output, AST shape, parser output, and
+  plan selection are identical; this is plan phase P4, which splits `pkg/sql` into
+  `token / lex / ast / parse / planner / exec / session` in dependency order. The
+  `exec` and `session` split is deferred until P2 removes the dead `executor.go`,
+  so it operates on half the code.
 
 ### Changed (P3 — config & logging consolidation)
 

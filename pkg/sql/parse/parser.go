@@ -1,4 +1,4 @@
-package sql
+package parse
 
 import (
 	"fmt"
@@ -424,7 +424,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*ast.SelectStmt, er
 	// Optional WHERE
 	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -451,7 +451,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*ast.SelectStmt, er
 			return nil, fmt.Errorf("HAVING requires GROUP BY clause")
 		}
 		p.nextToken() // consume HAVING
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -850,7 +850,7 @@ func (p *Parser) parseJoinClause() (ast.JoinClause, error) {
 	}
 
 	// Join condition
-	condition, err := p.parseExpression()
+	condition, err := p.ParseExpression()
 	if err != nil {
 		return join, fmt.Errorf("expected join condition: %w", err)
 	}
@@ -1045,7 +1045,7 @@ func (p *Parser) parseSelectColumns() ([]ast.SelectColumn, error) {
 			var args []ast.Expression
 			if !p.curTokenIs(token.TOKEN_RPAREN) {
 				for {
-					arg, err := p.parseExpression()
+					arg, err := p.ParseExpression()
 					if err != nil {
 						return nil, err
 					}
@@ -1542,7 +1542,7 @@ func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
 			return nil, err
 		}
 
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -1591,7 +1591,7 @@ func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
 	// Optional WHERE
 	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -1677,7 +1677,7 @@ func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
 	// Optional WHERE
 	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -1791,7 +1791,7 @@ func (p *Parser) parseMerge() (*ast.MergeStmt, error) {
 	}
 
 	// Match condition
-	condition, err := p.parseExpression()
+	condition, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("expected match condition: %w", err)
 	}
@@ -1836,7 +1836,7 @@ func (p *Parser) parseMergeWhenClause() (ast.MergeWhenClause, error) {
 	// Optional AND condition
 	if p.curTokenIs(token.TOKEN_AND) {
 		p.nextToken() // consume AND
-		cond, err := p.parseExpression()
+		cond, err := p.ParseExpression()
 		if err != nil {
 			return clause, fmt.Errorf("expected condition after AND: %w", err)
 		}
@@ -1928,7 +1928,7 @@ func (p *Parser) parseMergeAction(matched bool) (ast.MergeAction, error) {
 		}
 
 		for {
-			expr, err := p.parseExpression()
+			expr, err := p.ParseExpression()
 			if err != nil {
 				return action, fmt.Errorf("expected value expression: %w", err)
 			}
@@ -1974,7 +1974,7 @@ func (p *Parser) parseAssignments() ([]ast.Assignment, error) {
 			return nil, fmt.Errorf("expected '=' after column name: %w", err)
 		}
 
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("expected value expression: %w", err)
 		}
@@ -2339,7 +2339,7 @@ parseModifiers:
 				return col, fmt.Errorf("expected ( after CHECK: %w", err)
 			}
 			// Parse the check expression
-			expr, err := p.parseExpression()
+			expr, err := p.ParseExpression()
 			if err != nil {
 				return col, fmt.Errorf("error parsing CHECK expression: %w", err)
 			}
@@ -2652,7 +2652,7 @@ func (p *Parser) parseDropView() (*ast.DropViewStmt, error) {
 
 // Expression parsing with precedence
 
-func (p *Parser) parseExpression() (ast.Expression, error) {
+func (p *Parser) ParseExpression() (ast.Expression, error) {
 	return p.parseOrExpr()
 }
 
@@ -3180,7 +3180,7 @@ func (p *Parser) parsePrimaryExpression() (ast.Expression, error) {
 			}
 			return &ast.SubqueryExpr{Query: subquery}, nil
 		}
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -3271,7 +3271,7 @@ func (p *Parser) parseFunctionCall() (ast.Expression, error) {
 
 	var args []ast.Expression
 	for !p.curTokenIs(token.TOKEN_RPAREN) && !p.curTokenIs(token.TOKEN_EOF) {
-		arg, err := p.parseExpression()
+		arg, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -3308,7 +3308,7 @@ func (p *Parser) parseAggregateExpression() (ast.Expression, error) {
 	} else if p.curTokenIs(token.TOKEN_DISTINCT) {
 		// COUNT(DISTINCT col)
 		p.nextToken()
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -3316,7 +3316,7 @@ func (p *Parser) parseAggregateExpression() (ast.Expression, error) {
 		arg = &ast.FunctionExpr{Name: "DISTINCT", Args: []ast.Expression{expr}}
 	} else {
 		// SUM(column), AVG(column), etc.
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -3355,7 +3355,7 @@ func (p *Parser) parseDatePartFunction() (ast.Expression, error) {
 		return nil, fmt.Errorf("expected ( after %s", funcName)
 	}
 
-	arg, err := p.parseExpression()
+	arg, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing argument to %s: %w", funcName, err)
 	}
@@ -3377,7 +3377,7 @@ func (p *Parser) parseDateAddFunction() (ast.Expression, error) {
 	}
 
 	// Parse the date expression
-	dateExpr, err := p.parseExpression()
+	dateExpr, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing date argument: %w", err)
 	}
@@ -3443,7 +3443,7 @@ func (p *Parser) parseCastExpression() (ast.Expression, error) {
 	}
 
 	// Parse the expression to cast
-	expr, err := p.parseExpression()
+	expr, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing CAST expression: %w", err)
 	}
@@ -3512,7 +3512,7 @@ func (p *Parser) parseExtractExpression() (ast.Expression, error) {
 	}
 
 	// Parse the date expression
-	dateExpr, err := p.parseExpression()
+	dateExpr, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing EXTRACT date: %w", err)
 	}
@@ -3838,7 +3838,7 @@ func (p *Parser) parseCaseExpression() (ast.Expression, error) {
 	// Check if this is a simple CASE (has an operand) or searched CASE (starts with WHEN)
 	if !p.curTokenIs(token.TOKEN_WHEN) {
 		// Simple CASE - parse the operand expression
-		operand, err := p.parseExpression()
+		operand, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing CASE operand: %w", err)
 		}
@@ -3850,7 +3850,7 @@ func (p *Parser) parseCaseExpression() (ast.Expression, error) {
 		p.nextToken() // consume WHEN
 
 		// Parse the condition
-		condition, err := p.parseExpression()
+		condition, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing WHEN condition: %w", err)
 		}
@@ -3862,7 +3862,7 @@ func (p *Parser) parseCaseExpression() (ast.Expression, error) {
 		p.nextToken() // consume THEN
 
 		// Parse the result expression
-		result, err := p.parseExpression()
+		result, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing THEN result: %w", err)
 		}
@@ -3881,7 +3881,7 @@ func (p *Parser) parseCaseExpression() (ast.Expression, error) {
 	// Parse optional ELSE clause
 	if p.curTokenIs(token.TOKEN_ELSE) {
 		p.nextToken() // consume ELSE
-		elseExpr, err := p.parseExpression()
+		elseExpr, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing ELSE expression: %w", err)
 		}
@@ -4088,7 +4088,7 @@ func (p *Parser) parseExecute() (*ast.ExecuteStmt, error) {
 		p.nextToken() // consume (
 
 		if !p.curTokenIs(token.TOKEN_RPAREN) {
-			expr, err := p.parseExpression()
+			expr, err := p.ParseExpression()
 			if err != nil {
 				return nil, err
 			}
@@ -4096,7 +4096,7 @@ func (p *Parser) parseExecute() (*ast.ExecuteStmt, error) {
 
 			for p.curTokenIs(token.TOKEN_COMMA) {
 				p.nextToken()
-				expr, err := p.parseExpression()
+				expr, err := p.ParseExpression()
 				if err != nil {
 					return nil, err
 				}
@@ -4652,7 +4652,7 @@ func (p *Parser) parseTSVectorFunc() (ast.Expression, error) {
 	}
 
 	// Parse first argument
-	arg1, err := p.parseExpression()
+	arg1, err := p.ParseExpression()
 	if err != nil {
 		return nil, err
 	}
@@ -4669,7 +4669,7 @@ func (p *Parser) parseTSVectorFunc() (ast.Expression, error) {
 			return nil, fmt.Errorf("to_tsvector config must be a string literal")
 		}
 		// Parse text argument
-		result.Text, err = p.parseExpression()
+		result.Text, err = p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -4695,7 +4695,7 @@ func (p *Parser) parseTSQueryFunc() (ast.Expression, error) {
 	}
 
 	// Parse first argument
-	arg1, err := p.parseExpression()
+	arg1, err := p.ParseExpression()
 	if err != nil {
 		return nil, err
 	}
@@ -4713,7 +4713,7 @@ func (p *Parser) parseTSQueryFunc() (ast.Expression, error) {
 		} else {
 			return nil, fmt.Errorf("ts query config must be a string literal")
 		}
-		result.Query, err = p.parseExpression()
+		result.Query, err = p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -4741,7 +4741,7 @@ func (p *Parser) parseTSRankFunc() (ast.Expression, error) {
 	var err error
 
 	// Parse vector argument
-	result.Vector, err = p.parseExpression()
+	result.Vector, err = p.ParseExpression()
 	if err != nil {
 		return nil, err
 	}
@@ -4752,7 +4752,7 @@ func (p *Parser) parseTSRankFunc() (ast.Expression, error) {
 	p.nextToken() // consume comma
 
 	// Parse query argument
-	result.Query, err = p.parseExpression()
+	result.Query, err = p.ParseExpression()
 	if err != nil {
 		return nil, err
 	}
@@ -4760,7 +4760,7 @@ func (p *Parser) parseTSRankFunc() (ast.Expression, error) {
 	// Optional normalization argument
 	if p.curTokenIs(token.TOKEN_COMMA) {
 		p.nextToken() // consume comma
-		result.Normalization, err = p.parseExpression()
+		result.Normalization, err = p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -4786,7 +4786,7 @@ func (p *Parser) parseTSHeadlineFunc() (ast.Expression, error) {
 
 	// Parse all arguments
 	for {
-		arg, err := p.parseExpression()
+		arg, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -4881,7 +4881,7 @@ func (p *Parser) parseMatchAgainst() (ast.Expression, error) {
 	}
 
 	// Parse query
-	result.Query, err = p.parseExpression()
+	result.Query, err = p.ParseExpression()
 	if err != nil {
 		return nil, err
 	}
@@ -5152,7 +5152,7 @@ func (p *Parser) parsePartitionDef(partType ast.PartitionType) (ast.PartitionDef
 			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return def, fmt.Errorf("expected '(' or MAXVALUE after LESS THAN")
 			}
-			expr, err := p.parseExpression()
+			expr, err := p.ParseExpression()
 			if err != nil {
 				return def, fmt.Errorf("error parsing partition bound: %v", err)
 			}
@@ -5174,7 +5174,7 @@ func (p *Parser) parsePartitionDef(partType ast.PartitionType) (ast.PartitionDef
 		}
 
 		for {
-			expr, err := p.parseExpression()
+			expr, err := p.ParseExpression()
 			if err != nil {
 				return def, fmt.Errorf("error parsing list value: %v", err)
 			}
@@ -5484,7 +5484,7 @@ func (p *Parser) parseProcParams() ([]ast.ProcParam, error) {
 		// Optional DEFAULT
 		if p.curTokenIs(token.TOKEN_DEFAULT) || p.curTokenIs(token.TOKEN_COLON_EQ) {
 			p.nextToken() // consume DEFAULT or :=
-			defVal, err := p.parseExpression()
+			defVal, err := p.ParseExpression()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing default value: %v", err)
 			}
@@ -5507,11 +5507,11 @@ func (p *Parser) parseProcParams() ([]ast.ProcParam, error) {
 func (p *Parser) parsePLBody(bodyText string) (*ast.PLBlock, error) {
 	// Create a new parser for the body text
 	plParser := NewParser(bodyText)
-	return plParser.parsePLBlock()
+	return plParser.ParsePLBlock()
 }
 
 // parsePLBlock parses a PL/pgSQL BEGIN...END block with optional DECLARE section.
-func (p *Parser) parsePLBlock() (*ast.PLBlock, error) {
+func (p *Parser) ParsePLBlock() (*ast.PLBlock, error) {
 	block := &ast.PLBlock{}
 
 	// Optional DECLARE section
@@ -5597,7 +5597,7 @@ func (p *Parser) parsePLDeclarations() ([]ast.PLVarDecl, error) {
 		// Optional DEFAULT or :=
 		if p.curTokenIs(token.TOKEN_DEFAULT) || p.curTokenIs(token.TOKEN_COLON_EQ) {
 			p.nextToken()
-			defVal, err := p.parseExpression()
+			defVal, err := p.ParseExpression()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing default value: %v", err)
 			}
@@ -5693,7 +5693,7 @@ func (p *Parser) parsePLIf() (*ast.PLIf, error) {
 	stmt := &ast.PLIf{}
 
 	// Condition
-	cond, err := p.parseExpression()
+	cond, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing IF condition: %v", err)
 	}
@@ -5717,7 +5717,7 @@ func (p *Parser) parsePLIf() (*ast.PLIf, error) {
 		p.nextToken() // consume ELSIF
 		elsif := ast.PLElsIf{}
 
-		cond, err := p.parseExpression()
+		cond, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing ELSIF condition: %v", err)
 		}
@@ -5773,7 +5773,7 @@ func (p *Parser) parsePLWhile() (*ast.PLWhile, error) {
 	stmt := &ast.PLWhile{}
 
 	// Condition
-	cond, err := p.parseExpression()
+	cond, err := p.ParseExpression()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing WHILE condition: %v", err)
 	}
@@ -5882,7 +5882,7 @@ func (p *Parser) parsePLFor() (*ast.PLFor, error) {
 			}
 		} else {
 			// Numeric range in parentheses
-			lower, err := p.parseExpression()
+			lower, err := p.ParseExpression()
 			if err != nil {
 				return nil, err
 			}
@@ -5893,7 +5893,7 @@ func (p *Parser) parsePLFor() (*ast.PLFor, error) {
 				p.nextToken()
 			}
 
-			upper, err := p.parseExpression()
+			upper, err := p.ParseExpression()
 			if err != nil {
 				return nil, err
 			}
@@ -5905,7 +5905,7 @@ func (p *Parser) parsePLFor() (*ast.PLFor, error) {
 		}
 	} else {
 		// Numeric range: lower..upper or lower TO upper
-		lower, err := p.parseExpression()
+		lower, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -5916,7 +5916,7 @@ func (p *Parser) parsePLFor() (*ast.PLFor, error) {
 			p.nextToken()
 		}
 
-		upper, err := p.parseExpression()
+		upper, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -5954,7 +5954,7 @@ func (p *Parser) parsePLExit() (*ast.PLExit, error) {
 	// Optional WHEN condition
 	if p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
-		cond, err := p.parseExpression()
+		cond, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing EXIT WHEN condition: %v", err)
 		}
@@ -5984,7 +5984,7 @@ func (p *Parser) parsePLContinue() (*ast.PLContinue, error) {
 	// Optional WHEN condition
 	if p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
-		cond, err := p.parseExpression()
+		cond, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing CONTINUE WHEN condition: %v", err)
 		}
@@ -6007,7 +6007,7 @@ func (p *Parser) parsePLReturn() (*ast.PLReturn, error) {
 
 	// Optional return value (not followed immediately by semicolon or END)
 	if !p.curTokenIs(token.TOKEN_SEMICOLON) && !p.curTokenIs(token.TOKEN_END) && !p.curTokenIs(token.TOKEN_EOF) {
-		val, err := p.parseExpression()
+		val, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing RETURN expression: %v", err)
 		}
@@ -6046,7 +6046,7 @@ func (p *Parser) parsePLRaise() (*ast.PLRaise, error) {
 	// Optional format arguments
 	for p.curTokenIs(token.TOKEN_COMMA) {
 		p.nextToken() // consume comma
-		arg, err := p.parseExpression()
+		arg, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing RAISE argument: %v", err)
 		}
@@ -6079,7 +6079,7 @@ func (p *Parser) parsePLPerform() (*ast.PLPerform, error) {
 
 	// Parse expression list as columns
 	for {
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing PERFORM expression: %v", err)
 		}
@@ -6104,7 +6104,7 @@ func (p *Parser) parsePLPerform() (*ast.PLPerform, error) {
 	// Optional WHERE
 	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
-		where, err := p.parseExpression()
+		where, err := p.ParseExpression()
 		if err != nil {
 			return nil, err
 		}
@@ -6151,7 +6151,7 @@ func (p *Parser) parsePLAssignOrSQL() (ast.PLStatement, error) {
 	// Check for := assignment
 	if p.curTokenIs(token.TOKEN_COLON_EQ) {
 		p.nextToken() // consume :=
-		expr, err := p.parseExpression()
+		expr, err := p.ParseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing assignment value: %v", err)
 		}
@@ -6295,7 +6295,7 @@ func (p *Parser) parseCall() (*ast.CallStmt, error) {
 
 		if !p.curTokenIs(token.TOKEN_RPAREN) {
 			for {
-				arg, err := p.parseExpression()
+				arg, err := p.ParseExpression()
 				if err != nil {
 					return nil, fmt.Errorf("error parsing CALL argument: %v", err)
 				}

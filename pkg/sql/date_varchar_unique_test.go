@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 )
 
 // TestDateType tests DATE data type support because the honored idiot never added them
@@ -46,7 +47,7 @@ func TestDateTypeBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				if !tt.wantErr {
@@ -121,7 +122,7 @@ func TestVarcharLengthValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				if !tt.wantErr {
@@ -150,7 +151,7 @@ func TestCombinedFeaturesIntegration(t *testing.T) {
 	executor := newParitySession(t, tm)
 
 	// Create table with all three features
-	parser := NewParser(`
+	parser := parse.NewParser(`
 		CREATE TABLE products (
 			id INT,
 			sku VARCHAR(20) UNIQUE,
@@ -159,6 +160,7 @@ func TestCombinedFeaturesIntegration(t *testing.T) {
 			updated_date DATE
 		)
 	`)
+
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("failed to parse CREATE TABLE: %v", err)
@@ -169,8 +171,9 @@ func TestCombinedFeaturesIntegration(t *testing.T) {
 	}
 
 	// Insert valid row
-	parser = NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
+	parser = parse.NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
 		VALUES (1, 'ABC123', 'Widget', '2024-01-01', '2024-01-01')`)
+
 	stmt, err = parser.Parse()
 	if err != nil {
 		t.Fatalf("failed to parse INSERT: %v", err)
@@ -181,8 +184,9 @@ func TestCombinedFeaturesIntegration(t *testing.T) {
 	}
 
 	// Try to insert duplicate SKU (should fail)
-	parser = NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
+	parser = parse.NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
 		VALUES (2, 'ABC123', 'Gadget', '2024-01-02', '2024-01-02')`)
+
 	stmt, err = parser.Parse()
 	if err != nil {
 		t.Fatalf("failed to parse duplicate SKU INSERT: %v", err)
@@ -193,8 +197,9 @@ func TestCombinedFeaturesIntegration(t *testing.T) {
 	}
 
 	// Insert valid second row
-	parser = NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
+	parser = parse.NewParser(`INSERT INTO products (id, sku, name, created_date, updated_date)
 		VALUES (2, 'DEF456', 'Gadget', '2024-01-02', '2024-01-02')`)
+
 	stmt, err = parser.Parse()
 	if err != nil {
 		t.Fatalf("failed to parse second INSERT: %v", err)
@@ -280,7 +285,7 @@ func TestUniqueConstraint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				if !tt.wantErr {

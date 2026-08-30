@@ -17,6 +17,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -904,7 +905,7 @@ func (c *Conn) sendDescribeResult(query string) error {
 }
 
 func describeResultColumns(query string) ([]string, bool) {
-	parser := sql.NewParser(query)
+	parser := parse.NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, false
@@ -1013,7 +1014,7 @@ func (c *Conn) handleExecute(payload []byte) error {
 	// Execute and cache portal result only once; subsequent Execute calls continue from RowOffset.
 	if portal.Result == nil {
 		// Parse the query
-		parser := sql.NewParser(portal.Statement.Query)
+		parser := parse.NewParser(portal.Statement.Query)
 		stmt, err := parser.Parse()
 		if err != nil {
 			return c.sendError("ERROR", "42601", err.Error())

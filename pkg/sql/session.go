@@ -10,6 +10,8 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/planner"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -227,16 +229,16 @@ func (s *Session) Authenticate(username, password string) error {
 // ExecuteSQL parses and executes a SQL string.
 func (s *Session) ExecuteSQL(input string) (*Result, error) {
 	var stmt ast.Statement
-	var cachedPlan *ExecutionPlan
+	var cachedPlan *planner.ExecutionPlan
 	useQueryCache := s.queryCache != nil && isQueryCacheCandidateSQL(input)
 	if useQueryCache {
 		if cached, found := s.queryCache.Get(input); found && cached.ParsedAST != nil {
 			stmt = cached.ParsedAST
-			if plan, ok := cached.PreparedPlan.(*ExecutionPlan); ok {
+			if plan, ok := cached.PreparedPlan.(*planner.ExecutionPlan); ok {
 				cachedPlan = plan
 			}
 		} else {
-			parser := NewParser(input)
+			parser := parse.NewParser(input)
 			parsed, err := parser.Parse()
 			if err != nil {
 				return nil, fmt.Errorf("syntax error: %w", err)
@@ -247,7 +249,7 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 			}
 		}
 	} else {
-		parser := NewParser(input)
+		parser := parse.NewParser(input)
 		parsed, err := parser.Parse()
 		if err != nil {
 			return nil, fmt.Errorf("syntax error: %w", err)
@@ -446,7 +448,7 @@ func (s *Session) Execute(stmt ast.Statement) (*Result, error) {
 	return result, nil
 }
 
-func (s *Session) executeSelectWithPlan(stmt *ast.SelectStmt, plan *ExecutionPlan) (*Result, error) {
+func (s *Session) executeSelectWithPlan(stmt *ast.SelectStmt, plan *planner.ExecutionPlan) (*Result, error) {
 	tx, shouldCommit, err := s.ensureTransaction()
 	if err != nil {
 		return nil, err
@@ -679,7 +681,7 @@ func (s *Session) buildIndexKeyForRow(columns []string, values []catalog.Value, 
 		if col == nil {
 			return nil, fmt.Errorf("unknown column: %s", columns[0])
 		}
-		return encodeValueForIndex(values[idx])
+		return planner.EncodeValueForIndex(values[idx])
 	}
 
 	// Composite index
@@ -689,36 +691,13 @@ func (s *Session) buildIndexKeyForRow(columns []string, values []catalog.Value, 
 		if col == nil {
 			return nil, fmt.Errorf("unknown column: %s", colName)
 		}
-		part, err := encodeValueForIndex(values[idx])
+		part, err := planner.EncodeValueForIndex(values[idx])
 		if err != nil {
 			return nil, err
 		}
 		parts = append(parts, part)
 	}
 	return btree.EncodeCompositeKey(parts...), nil
-}
-
-// encodeValueForIndex encodes a catalog.Value for use as an index key.
-func encodeValueForIndex(v catalog.Value) ([]byte, error) {
-	if v.IsNull {
-		return []byte{0x00}, nil
-	}
-
-	switch v.Type {
-	case catalog.TypeInt32:
-		return btree.EncodeIntKey(int64(v.Int32)), nil
-	case catalog.TypeInt64:
-		return btree.EncodeIntKey(v.Int64), nil
-	case catalog.TypeBool:
-		if v.Bool {
-			return []byte{1}, nil
-		}
-		return []byte{0}, nil
-	case catalog.TypeText:
-		return append([]byte{0x01}, []byte(v.Text)...), nil
-	default:
-		return nil, fmt.Errorf("unsupported type for index: %v", v.Type)
-	}
 }
 
 // handleDropIndex removes an index.
@@ -1218,7 +1197,7 @@ func (s *Session) handleCall(stmt *ast.CallStmt) (*Result, error) {
 	}
 
 	// Parse and execute the procedure body
-	body, err := NewParser(procMeta.Body).parsePLBlock()
+	body, err := parse.NewParser(procMeta.Body).ParsePLBlock()
 	if err != nil {
 		return nil, fmt.Errorf("error parsing procedure body: %v", err)
 	}

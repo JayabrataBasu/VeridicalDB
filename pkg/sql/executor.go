@@ -10,6 +10,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/planner"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
@@ -129,7 +131,7 @@ func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 // ExecuteSQL parses and executes a SQL string, using the query cache for SELECT statements.
 func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 	// Parse the SQL
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
@@ -6114,8 +6116,8 @@ func (e *Executor) executeExplain(stmt *ast.ExplainStmt) (*Result, error) {
 	}
 
 	// Create a planner with nil index manager (basic planning only)
-	planner := NewPlanner(nil)
-	plan := planner.Plan(selectStmt, meta)
+	pl := planner.NewPlanner(nil)
+	plan := pl.Plan(selectStmt, meta)
 
 	// Build the explanation
 	var details []string
@@ -6124,7 +6126,7 @@ func (e *Executor) executeExplain(stmt *ast.ExplainStmt) (*Result, error) {
 	planExplain := plan.Explain()
 	details = append(details, planExplain)
 
-	if plan.Type == PlanIndexScan {
+	if plan.Type == planner.PlanIndexScan {
 		details = append(details, "  Using index: "+plan.IndexName)
 	}
 
@@ -6594,8 +6596,8 @@ func (e *Executor) validateCheckConstraints(schema *catalog.Schema, values []cat
 		// Parse the CHECK expression directly as a condition
 		// We wrap it in a dummy SELECT to reuse the parser, but with a real column name
 		// Actually, let's just parse the expression directly
-		parser := NewParser(col.CheckExpr)
-		expr, err := parser.parseExpression()
+		parser := parse.NewParser(col.CheckExpr)
+		expr, err := parser.ParseExpression()
 		if err != nil {
 			return fmt.Errorf("invalid CHECK expression for column %s: %w", col.Name, err)
 		}

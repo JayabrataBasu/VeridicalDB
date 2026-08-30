@@ -97,7 +97,7 @@ VeridicalDB is a modern, embeddable database engine written in Go. It aims to pr
 
 ## Completed Features
 
-### ✅ SQL Parser & Lexer (`pkg/sql/token`, `pkg/sql/lex`, `pkg/sql/parser.go`)
+### ✅ SQL Parser & Lexer (`pkg/sql/token`, `pkg/sql/lex`, `pkg/sql/parse`)
 
 A hand-written recursive descent parser supporting:
 
@@ -181,7 +181,7 @@ A hand-written recursive descent parser supporting:
 - Log sequence numbers (LSN) for ordering
 - Basic recovery scanning
 
-### ✅ Query Planner (`pkg/sql/planner.go`)
+### ✅ Query Planner (`pkg/sql/planner`)
 
 - Index selection for WHERE clauses
 - Simple cost-based decisions
@@ -290,7 +290,9 @@ superseded it.)_
 | `pkg/sql/token` | SQL token types, keyword table | `token.go` |
 | `pkg/sql/lex` | SQL lexer (produces `token.Token`s) | `lexer.go` |
 | `pkg/sql/ast` | SQL abstract syntax tree — every node type + the `Statement`/`Expression` interfaces | `ast.go` |
-| `pkg/sql` | Parser, planner, MVCC executor, session, PL/pgSQL | `parser.go`, `planner.go`, `mvcc_executor.go`, `session.go` |
+| `pkg/sql/parse` | Recursive-descent parser (`NewParser`, `Parse`) | `parser.go` |
+| `pkg/sql/planner` | Cost-based query planner, `ExecutionPlan`, index-key encoding | `planner.go` |
+| `pkg/sql` | MVCC executor, session, PL/pgSQL interpreter | `mvcc_executor.go`, `session.go`, `pl_interpreter.go` |
 | `pkg/stats` | Table statistics for the cost model | `stats.go` |
 | `pkg/storage` | Heap + columnar storage engines, buffer pool, pager | `storage.go`, `columnar.go`, `buffer_pool.go` |
 | `pkg/txn` | Transaction manager, MVCC snapshots, visibility | `txn.go`, `visibility.go` |
@@ -299,8 +301,8 @@ superseded it.)_
 
 > **Note:** `pkg/sql` still contains a second, pre-MVCC `executor.go` that is
 > unreachable at runtime (only tests use it). Removing it is plan phase P2.
-> P4 splits `pkg/sql` into sub-packages in dependency order; `token`, `lex`, and
-> `ast` are done. `parse` and `plan` are next; `exec`/`session` follow after P2
+> P4 splits `pkg/sql` into sub-packages in dependency order; `token`, `lex`,
+> `ast`, `parse`, and `planner` are done. `exec`/`session` follow after P2
 > deletes `executor.go`.
 
 ---
@@ -369,7 +371,7 @@ These features are essential for basic SQL usability.
 
 | Feature | Difficulty | Description | Files to Modify |
 |---------|------------|-------------|-----------------|
-| **ORDER BY** | Medium | Sort query results | `pkg/sql/parser.go`, `pkg/sql/executor.go`, `pkg/sql/ast.go` |
+| **ORDER BY** | Medium | Sort query results | `pkg/sql/parse/parser.go`, `pkg/sql/mvcc_executor.go`, `pkg/sql/ast/ast.go` |
 | **LIMIT/OFFSET** | Easy | Pagination | Same as ORDER BY |
 | **COUNT/SUM/AVG/MIN/MAX** | Medium | Aggregate functions | Parser + new aggregate evaluation in executor |
 | **GROUP BY** | Medium | Grouping for aggregates | Parser + executor grouping logic |
@@ -478,20 +480,20 @@ Nice-to-have for competitive advantage.
    }
    func (s *NewStmt) statementNode() {}
    ```
-3. **Add parser method** to `pkg/sql/parser.go`:
+3. **Add parser method** to `pkg/sql/parse/parser.go`:
    ```go
    func (p *Parser) parseNew() (*NewStmt, error) {
        // Parse syntax
    }
    ```
-4. **Add to Parse()** switch in `parser.go`
-5. **Add executor method** to `pkg/sql/executor.go`:
+4. **Add to Parse()** switch in `pkg/sql/parse/parser.go`
+5. **Add executor method** to `pkg/sql/mvcc_executor.go`:
    ```go
-   func (e *Executor) executeNew(stmt *NewStmt) (*Result, error) {
+   func (e *MVCCExecutor) executeNew(stmt *ast.NewStmt) (*Result, error) {
        // Execute logic
    }
    ```
-6. **Add to Execute()** switch in `executor.go`
+6. **Add to Execute()** switch in `pkg/sql/mvcc_executor.go`
 7. **Write tests** in `pkg/sql/sql_test.go`
 
 ### Adding a New Data Type
@@ -588,7 +590,7 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.6b | The MVCC path's `GROUPING SETS` / `CUBE` / `ROLLUP` emit only the grand total; `GROUPING()` returns 0 for NULL group columns; `DISTINCT ON` does not deduplicate; window frames compute wrong moving values and `MIN`/`MAX`/`NTH_VALUE` are unsupported as window functions; `MERGE` result differences. **These are substantial — closer to reimplementing than porting.** 14 `sql_test.go` tests remain on `*Executor`, marked `TODO(P2)`. |
 | P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
 | P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
-| P4 | Split `pkg/sql` into `token / lex / ast / parse / plan / exec / session` sub-packages. `token`, `lex`, `ast` extracted — **in progress** |
+| P4 | Split `pkg/sql` into `token / lex / ast / parse / planner / exec / session` sub-packages. `token`, `lex`, `ast`, `parse`, `planner` extracted; `exec`/`session` deferred until P2 deletes `executor.go` — **front half done** |
 | P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
 
 ---
@@ -683,7 +685,7 @@ type UseDatabaseStmt struct {
 }
 ```
 
-Add parse methods in `pkg/sql/parser.go` and hook into the main Parse() dispatch.
+Add parse methods in `pkg/sql/parse/parser.go` and hook into the main Parse() dispatch.
 
 ### Executor semantics
 

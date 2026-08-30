@@ -11,6 +11,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/lex"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -134,7 +135,7 @@ func TestParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -149,7 +150,7 @@ func TestExecutorCreateTable(t *testing.T) {
 	executor := newParitySession(t, tm)
 
 	// Create a table
-	parser := NewParser("CREATE TABLE users (id INT, name TEXT, active BOOL);")
+	parser := parse.NewParser("CREATE TABLE users (id INT, name TEXT, active BOOL);")
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -184,7 +185,7 @@ func TestExecutorCreateColumnarTable(t *testing.T) {
 	executor := newParitySession(t, tm)
 
 	// Create a columnar table
-	parser := NewParser("CREATE TABLE analytics (id INT, value INT) USING COLUMN;")
+	parser := parse.NewParser("CREATE TABLE analytics (id INT, value INT) USING COLUMN;")
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -210,7 +211,7 @@ func TestExecutorCreateColumnarTable(t *testing.T) {
 	}
 
 	// Test INSERT into columnar table
-	insertParser := NewParser("INSERT INTO analytics VALUES (1, 100);")
+	insertParser := parse.NewParser("INSERT INTO analytics VALUES (1, 100);")
 	insertStmt, err := insertParser.Parse()
 	if err != nil {
 		t.Fatalf("parse INSERT error: %v", err)
@@ -228,7 +229,7 @@ func TestExecutorCreateColumnarTable(t *testing.T) {
 	// Insert more rows
 	for i := 2; i <= 5; i++ {
 		sql := fmt.Sprintf("INSERT INTO analytics VALUES (%d, %d);", i, i*100)
-		parser := NewParser(sql)
+		parser := parse.NewParser(sql)
 		stmt, _ := parser.Parse()
 		_, err := executor.Execute(stmt)
 		if err != nil {
@@ -237,7 +238,7 @@ func TestExecutorCreateColumnarTable(t *testing.T) {
 	}
 
 	// Test SELECT from columnar table
-	selectParser := NewParser("SELECT * FROM analytics;")
+	selectParser := parse.NewParser("SELECT * FROM analytics;")
 	selectStmt, err := selectParser.Parse()
 	if err != nil {
 		t.Fatalf("parse SELECT error: %v", err)
@@ -267,7 +268,7 @@ func TestParseUsingColumn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("parse error: %v", err)
@@ -463,7 +464,7 @@ func TestExecutorTableNotFound(t *testing.T) {
 	tm := setupTestTableManager(t)
 	executor := newParitySession(t, tm)
 
-	parser := NewParser("SELECT * FROM nonexistent;")
+	parser := parse.NewParser("SELECT * FROM nonexistent;")
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -853,7 +854,7 @@ func setupTestTableManager(t *testing.T) *catalog.TableManager {
 // Helper: execute SQL and check for errors
 func executeSQL(t *testing.T, executor sqlExec, query string) *Result {
 	t.Helper()
-	parser := NewParser(query)
+	parser := parse.NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("parse error for %q: %v", query, err)
@@ -867,7 +868,7 @@ func executeSQL(t *testing.T, executor sqlExec, query string) *Result {
 
 // Helper: execute SQL that may return an error
 func executeSQLWithError(executor sqlExec, query string) (*Result, error) {
-	parser := NewParser(query)
+	parser := parse.NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, err
@@ -1025,7 +1026,7 @@ func TestParseOrderByLimitOffset(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1203,7 +1204,7 @@ func TestParseAggregates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1325,7 +1326,7 @@ func TestParseGroupBy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1442,7 +1443,7 @@ func TestParseDistinct(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1534,7 +1535,7 @@ func TestPrimaryKeyTypes(t *testing.T) {
 
 // TestParsePrimaryKey verifies PRIMARY KEY is parsed correctly.
 func TestParsePrimaryKey(t *testing.T) {
-	parser := NewParser("CREATE TABLE t (id INT PRIMARY KEY, name TEXT);")
+	parser := parse.NewParser("CREATE TABLE t (id INT PRIMARY KEY, name TEXT);")
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse() error: %v", err)
@@ -1630,7 +1631,7 @@ func TestParseDefault(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1716,7 +1717,7 @@ func TestParseAutoIncrement(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -1829,7 +1830,7 @@ func TestParseJoin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2030,7 +2031,7 @@ func TestParseTableAlias(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2066,7 +2067,7 @@ func TestParseINBETWEEN(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2099,7 +2100,7 @@ func TestJoinWithTableAliases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2304,7 +2305,7 @@ func TestCOALESCEAndNULLIF(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2329,7 +2330,7 @@ func TestParseLIKE(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2355,7 +2356,7 @@ func TestParseArithmetic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2383,7 +2384,7 @@ func TestParseAlterTable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2408,7 +2409,7 @@ func TestParseTruncate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2439,7 +2440,7 @@ func TestParseShow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -2622,7 +2623,7 @@ func TestParseExplain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse failed: %v", err)
@@ -2778,7 +2779,7 @@ func TestParseCaseWhen(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 
 			if tt.shouldErr {
@@ -2941,7 +2942,7 @@ func TestCheckConstraintParsing(t *testing.T) {
 	// First, let's test that parsing SELECT with literal and WHERE works
 	t.Run("test wrapped check expression parsing", func(t *testing.T) {
 		// Try just parsing the WHERE clause differently
-		parser := NewParser("SELECT x FROM t WHERE (age >= 18);")
+		parser := parse.NewParser("SELECT x FROM t WHERE (age >= 18);")
 		stmt, err := parser.Parse()
 		if err != nil {
 			t.Fatalf("Failed to parse wrapped expression: %v", err)
@@ -2990,7 +2991,7 @@ func TestCheckConstraintParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			_, err := parser.Parse()
 
 			if tt.shouldErr {
@@ -3134,7 +3135,7 @@ func TestDateFunctionParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			_, err := parser.Parse()
 
 			if tt.shouldErr {
@@ -3602,7 +3603,7 @@ func TestViewParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -3998,7 +3999,7 @@ func TestParseLeftRightJoin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4046,7 +4047,7 @@ func TestParseHaving(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4204,7 +4205,7 @@ func TestParseSubqueries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4239,7 +4240,7 @@ func TestParseCrossJoin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4274,7 +4275,7 @@ func TestParseDistinctOn(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4304,7 +4305,7 @@ func TestParseLimitExpression(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -4418,7 +4419,7 @@ func TestParseWindowFunctions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
@@ -5087,7 +5088,7 @@ func TestMergeParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Errorf("Failed to parse MERGE: %v", err)
@@ -5125,7 +5126,7 @@ func TestLateralParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Errorf("Failed to parse LATERAL: %v", err)
@@ -5366,7 +5367,7 @@ func TestGroupingSetsParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse failed: %v", err)
@@ -5511,7 +5512,7 @@ func TestCTEParsing(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse failed: %v", err)
@@ -5728,7 +5729,7 @@ func TestFTSParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Errorf("failed to parse %q: %v", tt.input, err)
@@ -5901,7 +5902,7 @@ func TestPartitionParser(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -5959,7 +5960,7 @@ func TestPartitionParserErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			_, err := parser.Parse()
 			if err == nil {
 				t.Error("Expected parse error, got nil")

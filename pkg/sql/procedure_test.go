@@ -7,6 +7,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 )
 
 func TestParseProcedure_Create(t *testing.T) {
@@ -32,7 +33,7 @@ func TestParseProcedure_Create(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := NewParser(tc.sql)
+			parser := parse.NewParser(tc.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -56,7 +57,7 @@ func TestParseProcedure_Create(t *testing.T) {
 func TestParseProcedure_CreateIfNotExists(t *testing.T) {
 	sql := `CREATE PROCEDURE IF NOT EXISTS test_proc() AS $$ BEGIN RETURN; END $$ LANGUAGE plpgsql`
 
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -105,7 +106,7 @@ func TestParseFunction_Create(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := NewParser(tc.sql)
+			parser := parse.NewParser(tc.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -152,7 +153,7 @@ func TestParseProcedure_Drop(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := NewParser(tc.sql)
+			parser := parse.NewParser(tc.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -196,7 +197,7 @@ func TestParseFunction_Drop(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := NewParser(tc.sql)
+			parser := parse.NewParser(tc.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -246,7 +247,7 @@ func TestParseCall(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			parser := NewParser(tc.sql)
+			parser := parse.NewParser(tc.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -270,7 +271,7 @@ func TestParseCall(t *testing.T) {
 func TestParseShowProcedures(t *testing.T) {
 	sql := "SHOW PROCEDURES"
 
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -285,7 +286,7 @@ func TestParseShowProcedures(t *testing.T) {
 func TestParseShowFunctions(t *testing.T) {
 	sql := "SHOW FUNCTIONS"
 
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -470,7 +471,7 @@ func TestParsePLBlock(t *testing.T) {
 			// Wrap in CREATE PROCEDURE for parsing
 			sql := "CREATE PROCEDURE test() AS $$ " + tc.body + " $$ LANGUAGE plpgsql"
 
-			parser := NewParser(sql)
+			parser := parse.NewParser(sql)
 			stmt, err := parser.Parse()
 
 			if tc.wantErr {

@@ -1,4 +1,4 @@
-package sql
+package planner
 
 import (
 	"fmt"
@@ -623,7 +623,7 @@ func (p *Planner) matchRangeToIndex(tableName string, expr *ast.BinaryExpr, _ *c
 	for _, meta := range indexes {
 		// For now, only single-column indexes
 		if len(meta.Columns) == 1 && strings.EqualFold(meta.Columns[0], colName) {
-			key, err := encodeValueForIndex(literal.Value)
+			key, err := EncodeValueForIndex(literal.Value)
 			if err == nil {
 				return &IndexInfo{
 					IndexName: meta.Name,
@@ -681,7 +681,7 @@ func (p *Planner) matchEqualityToIndex(tableName string, expr *ast.BinaryExpr, _
 	for _, meta := range indexes {
 		// For now, only single-column indexes
 		if len(meta.Columns) == 1 && strings.EqualFold(meta.Columns[0], colName) {
-			key, err := encodeValueForIndex(literal.Value)
+			key, err := EncodeValueForIndex(literal.Value)
 			if err == nil {
 				return &IndexInfo{
 					IndexName: meta.Name,
@@ -707,5 +707,28 @@ func (plan *ExecutionPlan) Explain() string {
 		return "IndexScan on " + plan.IndexName + " (table: " + plan.TableName + ")" + costInfo
 	default:
 		return "Unknown plan type" + costInfo
+	}
+}
+
+// EncodeValueForIndex encodes a catalog.Value for use as an index key.
+func EncodeValueForIndex(v catalog.Value) ([]byte, error) {
+	if v.IsNull {
+		return []byte{0x00}, nil
+	}
+
+	switch v.Type {
+	case catalog.TypeInt32:
+		return btree.EncodeIntKey(int64(v.Int32)), nil
+	case catalog.TypeInt64:
+		return btree.EncodeIntKey(v.Int64), nil
+	case catalog.TypeBool:
+		if v.Bool {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+	case catalog.TypeText:
+		return append([]byte{0x01}, []byte(v.Text)...), nil
+	default:
+		return nil, fmt.Errorf("unsupported type for index: %v", v.Type)
 	}
 }

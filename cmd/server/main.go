@@ -21,8 +21,8 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 )
 
 func main() {
@@ -194,7 +194,7 @@ func main() {
 			}
 
 			// Very small safety check: only allow SELECT statements from the UI for now.
-			parser := sql.NewParser(req.SQL)
+			parser := parse.NewParser(req.SQL)
 			stmt, err := parser.Parse()
 			if err != nil {
 				http.Error(w, "syntax error: "+err.Error(), http.StatusBadRequest)

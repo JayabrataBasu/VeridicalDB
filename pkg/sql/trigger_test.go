@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 )
 
 func TestParseTrigger_CreateBasic(t *testing.T) {
@@ -61,7 +62,7 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -96,7 +97,7 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 
 func TestParseTrigger_CreateIfNotExists(t *testing.T) {
 	sql := "CREATE TRIGGER IF NOT EXISTS my_trigger BEFORE INSERT ON users EXECUTE FUNCTION fn()"
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -117,7 +118,7 @@ func TestParseTrigger_CreateIfNotExists(t *testing.T) {
 
 func TestParseTrigger_DropBasic(t *testing.T) {
 	sql := "DROP TRIGGER audit_trigger ON users"
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -141,7 +142,7 @@ func TestParseTrigger_DropBasic(t *testing.T) {
 
 func TestParseTrigger_DropIfExists(t *testing.T) {
 	sql := "DROP TRIGGER IF EXISTS my_trigger ON orders"
-	parser := NewParser(sql)
+	parser := parse.NewParser(sql)
 	stmt, err := parser.Parse()
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
@@ -183,7 +184,7 @@ func TestParseTrigger_ShowTriggers(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			stmt, err := parser.Parse()
 			if err != nil {
 				t.Fatalf("Parse error: %v", err)
@@ -233,7 +234,7 @@ func TestParseTrigger_Errors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.sql)
+			parser := parse.NewParser(tt.sql)
 			_, err := parser.Parse()
 			if err == nil {
 				t.Error("expected parse error")

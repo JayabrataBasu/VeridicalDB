@@ -3,6 +3,8 @@ package sql
 import (
 	"fmt"
 	"testing"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/planner"
 )
 
 func TestSessionExecuteSQLCachesPreparedPlanForIndexedSelect(t *testing.T) {
@@ -42,11 +44,11 @@ func TestSessionExecuteSQLCachesPreparedPlanForIndexedSelect(t *testing.T) {
 	if !found {
 		t.Fatal("expected cached query entry")
 	}
-	plan, ok := entry.PreparedPlan.(*ExecutionPlan)
+	plan, ok := entry.PreparedPlan.(*planner.ExecutionPlan)
 	if !ok || plan == nil {
 		t.Fatal("expected cached execution plan")
 	}
-	if plan.Type != PlanIndexScan && plan.Type != PlanTableScan {
+	if plan.Type != planner.PlanIndexScan && plan.Type != planner.PlanTableScan {
 		t.Fatalf("expected cached valid plan type, got %v", plan.Type)
 	}
 }

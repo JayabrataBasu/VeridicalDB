@@ -10,8 +10,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
@@ -161,7 +161,7 @@ func (c *Coordinator) Route(query string, sessionID string) RouteResult {
 }
 
 func parseStatement(query string) (ast.Statement, error) {
-	parser := sql.NewParser(query)
+	parser := parse.NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
 		return nil, fmt.Errorf("parse query: %w", err)

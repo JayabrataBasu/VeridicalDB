@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 )
 
 func TestParseDatabaseStatements(t *testing.T) {
@@ -161,7 +162,7 @@ func TestParseDatabaseStatements(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(tt.input)
+			parser := parse.NewParser(tt.input)
 			stmt, err := parser.Parse()
 
 			if tt.wantErr {

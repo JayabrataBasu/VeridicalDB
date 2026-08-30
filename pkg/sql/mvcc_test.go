@@ -6,6 +6,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -460,7 +461,7 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 	// Sanity check: substitution should replace e.dept with literal 'A' for id=2 row
 	meta, _ := session.Catalog().GetTable("emp")
 	outerRow := []catalog.Value{catalog.NewInt32(2), catalog.NewText("A"), catalog.NewInt32(200)}
-	p := NewParser("SELECT AVG(salary) FROM emp WHERE dept = e.dept")
+	p := parse.NewParser("SELECT AVG(salary) FROM emp WHERE dept = e.dept")
 	parsed, perr := p.Parse()
 	if perr != nil {
 		t.Fatalf("parse failed: %v", perr)
@@ -497,7 +498,7 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 
 	// Correlated IN subquery
 	// Sanity: ensure substitution replaces e.salary with literal for outer row id=1 and id=3
-	p2 := NewParser("SELECT id FROM emp WHERE salary > e.salary")
+	p2 := parse.NewParser("SELECT id FROM emp WHERE salary > e.salary")
 	parsed2, perr := p2.Parse()
 	if perr != nil {
 		t.Fatalf("parse failed: %v", perr)
