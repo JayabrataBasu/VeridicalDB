@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 )
 
 func TestHashKey(t *testing.T) {
@@ -426,7 +426,7 @@ func TestShardNode_StartStop(t *testing.T) {
 func TestFormatResult(t *testing.T) {
 	tests := []struct {
 		name     string
-		result   *sql.Result
+		result   *exec.Result
 		contains string
 	}{
 		{
@@ -436,12 +436,12 @@ func TestFormatResult(t *testing.T) {
 		},
 		{
 			name:     "message only",
-			result:   &sql.Result{Message: "Table created."},
+			result:   &exec.Result{Message: "Table created."},
 			contains: "Table created.",
 		},
 		{
 			name: "with rows",
-			result: &sql.Result{
+			result: &exec.Result{
 				Columns: []string{"id", "name"},
 				Rows: [][]catalog.Value{
 					{catalog.NewInt32(1), catalog.NewText("alice")},

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -31,7 +31,7 @@ func TestBuildSystemCatalogIncludesShardMetricsProvider(t *testing.T) {
 	}
 
 	mtm := catalog.NewMVCCTableManager(tm, txn.NewManager(), nil)
-	session := sql.NewSession(mtm)
+	session := exec.NewSession(mtm)
 	session.SetShardMetricsProvider(stubMetricsProvider{output: "veridicaldb_shard_queries_total 7"})
 
 	app := New(session)

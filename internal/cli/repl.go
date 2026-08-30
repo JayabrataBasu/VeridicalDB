@@ -13,7 +13,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 	"github.com/chzyer/readline"
 )
 
@@ -24,7 +24,7 @@ type REPL struct {
 	rl      *readline.Instance
 	db      *engine.DB
 	ownsDB  bool // true when this REPL opened db and must close it
-	session *sql.Session
+	session *exec.Session
 	coord   *shard.Coordinator
 }
 

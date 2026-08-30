@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
 
 // ProcedureType distinguishes procedures from functions.
@@ -138,7 +140,7 @@ func (pc *ProcedureCatalog) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(pc.catalogPath(), data, 0o644)
+	return storage.WriteFileAtomic(pc.catalogPath(), data, 0o644)
 }
 
 // CreateProcedure creates a new stored procedure.

@@ -120,7 +120,7 @@ func (im *IndexManager) saveIndexesLocked() error {
 		return err
 	}
 
-	return os.WriteFile(im.metaFilePath(), data, 0o644)
+	return storage.WriteFileAtomic(im.metaFilePath(), data, 0o644)
 }
 
 // CreateIndex creates a new index.

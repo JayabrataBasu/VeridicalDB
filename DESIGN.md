@@ -187,7 +187,7 @@ A hand-written recursive descent parser supporting:
 - Simple cost-based decisions
 - Falls back to table scan when no index available
 
-### ✅ Session Management (`pkg/sql/session.go`)
+### ✅ Session Management (`pkg/sql/exec` — `session.go`)
 
 - Per-connection session state
 - Transaction lifecycle management
@@ -292,7 +292,7 @@ superseded it.)_
 | `pkg/sql/ast` | SQL abstract syntax tree — every node type + the `Statement`/`Expression` interfaces | `ast.go` |
 | `pkg/sql/parse` | Recursive-descent parser (`NewParser`, `Parse`) | `parser.go` |
 | `pkg/sql/planner` | Cost-based query planner, `ExecutionPlan`, index-key encoding | `planner.go` |
-| `pkg/sql` | MVCC executor, session, PL/pgSQL interpreter | `mvcc_executor.go`, `session.go`, `pl_interpreter.go` |
+| `pkg/sql/exec` | The SQL execution engine: MVCC executor, `Session`, PL/pgSQL interpreter, constraint checks, query cache, information_schema, and the shared `exec_*.go` operators | `mvcc_executor.go`, `session.go`, `pl_interpreter.go`, `exec_*.go` |
 | `pkg/stats` | Table statistics for the cost model | `stats.go` |
 | `pkg/storage` | Heap + columnar storage engines, buffer pool, pager | `storage.go`, `columnar.go`, `buffer_pool.go` |
 | `pkg/txn` | Transaction manager, MVCC snapshots, visibility | `txn.go`, `visibility.go` |
@@ -303,9 +303,9 @@ superseded it.)_
 > `MVCCExecutor` is the single SQL engine. Its reusable helpers now live in
 > `exec_*.go` files (`exec_result.go`, `exec_values.go`, `exec_functions.go`,
 > `exec_window.go`, `exec_grouping_sets.go`, `exec_cte.go`, `exec_combined.go`, …).
-> P4 splits `pkg/sql` into sub-packages in dependency order; `token`, `lex`,
-> `ast`, `parse`, and `planner` are done. The `exec` / `session` split (which the
-> `exec_*.go` naming anticipates) is now unblocked.
+> P4 is done: `pkg/sql` is fully decomposed into `token`, `lex`, `ast`, `parse`,
+> `planner`, and `exec` (the executor + `Session` + PL/pgSQL + helpers). There is
+> no longer a top-level `pkg/sql` package — `pkg/sql/` is a namespace directory.
 
 ---
 
@@ -373,7 +373,7 @@ These features are essential for basic SQL usability.
 
 | Feature | Difficulty | Description | Files to Modify |
 |---------|------------|-------------|-----------------|
-| **ORDER BY** | Medium | Sort query results | `pkg/sql/parse/parser.go`, `pkg/sql/mvcc_executor.go`, `pkg/sql/ast/ast.go` |
+| **ORDER BY** | Medium | Sort query results | `pkg/sql/parse/parser.go`, `pkg/sql/exec/mvcc_executor.go`, `pkg/sql/ast/ast.go` |
 | **LIMIT/OFFSET** | Easy | Pagination | Same as ORDER BY |
 | **COUNT/SUM/AVG/MIN/MAX** | Medium | Aggregate functions | Parser + new aggregate evaluation in executor |
 | **GROUP BY** | Medium | Grouping for aggregates | Parser + executor grouping logic |
@@ -394,7 +394,7 @@ These ensure data correctness and consistency.
 
 | Feature | Difficulty | Description | Files to Modify |
 |---------|------------|-------------|-----------------|
-| **PRIMARY KEY enforcement** | Medium | Auto-create unique index, enforce on INSERT | `pkg/catalog/catalog.go`, `pkg/sql/mvcc_constraints.go` |
+| **PRIMARY KEY enforcement** | Medium | Auto-create unique index, enforce on INSERT | `pkg/catalog/catalog.go`, `pkg/sql/exec/mvcc_constraints.go` |
 | **UNIQUE constraints** | Medium | Candidate keys | Similar to PRIMARY KEY |
 | **FOREIGN KEY** | Hard | Referential integrity | Parser + catalog + executor checks |
 | **CHECK constraints** | Medium | Boolean conditions | Parser + executor validation |
@@ -489,14 +489,14 @@ Nice-to-have for competitive advantage.
    }
    ```
 4. **Add to Parse()** switch in `pkg/sql/parse/parser.go`
-5. **Add executor method** to `pkg/sql/mvcc_executor.go`:
+5. **Add executor method** to `pkg/sql/exec/mvcc_executor.go`:
    ```go
    func (e *MVCCExecutor) executeNew(stmt *ast.NewStmt) (*Result, error) {
        // Execute logic
    }
    ```
-6. **Add to Execute()** switch in `pkg/sql/mvcc_executor.go`
-7. **Write tests** in `pkg/sql/sql_test.go`
+6. **Add to Execute()** switch in `pkg/sql/exec/mvcc_executor.go`
+7. **Write tests** in `pkg/sql/exec/sql_test.go`
 
 ### Adding a New Data Type
 
@@ -564,8 +564,10 @@ tm, _ := catalog.NewTableManager(dir, 4096)
 2. **Snapshot isolation only** - No `SET TRANSACTION ISOLATION LEVEL`; the
    Read Committed / Repeatable Read / Serializable modes are not selectable
 3. **Catalog metadata is JSON** - `catalog.json`, `indexes.json`, per-database
-   `meta.json` written with `os.WriteFile`; the temp-file-then-rename discipline
-   is inconsistent, so a crash mid-DDL can tear catalog state
+   `meta.json`, and the trigger / procedure catalogs. Writes now go through
+   `storage.WriteFileAtomic` (temp file + fsync + rename + dir fsync), so a crash
+   mid-DDL leaves the old file intact — never a torn one. `pkg/auth/users.json`
+   and the FTS index are not yet on the atomic path.
 4. **Limited error messages** - Some errors lack context
 5. **BEGIN records are not written** - `Session` opens transactions through the
    raw `txn.Manager`, so the WAL has COMMIT/ABORT records (via `wal.TxnLogger`)
@@ -592,8 +594,8 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.6b | **Done.** DISTINCT ON; GROUPING SETS / CUBE / ROLLUP + `GROUPING()` (`exec_grouping_sets.go`); window frames + full window-function set (`exec_window.go`); `MERGE` value coercion + function-call args. |
 | P2.7 | **Done.** `git rm pkg/sql/executor.go`; parity harness collapsed to a single-path battery (`TestSessionSQLBattery`); `integration_test.go`'s two `*Executor`-internals tests removed/rewritten against `Session`. |
 | P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
-| P4 | Split `pkg/sql` into `token / lex / ast / parse / planner / exec / session` sub-packages. `token`, `lex`, `ast`, `parse`, `planner` extracted. `exec`/`session` now **unblocked** (P2 deleted `executor.go`; the surviving helpers are already in `exec_*.go` files ready to `git mv`). |
-| P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
+| P4 | **Done.** `pkg/sql` split into sub-packages: `token`, `lex`, `ast`, `parse`, `planner`, and `exec` (executor + `Session` + PL/pgSQL + the `exec_*.go` operators). No top-level `pkg/sql` package remains. `exec` and `session` were kept as one package — their coupling (`MVCCExecutor` ↔ `Session` via trigger PL execution) is a true cycle, and an interface seam there is ceremony for a 3-line dependency. |
+| P5 | **Done.** Atomic metadata writes via `storage.WriteFileAtomic` (catalog / databases / per-db meta / index / trigger / procedure / columnar-segment metadata). TUI decoupled from `pkg/sql/exec`: `internal/tui` now depends on a narrow `tui.Session` interface it owns (`ExecuteSQL` / `Catalog` / `GetDatabaseManager` / `ShardMetricsProvider`); `app.go` no longer imports the SQL engine. |
 
 ---
 
@@ -746,7 +748,7 @@ Table managers remain per-database: `catalog.NewTableManager(dbPath)` so the ses
 
 ### Session changes
 
-Extend `pkg/sql/session.go`:
+Extend `pkg/sql/exec/session.go`:
 
 - Add `CurrentDatabase string` to `Session` struct (persisted only in-memory).
 - When a session is created, set `CurrentDatabase` to a configured default (e.g., `default` or `postgres`), or `""` meaning no DB selected — REPL should call `CREATE DATABASE`/`USE` as needed.

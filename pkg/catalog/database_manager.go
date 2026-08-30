@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
 
 // DatabaseInfo describes a database namespace.
@@ -90,7 +92,7 @@ func (dm *DatabaseManager) save() error {
 		return err
 	}
 
-	return os.WriteFile(dm.databasesPath(), data, 0o644)
+	return storage.WriteFileAtomic(dm.databasesPath(), data, 0o644)
 }
 
 // CreateDatabase creates a new database with the given name.
@@ -127,7 +129,7 @@ func (dm *DatabaseManager) CreateDatabase(name, owner string) (*DatabaseInfo, er
 	if err != nil {
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
-	if err := os.WriteFile(metaPath, metaData, 0o644); err != nil {
+	if err := storage.WriteFileAtomic(metaPath, metaData, 0o644); err != nil {
 		return nil, fmt.Errorf("write metadata: %w", err)
 	}
 

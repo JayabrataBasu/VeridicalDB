@@ -11,7 +11,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/engine"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 )
 
 // ShardNode represents a single shard in the distributed database.
@@ -26,7 +26,7 @@ type ShardNode struct {
 
 	listener net.Listener
 
-	sessions   map[string]*sql.Session
+	sessions   map[string]*exec.Session
 	sessionsMu sync.Mutex
 
 	wg       sync.WaitGroup
@@ -50,7 +50,7 @@ func NewShardNode(info *ShardInfo, dataDir string, pageSize int) (*ShardNode, er
 		dataDir:  dataDir,
 		pageSize: pageSize,
 		db:       db,
-		sessions: make(map[string]*sql.Session),
+		sessions: make(map[string]*exec.Session),
 		ctx:      ctx,
 		cancel:   cancel,
 	}, nil
@@ -139,7 +139,7 @@ func (n *ShardNode) handleConnection(conn net.Conn) {
 }
 
 // getOrCreateSession gets or creates a session for the given ID.
-func (n *ShardNode) getOrCreateSession(sessionID string) *sql.Session {
+func (n *ShardNode) getOrCreateSession(sessionID string) *exec.Session {
 	n.sessionsMu.Lock()
 	defer n.sessionsMu.Unlock()
 
@@ -160,7 +160,7 @@ func (n *ShardNode) removeSession(sessionID string) {
 }
 
 // formatResult formats a SQL result as a string.
-func formatResult(result *sql.Result) string {
+func formatResult(result *exec.Result) string {
 	if result == nil {
 		return "OK\n"
 	}

@@ -368,7 +368,7 @@ func (e *ColumnarEngine) writeSegmentMetadata(seg *Segment) error {
 	binary.LittleEndian.PutUint64(data[12:20], seg.StartRow)
 	binary.LittleEndian.PutUint32(data[20:24], uint32(seg.RowCount))
 
-	return os.WriteFile(metaPath, data, 0644)
+	return WriteFileAtomic(metaPath, data, 0o644)
 }
 
 // Delete marks a row as deleted.

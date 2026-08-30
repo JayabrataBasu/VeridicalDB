@@ -8,7 +8,7 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -53,7 +53,7 @@ func TestSetupShardCoordinatorAttachesProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create table manager: %v", err)
 	}
-	session := sql.NewSession(catalog.NewMVCCTableManager(tm, txn.NewManager(), nil))
+	session := exec.NewSession(catalog.NewMVCCTableManager(tm, txn.NewManager(), nil))
 
 	host0, port0 := splitHostPort(t, listener0.Addr().String())
 	host1, port1 := splitHostPort(t, listener1.Addr().String())

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 )
 
 func openTemp(t *testing.T, durable bool) *DB {
@@ -20,7 +20,7 @@ func openTemp(t *testing.T, durable bool) *DB {
 // sessionOn returns a fresh session with the given database selected. Multi-
 // database support is wired in, so every session must select a database before
 // DDL/DML — the same contract the REPL and TUI have always had.
-func sessionOn(t *testing.T, db *DB, database string) *sql.Session {
+func sessionOn(t *testing.T, db *DB, database string) *exec.Session {
 	t.Helper()
 	s := db.NewSession()
 	t.Cleanup(s.Close)
@@ -30,7 +30,7 @@ func sessionOn(t *testing.T, db *DB, database string) *sql.Session {
 	return s
 }
 
-func mustExec(t *testing.T, s *sql.Session, query string) {
+func mustExec(t *testing.T, s *exec.Session, query string) {
 	t.Helper()
 	if _, err := s.ExecuteSQL(query); err != nil {
 		t.Fatalf("exec %q: %v", query, err)

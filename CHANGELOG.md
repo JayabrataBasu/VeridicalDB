@@ -7,6 +7,22 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
+### Changed (P5 — crash-safe metadata, TUI decoupling)
+
+- Catalog / schema metadata is now written atomically. `catalog.json`,
+  `databases.json`, each database's `meta.json`, `indexes.json`, the trigger and
+  procedure catalogs, and columnar-segment metadata went from bare
+  `os.WriteFile` to `storage.WriteFileAtomic` — temp file, fsync, rename, then a
+  best-effort directory fsync. A crash mid-`CREATE`/`DROP`/`ALTER` can no longer
+  leave a truncated catalog file that fails to parse on restart.
+- The Bubble Tea TUI no longer imports the SQL engine. `internal/tui` depends on
+  a small `tui.Session` interface it defines (`ExecuteSQL`, `Catalog`,
+  `GetDatabaseManager`, `ShardMetricsProvider`); `*exec.Session` satisfies it and
+  is injected by `cmd/veridicaldb`. `app.go` dropped its `pkg/sql/exec` import;
+  the dependency is confined to one boundary file and TUI logic is now testable
+  with a stub session. `exec`'s `metricsProvider` interface was exported as
+  `exec.MetricsProvider` for the interface signature.
+
 ### Changed (P2 — one SQL executor)
 
 - **Removed the pre-MVCC `pkg/sql/executor.go`.** `Session` over `MVCCExecutor`
@@ -84,8 +100,18 @@ Structural cleanup and the start of a phased remediation plan (see the
   path to full parity and then deletes `executor.go` (~7.9k LOC). The `exec_*.go`
   names are chosen so P4 can later `git mv` them into an `exec` package.
 
-### Changed (P4 — splitting `pkg/sql`: front half done)
+### Changed (P4 — splitting `pkg/sql`)
 
+- **`pkg/sql` is fully decomposed.** The last piece: the executor, `Session`,
+  PL/pgSQL interpreter, constraint checks, query cache, `information_schema`, and
+  every `exec_*.go` operator moved from the bare `pkg/sql` package into
+  `pkg/sql/exec` (`git mv pkg/sql/*.go pkg/sql/exec/`). There is no longer a
+  top-level `pkg/sql` package — `pkg/sql/` is a namespace directory holding
+  `token`, `lex`, `ast`, `parse`, `planner`, and `exec`. External code uses
+  `exec.Session` / `exec.NewSession` / `exec.Result` (was `sql.*`). `exec` and
+  `session` were kept as one package: `MVCCExecutor` and `Session` reference each
+  other (trigger bodies run through the session's `Execute`), and an interface
+  seam for that 3-line cycle is not worth a package boundary.
 - The SQL lexer moved out of the monolithic `pkg/sql` package. `pkg/sql/lexer.go`
   is now two leaf packages: `pkg/sql/token` (the `TokenType` enum, the keyword
   table, `LookupKeyword`, and the `Token` struct) and `pkg/sql/lex` (the `Lexer`).
@@ -106,11 +132,8 @@ Structural cleanup and the start of a phased remediation plan (see the
   planner). Callers use `planner.NewPlanner`, `planner.ExecutionPlan`, etc. The
   package is named `planner`, not `plan`, because `plan` is a pervasive local
   variable name in the executors.
-- No behavior change — token values, lexer output, AST shape, parser output, and
-  plan selection are identical; this is plan phase P4, which splits `pkg/sql` into
-  `token / lex / ast / parse / planner / exec / session` in dependency order. The
-  `exec` and `session` split is deferred until P2 removes the dead `executor.go`,
-  so it operates on half the code.
+- No behavior change throughout — token values, lexer output, AST shape, parser
+  output, plan selection, and execution results are all identical.
 
 ### Changed (P3 — config & logging consolidation)
 

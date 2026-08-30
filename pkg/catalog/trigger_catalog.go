@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
 
 // TriggerTiming specifies when a trigger fires.
@@ -129,7 +131,7 @@ func (tc *TriggerCatalog) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(tc.catalogPath(), data, 0o644)
+	return storage.WriteFileAtomic(tc.catalogPath(), data, 0o644)
 }
 
 // CreateTrigger registers a new trigger.

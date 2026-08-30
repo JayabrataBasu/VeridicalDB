@@ -6,11 +6,11 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/config"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/shard"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 )
 
 // SetupShardCoordinator creates and connects a shard coordinator when sharding is enabled.
-func SetupShardCoordinator(cfg *config.Config, session *sql.Session) (*shard.Coordinator, error) {
+func SetupShardCoordinator(cfg *config.Config, session *exec.Session) (*shard.Coordinator, error) {
 	if cfg == nil || session == nil || !cfg.Sharding.Enabled {
 		return nil, nil
 	}

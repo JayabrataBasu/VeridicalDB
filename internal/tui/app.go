@@ -6,7 +6,6 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -17,7 +16,7 @@ type Model struct {
 	screen Screen
 
 	// Shared session for database operations
-	session *sql.Session
+	session Session
 
 	// Theme configuration (legacy, for compatibility)
 	theme *Theme
@@ -62,7 +61,7 @@ type Model struct {
 }
 
 // New creates a new TUI Model.
-func New(session *sql.Session) *Model {
+func New(session Session) *Model {
 	// Initialize icons based on environment
 	InitIcons()
 
@@ -339,7 +338,7 @@ func (m *Model) RegisterScreen(id string, screen Screen) {
 }
 
 // GetSession returns the shared database session.
-func (m *Model) GetSession() *sql.Session {
+func (m *Model) GetSession() Session {
 	return m.session
 }
 

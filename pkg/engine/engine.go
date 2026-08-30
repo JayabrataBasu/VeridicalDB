@@ -3,7 +3,7 @@
 // Before this package existed, five call sites (cmd/server, cmd/veridicaldb's
 // TUI path, internal/cli twice, and pkg/shard) each hand-built the
 // WAL -> txn -> catalog -> session object graph and independently decided which
-// of a sql.Session's optional capabilities to wire in. They drifted: the wire
+// of a exec.Session's optional capabilities to wire in. They drifted: the wire
 // protocol got none of them. Open builds the graph once and NewSession hands out
 // sessions with every available capability attached, so behavior no longer
 // depends on how a client connects.
@@ -17,7 +17,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/wal"
 )
@@ -171,8 +171,8 @@ func Open(cfg Config) (*DB, error) {
 
 // NewSession returns a session with every available capability wired in. Every
 // entry point must obtain sessions this way.
-func (db *DB) NewSession() *sql.Session {
-	s := sql.NewSession(db.mtm)
+func (db *DB) NewSession() *exec.Session {
+	s := exec.NewSession(db.mtm)
 	if db.idxMgr != nil {
 		s.SetIndexManager(db.idxMgr)
 	}

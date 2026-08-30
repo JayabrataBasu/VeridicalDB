@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
 
 // TableMeta holds metadata for a table.
@@ -92,7 +94,7 @@ func (c *Catalog) save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.catalogPath(), data, 0o644)
+	return storage.WriteFileAtomic(c.catalogPath(), data, 0o644)
 }
 
 // CreateTable registers a new table with the given schema.

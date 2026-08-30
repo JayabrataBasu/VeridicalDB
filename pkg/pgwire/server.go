@@ -15,8 +15,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
-	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/exec"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/parse"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -47,7 +47,7 @@ type Server struct {
 
 	// newSession produces a fully-wired session per connection (see
 	// ServerConfig.NewSession).
-	newSession func() *sql.Session
+	newSession func() *exec.Session
 }
 
 // ServerConfig holds configuration for the pgwire server.
@@ -58,8 +58,8 @@ type ServerConfig struct {
 	// NewSession, when set, is the source of per-connection sessions. This is
 	// how callers hand the server a fully-wired session (indexes, triggers,
 	// procedures, FTS, multi-database, ...). When nil the server falls back to
-	// a bare sql.NewSession(MTM), which has none of those capabilities.
-	NewSession func() *sql.Session
+	// a bare exec.NewSession(MTM), which has none of those capabilities.
+	NewSession func() *exec.Session
 
 	MTM           *catalog.MVCCTableManager
 	TxnMgr        *txn.Manager
@@ -208,7 +208,7 @@ type Conn struct {
 	cancelSecret int32
 
 	// Session state
-	session    *sql.Session
+	session    *exec.Session
 	parameters map[string]string
 	txnStatus  byte
 
@@ -236,7 +236,7 @@ type Portal struct {
 	Params    [][]byte
 	Formats   []int16
 	MaxRows   int32
-	Result    *sql.Result
+	Result    *exec.Result
 	RowOffset int
 }
 
@@ -408,7 +408,7 @@ func (c *Conn) processStartup(params []byte) error {
 	if c.server.newSession != nil {
 		c.session = c.server.newSession()
 	} else {
-		c.session = sql.NewSession(c.server.mtm)
+		c.session = exec.NewSession(c.server.mtm)
 	}
 
 	// Send AuthenticationOK
@@ -551,7 +551,7 @@ func (c *Conn) handleQuery(payload []byte) error {
 	return c.bufW.Flush()
 }
 
-func (c *Conn) sendResult(result *sql.Result, query string, maxRows int32, rowOffset int) (bool, int, error) {
+func (c *Conn) sendResult(result *exec.Result, query string, maxRows int32, rowOffset int) (bool, int, error) {
 	if result == nil {
 		return false, 0, c.sendCommandComplete("", 0)
 	}
@@ -1021,7 +1021,7 @@ func (c *Conn) handleExecute(payload []byte) error {
 		}
 
 		// Substitute parameters into the AST
-		newStmt, err := sql.SubstituteParams(stmt, params)
+		newStmt, err := exec.SubstituteParams(stmt, params)
 		if err != nil {
 			return c.sendError("ERROR", "42000", err.Error())
 		}
