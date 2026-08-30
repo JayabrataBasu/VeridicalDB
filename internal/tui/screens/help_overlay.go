@@ -115,7 +115,7 @@ func (h *HelpOverlay) View() string {
 		Foreground(lipgloss.Color("240")).
 		MarginTop(1)
 
-	header := headerStyle.Render("📚 Keyboard Reference")
+	header := headerStyle.Render("Keyboard Reference")
 	footer := footerStyle.Render(
 		"[↑↓/PgUp/PgDn] Scroll • [←/→] Pages • [q] Quit • Page " +
 			lipgloss.NewStyle().Bold(true).Render(string(rune('1'+h.pageIndex))) +

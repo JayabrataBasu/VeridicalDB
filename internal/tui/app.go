@@ -2,6 +2,9 @@
 package tui
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/screens"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/types"
@@ -12,8 +15,9 @@ import (
 
 // Model represents the main TUI application state.
 type Model struct {
-	// Current screen
-	screen Screen
+	// Current screen and its registry id
+	screen   Screen
+	screenID string
 
 	// Shared session for database operations
 	session Session
@@ -52,8 +56,10 @@ type Model struct {
 	width  int
 	height int
 
-	// Sidebar collapsed state
-	sidebarCollapsed bool
+	// Stats from the most recent query, surfaced in the status bar.
+	lastQueryRows     int
+	lastQueryDuration time.Duration
+	lastQueryOK       bool
 
 	// Available theme names for cycling
 	themeNames []string
@@ -107,20 +113,20 @@ func New(session Session) *Model {
 	statusBar := NewStatusBar(themeManager)
 
 	m := &Model{
-		session:          session,
-		theme:            legacyTheme,
-		themeManager:     themeManager,
-		screens:          make(map[string]Screen),
-		msgChan:          make(chan tea.Msg, 100),
-		quitting:         false,
-		layout:           NewLayout(layoutConfig, paneStyles),
-		statusBar:        statusBar,
-		width:            120,
-		height:           40,
-		sidebarCollapsed: false,
-		themeNames:       themeNames,
-		themeIndex:       0,
-		helpOverlay:      screens.NewHelpOverlay(),
+		session:      session,
+		screenID:     "home",
+		theme:        legacyTheme,
+		themeManager: themeManager,
+		screens:      make(map[string]Screen),
+		msgChan:      make(chan tea.Msg, 100),
+		quitting:     false,
+		layout:       NewLayout(layoutConfig, paneStyles),
+		statusBar:    statusBar,
+		width:        120,
+		height:       40,
+		themeNames:   themeNames,
+		themeIndex:   0,
+		helpOverlay:  screens.NewHelpOverlay(),
 	}
 
 	// Prime overlay dimensions with initial viewport.
@@ -171,14 +177,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.helpOverlay != nil {
 			_ = m.helpOverlay.Update(msg)
 		}
-		// Forward adjusted size to the active screen (subtract sidebar + status bar)
-		sideW := 22
-		if m.sidebarCollapsed {
-			sideW = 0
-		}
+		// Screens get the full width; the shell reserves 2 lines for the top bar
+		// (header + hairline) and 1 for the status bar.
 		screenMsg := tea.WindowSizeMsg{
-			Width:  msg.Width - sideW,
-			Height: msg.Height - 2, // reserve for status bar
+			Width:  msg.Width,
+			Height: msg.Height - 3,
 		}
 		if m.screen != nil {
 			newScreen, cmd := m.screen.Update(screenMsg)
@@ -197,12 +200,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "ctrl+q":
 			m.quitting = true
 			return m, tea.Quit
-
-		case "ctrl+b":
-			// Toggle sidebar visibility
-			m.sidebarCollapsed = !m.sidebarCollapsed
-			m.layout.ToggleSidebar()
-			return m, nil
 
 		case "ctrl+t":
 			// Cycle through themes
@@ -226,6 +223,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Switch to new screen
 		if screen, ok := m.screens[msg.ScreenID]; ok {
 			m.screen = screen
+			m.screenID = msg.ScreenID
 			return m, screen.Init()
 		}
 		m.lastError = "Screen not found: " + msg.ScreenID
@@ -233,18 +231,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case screens.ExecuteQueryMsg:
 		// Execute query asynchronously
+		m.statusMessage = "Running query…"
 		return m, m.executeQuery(msg.SQL)
 
 	case screens.QueryCompletedMsg:
-		// Update results screen with query result
-		if resultsScreen, ok := m.screens["results"].(*screens.ResultsScreen); ok {
-			if msg.Error != nil {
-				m.lastError = msg.Error.Error()
-				m.statusMessage = "Query failed"
-			} else {
-				resultsScreen.SetResult(msg.Result)
-				m.statusMessage = "Query executed successfully"
+		// Record stats and update the results screen.
+		m.lastQueryDuration = msg.Duration
+		if msg.Error != nil {
+			m.lastError = msg.Error.Error()
+			m.lastQueryOK = false
+			m.lastQueryRows = 0
+			m.statusMessage = "Query failed"
+		} else {
+			m.lastError = ""
+			m.lastQueryOK = true
+			if msg.Result != nil {
+				m.lastQueryRows = len(msg.Result.Rows)
 			}
+			if resultsScreen, ok := m.screens["results"].(*screens.ResultsScreen); ok {
+				resultsScreen.SetResult(msg.Result)
+				resultsScreen.SetElapsed(msg.Duration)
+			}
+			m.statusMessage = msg.Summary()
 		}
 		// Forward to current screen
 		if m.screen != nil {
@@ -287,49 +295,31 @@ func (m *Model) View() string {
 		return "No screen active"
 	}
 
-	// Screen already renders at the correct width (set via WindowSizeMsg).
-	// Do NOT re-wrap with Width/Height/Background — that corrupts ANSI codes.
+	width := m.width
+	if width < 40 {
+		width = 40
+	}
+
+	topBar := m.renderTopBar(width)
+
+	// The screen renders itself at the width/height it was handed via
+	// WindowSizeMsg. Do NOT re-wrap it (that corrupts embedded ANSI codes).
 	mainContent := m.screen.View()
-	_, isHomeScreen := m.screen.(*HomeScreen)
-	if isHomeScreen {
-		// Add breathing room on the landing screen so the banner and sidebar feel intentional.
-		mainContent = lipgloss.NewStyle().PaddingTop(1).PaddingLeft(1).Render(mainContent)
-	}
 
-	// Render sidebar if not collapsed
-	sidebarWidth := 22
-	if m.sidebarCollapsed {
-		sidebarWidth = 0
-	}
-
-	var layout string
-	if !m.sidebarCollapsed {
-		side := NewSidebar(m)
-		sidebarContent := side.View(sidebarWidth)
-		if isHomeScreen {
-			// Add a gutter and lower the panel slightly to align with the visual weight of the banner.
-			sidebarContent = lipgloss.NewStyle().PaddingTop(2).PaddingLeft(2).Render(sidebarContent)
-		}
-		layout = lipgloss.JoinHorizontal(lipgloss.Top, mainContent, sidebarContent)
+	// Status bar state.
+	m.statusBar.SetDatabase(m.currentDBName(), m.session != nil)
+	if m.lastQueryOK || m.lastError != "" {
+		m.statusBar.SetQueryStats(m.lastQueryRows, m.lastQueryDuration, m.lastError == "")
 	} else {
-		layout = mainContent
+		m.statusBar.ClearQueryStats()
 	}
-
-	// Update status bar state
-	m.statusBar.SetDatabase("default", true)
 	if m.lastError != "" {
-		m.statusBar.SetInfo(Icons.Error + " " + m.lastError)
-	} else if m.statusMessage != "" {
-		m.statusBar.SetInfo(Icons.Success + " " + m.statusMessage)
+		m.statusBar.SetInfo(m.lastError)
 	} else {
-		m.statusBar.SetInfo("")
+		m.statusBar.SetInfo(m.statusMessage)
 	}
 
-	// Render status bar
-	statusBarView := m.statusBar.View()
-
-	// NO container background - let terminal handle background uniformly
-	return lipgloss.JoinVertical(lipgloss.Left, layout, statusBarView)
+	return lipgloss.JoinVertical(lipgloss.Left, topBar, mainContent, m.statusBar.View())
 }
 
 // RegisterScreen registers a screen in the TUI.
@@ -401,29 +391,27 @@ func (m *Model) GetStatus() string {
 	return m.statusMessage
 }
 
-// executeQuery executes a SQL query asynchronously.
+// executeQuery executes a SQL query asynchronously, timing the round trip.
 func (m *Model) executeQuery(sqlQuery string) tea.Cmd {
+	session := m.session
 	return func() tea.Msg {
-		// Execute query using session
-		result, err := m.session.ExecuteSQL(sqlQuery)
+		if session == nil {
+			return screens.QueryCompletedMsg{Error: fmt.Errorf("no database session")}
+		}
+		start := time.Now()
+		result, err := session.ExecuteSQL(sqlQuery)
+		elapsed := time.Since(start)
 
 		if err != nil {
-			return screens.QueryCompletedMsg{
-				Result: nil,
-				Error:  err,
-			}
+			return screens.QueryCompletedMsg{Error: err, Duration: elapsed}
 		}
-
-		// Convert result to QueryResult format
-		queryResult := &screens.QueryResult{
-			Columns: result.Columns,
-			Rows:    convertRows(result.Rows),
-			Message: result.Message,
-		}
-
 		return screens.QueryCompletedMsg{
-			Result: queryResult,
-			Error:  nil,
+			Result: &screens.QueryResult{
+				Columns: result.Columns,
+				Rows:    convertRows(result.Rows),
+				Message: result.Message,
+			},
+			Duration: elapsed,
 		}
 	}
 }

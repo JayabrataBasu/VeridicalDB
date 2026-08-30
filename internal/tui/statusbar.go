@@ -3,12 +3,12 @@ package tui
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // StatusBarMode represents the current interaction mode.
@@ -38,6 +38,12 @@ type StatusBar struct {
 
 	// Additional info slots
 	Info string
+
+	// Stats from the last query, shown on the right when set.
+	hasQueryStats bool
+	queryRows     int
+	queryDuration time.Duration
+	queryOK       bool
 
 	// Theme manager for styling
 	themeManager *theme.Manager
@@ -91,80 +97,87 @@ func (s *StatusBar) SetInfo(info string) {
 	s.Info = info
 }
 
-// View renders the status bar with simple ANSI styling - no lipgloss backgrounds.
+// SetQueryStats records the outcome of the most recent query.
+func (s *StatusBar) SetQueryStats(rows int, dur time.Duration, ok bool) {
+	s.hasQueryStats = true
+	s.queryRows = rows
+	s.queryDuration = dur
+	s.queryOK = ok
+}
+
+// ClearQueryStats hides the query stats segment.
+func (s *StatusBar) ClearQueryStats() {
+	s.hasQueryStats = false
+}
+
+// View renders a single full-width status line: mode and database on the left,
+// query stats / info / a help hint on the right, padded to the bar width.
 func (s *StatusBar) View() string {
 	t := s.themeManager.Current()
+	sep := styles.FromHex(" "+Icons.Separator+" ", t.Border)
 
-	// Build status bar with pure ANSI - no block backgrounds
-	var parts []string
-
-	// Mode indicator
+	// ---- left ----
 	modeColor := t.BrandSuccess
 	switch s.Mode {
-	case ModeInsert:
-		modeColor = t.BrandSuccess
 	case ModeCommand:
 		modeColor = t.BrandWarning
 	case ModeSearch:
 		modeColor = t.BrandAccent
 	}
-	parts = append(parts, styles.FromHexBold(string(s.Mode), modeColor))
-
-	// Separator
-	parts = append(parts, styles.FromHex(" │ ", t.Border))
-
-	// Database connection
-	dbIcon := Icons.Connected
+	dbIcon, connColor := Icons.Connected, t.BrandSuccess
 	if !s.Connected {
-		dbIcon = Icons.Disconnected
+		dbIcon, connColor = Icons.Disconnected, t.Muted
 	}
-	connColor := t.BrandSuccess
-	if !s.Connected {
-		connColor = t.BrandDanger
-	}
-	parts = append(parts, styles.FromHex(dbIcon+" "+s.DatabaseName, connColor))
+	left := " " + styles.FromHexBold(string(s.Mode), modeColor) + sep +
+		styles.FromHex(s.DatabaseName+" ", t.Muted) + styles.FromHex(dbIcon, connColor)
 
-	// Context if set
-	if s.Context != "" {
-		parts = append(parts, styles.FromHex(" • ", t.Muted))
-		parts = append(parts, styles.FromHex(s.Context, t.Foreground))
-	}
-
-	// Git branch
-	gitBranch := s.getGitBranch()
-	if gitBranch != "" {
-		parts = append(parts, styles.FromHex(" │ ", t.Border))
-		parts = append(parts, styles.FromHex(" "+gitBranch, t.BrandSuccess))
-	}
-
-	left := strings.Join(parts, "")
-
-	// Right side
-	var rightParts []string
-
-	// Latency
-	if s.Latency > 0 {
-		latencyColor := t.BrandSuccess
-		if s.Latency > 500*time.Millisecond {
-			latencyColor = t.BrandDanger
-		} else if s.Latency > 100*time.Millisecond {
-			latencyColor = t.BrandWarning
+	// ---- right ----
+	var right []string
+	if s.hasQueryStats {
+		c := t.BrandSuccess
+		if !s.queryOK {
+			c = t.BrandDanger
+		} else if s.queryDuration > 500*time.Millisecond {
+			c = t.BrandWarning
 		}
-		rightParts = append(rightParts, styles.FromHex(fmt.Sprintf("⚡%dms", s.Latency.Milliseconds()), latencyColor))
+		label := "OK"
+		if s.queryOK && s.queryRows >= 0 {
+			label = fmt.Sprintf("%d %s", s.queryRows, plural(s.queryRows, "row", "rows"))
+		}
+		right = append(right, styles.FromHex(fmt.Sprintf("%s %s", label, fmtDur(s.queryDuration)), c))
 	}
-
-	// Info
 	if s.Info != "" {
-		rightParts = append(rightParts, styles.FromHex(s.Info, t.Muted))
+		right = append(right, styles.FromHex(s.Info, t.Foreground))
 	}
+	right = append(right, styles.FromHex(Icons.Help+" help ", t.BrandAccent))
+	rightStr := strings.Join(right, sep)
 
-	// Help
-	rightParts = append(rightParts, styles.FromHex(Icons.Help+" Help", t.BrandAccent))
+	// ---- pad ----
+	pad := s.width - lipgloss.Width(left) - lipgloss.Width(rightStr)
+	if pad < 1 {
+		pad = 1
+	}
+	return left + strings.Repeat(" ", pad) + rightStr
+}
 
-	right := strings.Join(rightParts, styles.FromHex(" │ ", t.Border))
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
 
-	// Simple join with spacing
-	return left + "  " + right
+func fmtDur(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000)
+	}
+	return fmt.Sprintf("%.2fs", d.Seconds())
 }
 
 // CompactView renders a minimal status bar for narrow terminals.
@@ -195,18 +208,4 @@ func (s *StatusBar) CompactView() string {
 	return styles.FromHexBold(modeChar, modeColor) +
 		styles.FromHex(" │ ", t.Border) +
 		styles.FromHex(dbIcon+" "+s.DatabaseName, t.Foreground)
-}
-
-// getGitBranch attempts to get the current git branch name.
-func (s *StatusBar) getGitBranch() string {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	branch := strings.TrimSpace(string(output))
-	if branch == "" || branch == "HEAD" {
-		return ""
-	}
-	return branch
 }

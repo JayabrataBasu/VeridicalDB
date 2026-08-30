@@ -3,6 +3,7 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/theme"
@@ -20,6 +21,7 @@ type ResultsScreen struct {
 	colOffset   int
 	totalPages  int
 	displayCols int // Number of columns to display at once
+	elapsed     time.Duration
 	width       int
 	height      int
 }
@@ -36,7 +38,7 @@ func NewResultsScreen(app types.StyleProvider) *ResultsScreen {
 	}
 }
 
-// SetResult updates the results to display
+// SetResult updates the results to display.
 func (r *ResultsScreen) SetResult(result *QueryResult) {
 	r.result = result
 	r.page = 0
@@ -47,6 +49,9 @@ func (r *ResultsScreen) SetResult(result *QueryResult) {
 		r.totalPages = 0
 	}
 }
+
+// SetElapsed records how long the query took, shown in the results header.
+func (r *ResultsScreen) SetElapsed(d time.Duration) { r.elapsed = d }
 
 // Init initializes the results screen
 func (r *ResultsScreen) Init() tea.Cmd {
@@ -118,10 +123,9 @@ func (r *ResultsScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return r, nil
 }
 
-// View renders the results screen with premium 3-pane layout
+// View renders the results screen: a summary line, a full-width table, a footer.
 func (r *ResultsScreen) View() string {
-	width := r.width
-	height := r.height
+	width, height := r.width, r.height
 	if width <= 0 {
 		width = 120
 	}
@@ -129,184 +133,95 @@ func (r *ResultsScreen) View() string {
 		height = 40
 	}
 
-	// Brand palette colors
-	brandAccent := "#00D9FF"
-	brandWarning := "#FFB86C"
-	brandSuccess := "#55FF55"
-	brandMuted := "#44475A"
-	brandText := "#FFFFFF"
-	if tp, ok := r.app.(interface{ GetThemeManager() *theme.Manager }); ok {
+	accent, warn, ok, muted, border, text := "#00D9FF", "#FFB86C", "#55FF55", "#8A93A5", "#4A4E5A", "#E0E0E0"
+	if tp, is := r.app.(interface{ GetThemeManager() *theme.Manager }); is {
 		if tm := tp.GetThemeManager(); tm != nil {
 			t := tm.Current()
-			brandAccent = t.BrandAccent
-			brandWarning = t.BrandWarning
-			brandSuccess = t.BrandSuccess
-			brandMuted = t.BrandMuted
-			brandText = t.Foreground
+			accent, warn, ok, muted, border, text = t.BrandAccent, t.BrandWarning, t.BrandSuccess, t.Muted, t.Border, t.Foreground
 		}
 	}
 
-	header := styles.FromHexBold(types.Icons.Table+"  Query Results", brandAccent)
-	breadcrumb := styles.FromHex(types.Icons.Pointer+" Home › ", brandMuted) + styles.FromHexBold(types.Icons.Query+" Editor › Results", brandAccent)
+	var b strings.Builder
 
-	leftWidth := max(20, int(float64(width)*0.18))
-	rightWidth := max(24, int(float64(width)*0.22))
-	centerWidth := width - leftWidth - rightWidth - 12
-	if centerWidth < 50 {
-		centerWidth = 50
-		rightWidth = max(20, width-leftWidth-centerWidth-12)
+	// ---- summary line ----
+	summary := r.summaryLine(accent, ok, warn, muted)
+	b.WriteString(" " + summary + "\n")
+	b.WriteString(styles.FromHex(strings.Repeat("─", width), border) + "\n")
+
+	// ---- body ----
+	bodyHeight := height - 4
+	if bodyHeight < 3 {
+		bodyHeight = 3
 	}
-	if rightWidth < 20 {
-		rightWidth = 20
-	}
-
-	bodyHeight := max(10, height-9)
-	stacked := width < 120
-
-	leftPane := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandMuted)).
-		Padding(0, 1).
-		Render(r.renderMetadataPane(leftWidth-2, bodyHeight, brandWarning, brandMuted))
-
-	centerPane := lipgloss.NewStyle().
-		Width(centerWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandAccent)).
-		Padding(0, 1).
-		Render(r.renderTablePane(centerWidth-2, bodyHeight, brandAccent, brandMuted, brandText))
-
-	rightPane := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandSuccess)).
-		Padding(0, 1).
-		Render(r.renderStatsPane(rightWidth-2, bodyHeight, brandSuccess, brandMuted))
-
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, centerPane, rightPane)
-	if stacked {
-		mainWidth := max(42, width-4)
-		mainHeight := max(8, (bodyHeight*3)/4)
-		auxHeight := max(6, bodyHeight-mainHeight)
-
-		stackedMain := lipgloss.NewStyle().
-			Width(mainWidth).
-			Height(mainHeight).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(brandAccent)).
-			Padding(0, 1).
-			Render(r.renderTablePane(mainWidth-2, mainHeight, brandAccent, brandMuted, brandText))
-
-		stackedAux := lipgloss.NewStyle().
-			Width(mainWidth).
-			Height(auxHeight).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(brandSuccess)).
-			Padding(0, 1).
-			Render(r.renderStatsPane(mainWidth-2, auxHeight, brandSuccess, brandMuted))
-
-		content = lipgloss.JoinVertical(lipgloss.Left, stackedMain, stackedAux)
-	}
-
-	helpText := styles.FromHexBold("PgUp/Dn", brandAccent) + styles.FromHex(" Navigate  ", brandMuted) +
-		styles.FromHexBold("←→", brandAccent) + styles.FromHex(" Scroll  ", brandMuted) +
-		styles.FromHexBold("Ctrl+E", brandAccent) + styles.FromHex(" Export  ", brandMuted) +
-		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
-
-	return strings.Join([]string{
-		header,
-		breadcrumb,
-		"",
-		content,
-		"",
-		helpText,
-	}, "\n")
-}
-
-func (r *ResultsScreen) renderMetadataPane(width, height int, accent, muted string) string {
-	if r.result == nil || len(r.result.Rows) == 0 {
-		return styles.FromHex("No results", muted)
-	}
-
-	lines := []string{
-		styles.FromHexBold(types.Icons.File+" Pagination", accent),
-		"",
-		fmt.Sprintf("Page: %d / %d", r.page+1, r.totalPages),
-		fmt.Sprintf("Rows: %d total", len(r.result.Rows)),
-		fmt.Sprintf("Per page: %d", r.pageSize),
-		"",
-		styles.FromHexBold(types.Icons.Column+" Columns", accent),
-		"",
-		fmt.Sprintf("Total: %d", len(r.result.Columns)),
-		fmt.Sprintf("Shown: %d", min(r.displayCols, len(r.result.Columns))),
-	}
-
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	content := strings.Join(lines, "\n")
-	return lipgloss.NewStyle().Width(width).MaxHeight(height).Render(content)
-}
-
-func (r *ResultsScreen) renderTablePane(width, height int, accent, muted, text string) string {
-	if r.result == nil {
-		return styles.FromHex(types.Icons.Info+" No results", muted)
-	}
-	if r.result.Message != "" {
-		return styles.FromHexBold(types.Icons.Success+" "+r.result.Message, accent)
-	}
-	if len(r.result.Rows) == 0 {
-		return styles.FromHex(types.Icons.Info+" Empty result set", muted)
-	}
-
-	title := styles.FromHexBold(types.Icons.Table+" Results", accent)
-	tableHeight := height - 2
-	if tableHeight < 3 {
-		tableHeight = 3
-	}
-
-	tableContent := r.renderCompactTable(width, tableHeight, accent, muted, text)
-	tableView := lipgloss.NewStyle().Width(width).MaxHeight(tableHeight).Render(tableContent)
-	return lipgloss.JoinVertical(lipgloss.Left, title, tableView)
-}
-
-func (r *ResultsScreen) renderStatsPane(width, height int, success, muted string) string {
-	if r.result == nil {
-		return styles.FromHex("No data", muted)
-	}
-
-	lines := []string{
-		styles.FromHexBold(types.Icons.CPU+" Statistics", success),
-		"",
-		fmt.Sprintf("Cols: %d", len(r.result.Columns)),
-		fmt.Sprintf("Rows: %d", len(r.result.Rows)),
-	}
-
-	if len(r.result.Columns) > 0 && len(r.result.Columns) <= 6 {
-		lines = append(lines, "")
-		lines = append(lines, styles.FromHexBold("Fields", success))
-		maxColWidth := max(4, width-4)
-		for _, col := range r.result.Columns {
-			if len(col) > maxColWidth {
-				col = truncateCell(col, maxColWidth)
-			}
-			lines = append(lines, " "+types.Icons.Bullet+" "+col)
+	switch {
+	case r.result == nil:
+		b.WriteString(indentLines(r.emptyState(muted, accent), 1))
+	case len(r.result.Rows) == 0:
+		msg := r.result.Message
+		if msg == "" {
+			msg = "Statement completed. No rows returned."
 		}
+		b.WriteString("  " + styles.FromHex(types.Icons.Success+" ", ok) + styles.FromHex(msg, text))
+	default:
+		b.WriteString(indentLines(r.renderCompactTable(width-2, bodyHeight, accent, muted, text), 1))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, styles.FromHexBold("Export", success))
-	lines = append(lines, "Ctrl+E to export")
+	// ---- footer ----
+	b.WriteString("\n")
+	hints := strings.Join([]string{
+		styles.FromHexBold("PgUp/Dn", accent) + styles.FromHex(" page", muted),
+		styles.FromHexBold("←→", accent) + styles.FromHex(" columns", muted),
+		styles.FromHexBold("^E", accent) + styles.FromHex(" export", muted),
+		styles.FromHexBold("esc", accent) + styles.FromHex(" editor", muted),
+	}, styles.FromHex("  ", muted))
+	b.WriteString(" " + hints)
 
-	if len(lines) > height {
-		lines = lines[:height]
+	return b.String()
+}
+
+// summaryLine builds "N rows · P columns · page 1/3 · 8.2ms".
+func (r *ResultsScreen) summaryLine(accent, ok, warn, muted string) string {
+	if r.result == nil {
+		return styles.FromHex("No query has been run yet", muted)
 	}
-	content := strings.Join(lines, "\n")
-	return lipgloss.NewStyle().Width(width).MaxHeight(height).Render(content)
+	var seg []string
+	if len(r.result.Rows) > 0 {
+		unit := "rows"
+		if len(r.result.Rows) == 1 {
+			unit = "row"
+		}
+		seg = append(seg, styles.FromHexBold(fmt.Sprintf("%d %s", len(r.result.Rows), unit), ok))
+		seg = append(seg, styles.FromHex(fmt.Sprintf("%d columns", len(r.result.Columns)), muted))
+		if r.totalPages > 1 {
+			seg = append(seg, styles.FromHex(fmt.Sprintf("page %d/%d", r.page+1, r.totalPages), muted))
+		}
+	} else {
+		seg = append(seg, styles.FromHexBold("OK", ok))
+	}
+	if r.elapsed > 0 {
+		c := muted
+		if r.elapsed > 500*time.Millisecond {
+			c = warn
+		}
+		seg = append(seg, styles.FromHex(fmtDuration(r.elapsed), c))
+	}
+	return strings.Join(seg, styles.FromHex("  ·  ", muted))
+}
+
+func (r *ResultsScreen) emptyState(muted, accent string) string {
+	return styles.FromHex("Run a statement in the ", muted) +
+		styles.FromHexBold("Editor", accent) +
+		styles.FromHex(" (Ctrl+Enter) and its results appear here.", muted)
+}
+
+func fmtDuration(d time.Duration) string {
+	if d < time.Millisecond {
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	}
+	if d < time.Second {
+		return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000)
+	}
+	return fmt.Sprintf("%.2fs", d.Seconds())
 }
 
 func (r *ResultsScreen) renderCompactTable(width, height int, accent, muted, text string) string {
@@ -333,20 +248,52 @@ func (r *ResultsScreen) renderCompactTable(width, height int, accent, muted, tex
 		return styles.FromHex(types.Icons.Info+" No visible columns", muted)
 	}
 
-	colWidths := make([]int, len(visibleCols))
-	for i, col := range visibleCols {
-		colWidths[i] = max(4, min(len(col), width/max(1, len(visibleCols))))
-	}
-
 	startRow := r.page * r.pageSize
 	endRow := min(startRow+r.pageSize, len(r.result.Rows))
-
 	if endRow > len(r.result.Rows) {
 		endRow = len(r.result.Rows)
 	}
 	if startRow >= endRow {
 		startRow = 0
 		endRow = min(r.pageSize, len(r.result.Rows))
+	}
+
+	// Size each column to its widest value (header or a sampled cell), then
+	// clamp so the whole table fits the available width.
+	colWidths := make([]int, len(visibleCols))
+	for i, col := range visibleCols {
+		w := len(col)
+		sample := endRow
+		if sample > startRow+40 {
+			sample = startRow + 40
+		}
+		for ri := startRow; ri < sample; ri++ {
+			ci := startCol + i
+			if ci < len(r.result.Rows[ri]) {
+				if l := len(fmt.Sprintf("%v", r.result.Rows[ri][ci])); l > w {
+					w = l
+				}
+			}
+		}
+		colWidths[i] = clampInt(w, 3, 40)
+	}
+	// Shrink proportionally if we overflow.
+	total := len(visibleCols) - 1
+	for _, w := range colWidths {
+		total += w
+	}
+	for total > width && total > len(visibleCols) {
+		widest := 0
+		for i := range colWidths {
+			if colWidths[i] > colWidths[widest] {
+				widest = i
+			}
+		}
+		if colWidths[widest] <= 3 {
+			break
+		}
+		colWidths[widest]--
+		total--
 	}
 
 	headerStyle := lipgloss.NewStyle().
@@ -437,4 +384,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func clampInt(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }

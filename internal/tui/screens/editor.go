@@ -38,6 +38,7 @@ type EditorScreen struct {
 	// Autocomplete
 	autocomplete *components.AutocompleteManager
 	showHelp     bool
+	showPreview  bool // syntax-highlighted preview pane (Ctrl+P)
 	width        int
 	height       int
 }
@@ -46,7 +47,7 @@ type EditorScreen struct {
 func NewEditorScreen(app types.StyleProvider) *EditorScreen {
 	SyncScreenIcons()
 	ta := textarea.New()
-	ta.Placeholder = "Enter SQL query here... (F5 or Ctrl+Enter to execute)"
+	ta.Placeholder = "Type a SQL statement, then press Ctrl+Enter (or Ctrl+R) to run."
 	ta.Focus()
 	ta.CharLimit = 0 // No limit
 	ta.SetWidth(100)
@@ -139,6 +140,15 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 		// Toggle help with F1 or ?
 		case "f1", "?":
 			e.showHelp = !e.showHelp
+			return e, nil
+
+		case "ctrl+p":
+			e.showPreview = !e.showPreview
+			if e.showPreview {
+				e.status = "Syntax preview on"
+			} else {
+				e.status = "Syntax preview off"
+			}
 			return e, nil
 
 		case "ctrl+space":
@@ -308,17 +318,7 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		e.width = msg.Width
 		e.height = msg.Height
-		// Resize textarea to fit window with proper padding
-		editorWidth := int(float64(msg.Width)*0.56) - 8
-		editorHeight := msg.Height - 13 // Account for header, status, help, and pane borders
-		if editorWidth < 40 {           //adjusts minimum size same for 8
-			editorWidth = 40
-		}
-		if editorHeight < 8 {
-			editorHeight = 8
-		}
-		e.textarea.SetWidth(editorWidth)
-		e.textarea.SetHeight(editorHeight)
+		e.resizeTextarea()
 	}
 
 	// Update textarea
@@ -328,180 +328,126 @@ func (e *EditorScreen) Update(msg tea.Msg) (Screen, tea.Cmd) {
 	return e, tea.Batch(cmds...)
 }
 
-// View renders the editor screen with premium styling and proper spacing
+// editorColors resolves the theme-aware palette for the editor.
+func (e *EditorScreen) editorColors() (accent, warn, ok, bad, muted, border string) {
+	accent, warn, ok, bad, muted, border = "#00D9FF", "#FFB86C", "#55FF55", "#FF5555", "#8A93A5", "#4A4E5A"
+	if tp, is := e.app.(interface{ GetThemeManager() *theme.Manager }); is {
+		if tm := tp.GetThemeManager(); tm != nil {
+			t := tm.Current()
+			accent, warn, ok, bad, muted, border = t.BrandAccent, t.BrandWarning, t.BrandSuccess, t.BrandDanger, t.Muted, t.Border
+		}
+	}
+	return
+}
+
+func (e *EditorScreen) resizeTextarea() {
+	w, h := e.width, e.height
+	if w <= 0 {
+		w = 120
+	}
+	if h <= 0 {
+		h = 40
+	}
+	taW := w - 4 // frame padding
+	taH := h - 4 // header + rule + footer
+	if e.showPreview {
+		taH = (taH * 3) / 5
+	}
+	if taW < 30 {
+		taW = 30
+	}
+	if taH < 4 {
+		taH = 4
+	}
+	e.textarea.SetWidth(taW)
+	e.textarea.SetHeight(taH)
+}
+
+// View renders a full-width SQL editor with a single-line status footer.
 func (e *EditorScreen) View() string {
+	e.resizeTextarea()
 	width := e.width
-	height := e.height
 	if width <= 0 {
 		width = 120
 	}
-	if height <= 0 {
-		height = 40
-	}
+	accent, warn, ok, bad, muted, border := e.editorColors()
 
-	// Brand palette colors - theme-aware with fallbacks
-	brandAccent := "#00D9FF"
-	brandHighlight := "#FF006E"
-	brandWarning := "#FFB86C"
-	brandSuccess := "#55FF55"
-	brandMuted := "#44475A"
-	if tp, ok := e.app.(interface{ GetThemeManager() *theme.Manager }); ok {
-		if tm := tp.GetThemeManager(); tm != nil {
-			t := tm.Current()
-			brandAccent = t.BrandAccent
-			brandHighlight = t.BrandHighlight
-			brandWarning = t.BrandWarning
-			brandSuccess = t.BrandSuccess
-			brandMuted = t.BrandMuted
+	var b strings.Builder
+
+	// Title row: name on the left, a clear run affordance on the right.
+	run := styles.FromHexBold(" "+types.Icons.Execute+" Run ", ok) + styles.FromHex("Ctrl+Enter", muted)
+	title := " " + styles.FromHexBold("SQL Editor", accent)
+	gap := width - lipgloss.Width(title) - lipgloss.Width(run) - 1
+	if gap < 1 {
+		gap = 1
+	}
+	b.WriteString(title + strings.Repeat(" ", gap) + run + "\n")
+	b.WriteString(styles.FromHex(strings.Repeat("─", width), border) + "\n")
+
+	// Editor body.
+	b.WriteString(indentLines(e.textarea.View(), 1))
+
+	// Optional syntax preview.
+	if e.showPreview {
+		b.WriteString("\n" + styles.FromHex(strings.Repeat("╌", width), border) + "\n")
+		b.WriteString(" " + styles.FromHexBold("Preview", accent) + "\n")
+		prevH := e.height/3 - 1
+		if prevH < 3 {
+			prevH = 3
 		}
+		h := components.NewHighlightedTextView(e.textarea.Value(), e.highlighter)
+		h.SetDimensions(width-2, prevH)
+		h.SetLineNumbers(true)
+		b.WriteString(indentLines(h.Render(), 1))
 	}
 
-	header := styles.FromHexBold(types.Icons.Query+"  SQL Editor", brandAccent)
-	breadcrumb := styles.FromHex(types.Icons.Pointer+" Home › ", brandMuted) + styles.FromHexBold("Editor", brandAccent)
-
-	leftWidth := max(22, int(float64(width)*0.20))
-	rightWidth := max(28, int(float64(width)*0.24))
-	centerWidth := width - leftWidth - rightWidth - 12
-	if centerWidth < 46 {
-		centerWidth = 46
-		rightWidth = max(24, width-leftWidth-centerWidth-12)
-	}
-	if rightWidth < 24 {
-		rightWidth = 24
-	}
-
-	bodyHeight := max(10, height-9)
-	stacked := width < 120
-
-	leftPane := lipgloss.NewStyle().
-		Width(leftWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandMuted)).
-		Padding(0, 1).
-		Render(e.renderContextPane(leftWidth-2, bodyHeight))
-
-	centerPane := lipgloss.NewStyle().
-		Width(centerWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandAccent)).
-		Padding(0, 1).
-		Render(e.renderEditorPane(centerWidth-2, bodyHeight))
-
-	rightPane := lipgloss.NewStyle().
-		Width(rightWidth).
-		Height(bodyHeight).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(brandHighlight)).
-		Padding(0, 1).
-		Render(e.renderPreviewPane(rightWidth-2, bodyHeight, brandMuted))
-
-	content := lipgloss.JoinHorizontal(lipgloss.Top, leftPane, centerPane, rightPane)
-	if stacked {
-		mainWidth := max(40, width-4)
-		mainHeight := max(8, (bodyHeight*2)/3)
-		previewHeight := max(6, bodyHeight-mainHeight)
-
-		stackedMain := lipgloss.NewStyle().
-			Width(mainWidth).
-			Height(mainHeight).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(brandAccent)).
-			Padding(0, 1).
-			Render(e.renderEditorPane(mainWidth-2, mainHeight))
-
-		stackedPreview := lipgloss.NewStyle().
-			Width(mainWidth).
-			Height(previewHeight).
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color(brandHighlight)).
-			Padding(0, 1).
-			Render(e.renderPreviewPane(mainWidth-2, previewHeight, brandMuted))
-
-		content = lipgloss.JoinVertical(lipgloss.Left, stackedMain, stackedPreview)
-	}
-
-	var statusIcon string
-	var statusColor string
-	if e.executing {
-		statusIcon = types.Icons.Running + " "
-		statusColor = brandWarning
-	} else if strings.HasPrefix(e.status, "Error") {
-		statusIcon = types.Icons.Error + " "
-		statusColor = brandHighlight
-	} else if strings.Contains(strings.ToLower(e.status), "success") {
-		statusIcon = types.Icons.Success + " "
-		statusColor = brandSuccess
-	} else {
-		statusIcon = types.Icons.Info + " "
-		statusColor = brandAccent
-	}
-
-	statusBar := styles.FromHexBold(statusIcon+e.status, statusColor)
-	helpText := styles.FromHexBold("Ctrl+R", brandAccent) + styles.FromHex(" or ", brandMuted) +
-		styles.FromHexBold("Ctrl+Enter", brandAccent) + styles.FromHex(" Run  ", brandMuted) +
-		styles.FromHexBold("?", brandAccent) + styles.FromHex(" Help  ", brandMuted) +
-		styles.FromHexBold("Esc", brandAccent) + styles.FromHex(" Back", brandMuted)
-
-	return strings.Join([]string{
-		header,
-		breadcrumb,
-		"",
-		content,
-		"",
-		statusBar,
-		helpText,
-	}, "\n")
-}
-
-func (e *EditorScreen) renderContextPane(width, height int) string {
-	lines := []string{
-		styles.FromHexBold(types.Icons.Database+" Context", "#FFB86C"),
-		"",
-		fmt.Sprintf("Lines: %d", len(strings.Split(e.textarea.Value(), "\n"))),
-		fmt.Sprintf("History: %d", len(e.history)),
-		fmt.Sprintf("Mode: %s", strings.ToUpper(strings.TrimSpace(e.status))),
-		"",
-		styles.FromHexBold(types.Icons.Key+" Shortcuts", "#FFB86C"),
-		"? help",
-		"Ctrl+R execute",
-		"Ctrl+K clear",
-	}
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	content := strings.Join(lines, "\n")
-	return lipgloss.NewStyle().Width(width).MaxHeight(height).Render(content)
-}
-
-func (e *EditorScreen) renderEditorPane(width, height int) string {
-	title := styles.FromHexBold(types.Icons.Edit+" SQL Buffer", "#00D9FF")
-	// textarea.View() already contains ANSI codes; avoid re-wrapping through lipgloss.Render()
-	return lipgloss.JoinVertical(lipgloss.Left, title, e.textarea.View())
-}
-
-func (e *EditorScreen) renderPreviewPane(width, height int, muted string) string {
-	title := styles.FromHexBold(types.Icons.Query+" Syntax Preview", "#FF006E")
-	previewHeight := height - 2
-	if previewHeight < 3 {
-		previewHeight = 3
-	}
-	h := components.NewHighlightedTextView(e.textarea.Value(), e.highlighter)
-	h.SetDimensions(width, previewHeight)
-	h.SetLineNumbers(true)
-	highlighted := h.Render()
-
+	// Autocomplete popup.
 	if e.autocomplete.IsVisible() {
-		suggestions := e.autocomplete.RenderSuggestions()
-		if suggestions != "" {
-			highlighted += "\n\n" + styles.FromHex(suggestions, muted)
+		if s := e.autocomplete.RenderSuggestions(); s != "" {
+			b.WriteString("\n" + indentLines(s, 1))
 		}
 	}
 
-	// highlighted already contains ANSI codes from the syntax highlighter;
-	// avoid re-wrapping through lipgloss.Render() which corrupts escape sequences
-	return lipgloss.JoinVertical(lipgloss.Left, title, highlighted)
+	// Footer: live status + key hints.
+	b.WriteString("\n")
+	statusColor := muted
+	statusText := e.status
+	switch {
+	case e.executing:
+		statusColor, statusText = warn, "running…"
+	case strings.HasPrefix(e.status, "Error"):
+		statusColor = bad
+	case strings.Contains(strings.ToLower(e.status), "success"):
+		statusColor = ok
+	}
+	lc := len(strings.Split(e.textarea.Value(), "\n"))
+	meta := styles.FromHex(fmt.Sprintf("%d line", lc), muted)
+	if lc != 1 {
+		meta = styles.FromHex(fmt.Sprintf("%d lines", lc), muted)
+	}
+	if len(e.history) > 0 {
+		meta += styles.FromHex(fmt.Sprintf("  ·  %d in history", len(e.history)), muted)
+	}
+	left := " " + styles.FromHex(statusText, statusColor) + "   " + meta
+	hints := strings.Join([]string{
+		styles.FromHexBold("^Enter", accent) + styles.FromHex(" run", muted),
+		styles.FromHexBold("^P", accent) + styles.FromHex(" preview", muted),
+		styles.FromHexBold("^K", accent) + styles.FromHex(" clear", muted),
+		styles.FromHexBold("esc", accent) + styles.FromHex(" back", muted),
+	}, styles.FromHex("  ", muted))
+	fg := width - lipgloss.Width(left) - lipgloss.Width(hints) - 1
+	if fg < 1 {
+		fg = 1
+	}
+	b.WriteString(left + strings.Repeat(" ", fg) + hints)
+
+	return b.String()
+}
+
+// indentLines prefixes each line of s with n spaces (ANSI-safe).
+func indentLines(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 }
 
 func max(a, b int) int {

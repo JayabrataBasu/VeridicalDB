@@ -12,6 +12,8 @@ import (
 type Session interface {
 	// ExecuteSQL runs a statement and returns its result.
 	ExecuteSQL(input string) (*exec.Result, error)
+	// CurrentDatabase reports the session's active database ("" if none selected).
+	CurrentDatabase() string
 	// Catalog exposes table metadata for the schema browser.
 	Catalog() *catalog.Catalog
 	// GetDatabaseManager exposes the multi-database manager, or nil.

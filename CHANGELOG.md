@@ -7,6 +7,21 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
+### Changed (TUI polish)
+
+- Reworked the Bubble Tea TUI shell. The redundant floating right-hand info
+  panel is gone; screens now use the full terminal width. A new full-width top
+  bar shows the brand, current screen, and database/connection/version in one
+  place, and the bottom status bar is right-aligned and reports the last query's
+  row count and elapsed time (`7 rows · 8.2ms`) instead of a dev-machine git
+  branch. The SQL editor is a single full-width pane with a clear
+  `▶ Run  Ctrl+Enter` affordance and a live footer (line count, history depth);
+  the syntax preview is now a toggle (`Ctrl+P`) rather than an always-empty box.
+  The results screen leads with a `N rows · P columns · page · time` summary and
+  sizes table columns to their content. Icons were reduced to one restrained,
+  single-width family (no emoji), and the muted-text / border colours in the
+  dark themes were lifted for legibility.
+
 ### Changed (P5 — crash-safe metadata, TUI decoupling)
 
 - Catalog / schema metadata is now written atomically. `catalog.json`,

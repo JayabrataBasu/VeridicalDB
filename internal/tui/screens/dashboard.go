@@ -265,7 +265,7 @@ func (d *Dashboard) renderConnectionMetrics() string {
 	title := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color(p.accent)).
-		Render("⚡ Connection Status")
+		Render("Connection Status")
 
 	usage := float64(0)
 	if d.metrics.MaxConnections > 0 {

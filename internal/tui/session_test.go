@@ -21,6 +21,7 @@ func (s *stubSession) ExecuteSQL(input string) (*exec.Result, error) {
 	}
 	return &exec.Result{}, nil
 }
+func (s *stubSession) CurrentDatabase() string                      { return "test" }
 func (s *stubSession) Catalog() *catalog.Catalog                    { return nil }
 func (s *stubSession) GetDatabaseManager() *catalog.DatabaseManager { return nil }
 func (s *stubSession) ShardMetricsProvider() exec.MetricsProvider   { return nil }

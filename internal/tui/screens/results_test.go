@@ -25,8 +25,8 @@ func newResultsPalette() *types.StylePalette {
 func TestResultsViewNoData(t *testing.T) {
 	screen := NewResultsScreen(mockStylesResults{palette: newResultsPalette()})
 	output := screen.View()
-	if !strings.Contains(output, "No results") {
-		t.Fatalf("expected 'No results' message, got: %s", output)
+	if !strings.Contains(output, "No query has been run yet") {
+		t.Fatalf("expected empty-state message, got: %s", output)
 	}
 }
 

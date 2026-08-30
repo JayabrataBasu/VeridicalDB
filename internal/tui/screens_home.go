@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/internal/tui/styles"
@@ -17,6 +16,12 @@ var replUnicodeBanner = []string{
 	"╚██╗ ██╔╝██╔══╝  ██╔══██╗██║██║  ██║██║██║     ██╔══██║██║     ██║  ██║██╔══██╗",
 	" ╚████╔╝ ███████╗██║  ██║██║██████╔╝██║╚██████╗██║  ██║███████╗██████╔╝██████╔╝",
 	"  ╚═══╝  ╚══════╝╚═╝  ╚═╝╚═╝╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═════╝ ╚═════╝",
+}
+
+// indent prefixes every line of s with n spaces (safe for ANSI-coloured text).
+func indent(s string, n int) string {
+	pad := strings.Repeat(" ", n)
+	return pad + strings.ReplaceAll(s, "\n", "\n"+pad)
 }
 
 func bannerWidth(lines []string) int {
@@ -202,55 +207,40 @@ func (h *HomeScreen) View() string {
 		muted = t.Muted
 	}
 
-	// Use full REPL-style Unicode banner when there is enough room; fallback keeps narrow terminals usable.
-	mainWidth := h.app.GetWidth() - 24 // Account for right sidebar + Home gutter.
-	if mainWidth < 0 {
-		mainWidth = h.app.GetWidth()
-	}
-
-	if mainWidth >= bannerWidth(replUnicodeBanner)+1 {
-		buf.WriteString(themedBanner(replUnicodeBanner, accent, highlight))
+	// Full banner when the terminal is wide enough; a compact wordmark otherwise.
+	buf.WriteString("\n")
+	if h.app.GetWidth() >= bannerWidth(replUnicodeBanner)+2 {
+		buf.WriteString(indent(themedBanner(replUnicodeBanner, accent, highlight), 1))
 	} else {
-		gradientTitle := theme.GradientText("▶ VERIDICALDB", accent, highlight)
-		title := styles.FromHexBold(Icons.Database, success) + " " + gradientTitle
-		buf.WriteString(title)
+		buf.WriteString(" " + theme.GradientText("VERIDICALDB", accent, highlight))
 	}
-	buf.WriteString("\n\n\n")
+	buf.WriteString("\n")
+	buf.WriteString("   " + styles.FromHex("An embeddable SQL database  ·  v2.0.0 Halcyon", muted))
+	buf.WriteString("\n\n")
 
-	// Menu items - pure ANSI styling, no background blocks
+	// Menu.
 	for i, item := range h.items {
-		icon := h.getIcon(item.Icon)
-
-		if i == h.menuIdx {
-			// Selected item: accent color, bold, underlined
-			marker := styles.FromHexBold("›", accent)
-			content := styles.FromHexBold(fmt.Sprintf("%s %s", icon, item.Title), accent)
-			buf.WriteString(marker + " " + content + "\n")
-			// Description with gradient
-			descGradient := theme.GradientText("  "+item.Description, muted, highlight)
-			buf.WriteString(descGradient + "\n")
+		selected := i == h.menuIdx
+		title := item.Title
+		if selected {
+			marker := styles.FromHexBold(" "+Icons.Pointer+" ", accent)
+			buf.WriteString(marker + styles.FromHexBold(title, accent))
+			buf.WriteString("   " + styles.FromHex(item.Description, muted) + "\n")
 		} else {
-			// Normal item: muted color
-			marker := styles.FromHex("·", muted)
-			content := styles.FromHex(fmt.Sprintf("%s %s", icon, item.Title), muted)
-			buf.WriteString(marker + " " + content + "\n")
+			buf.WriteString("   " + styles.FromHex(title, muted) + "\n")
 		}
 	}
 
-	// Footer with keybindings - pure ANSI
-	buf.WriteString("\n")
-	footer := fmt.Sprintf("%s Navigate  %s  %s Select  %s  %s Help  %s  %s Theme  %s  %s Quit",
-		styles.FromHexBold("j/k", success),
-		Icons.Separator,
-		styles.FromHexBold("Enter", accent),
-		Icons.Separator,
-		styles.FromHexBold("?", highlight),
-		Icons.Separator,
-		styles.FromHexBold("Ctrl+T", highlight),
-		Icons.Separator,
-		styles.FromHexBold("q", danger),
-	)
-	buf.WriteString(styles.FromHex(footer, muted))
+	// Footer.
+	buf.WriteString("\n ")
+	footer := strings.Join([]string{
+		styles.FromHexBold("↑↓", success) + styles.FromHex(" move", muted),
+		styles.FromHexBold("enter", accent) + styles.FromHex(" open", muted),
+		styles.FromHexBold("?", highlight) + styles.FromHex(" help", muted),
+		styles.FromHexBold("^T", highlight) + styles.FromHex(" theme", muted),
+		styles.FromHexBold("q", danger) + styles.FromHex(" quit", muted),
+	}, styles.FromHex("   ", muted))
+	buf.WriteString(footer)
 
 	return buf.String()
 }

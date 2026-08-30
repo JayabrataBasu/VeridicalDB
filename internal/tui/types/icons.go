@@ -147,70 +147,74 @@ func NerdFontIcons() IconSet {
 	}
 }
 
-// UnicodeIcons returns an IconSet using standard Unicode symbols
+// UnicodeIcons returns an IconSet using a restrained, consistent set of glyphs.
+// One visual family, all single-width, no emoji: section markers are a thin bar,
+// status is a small dot/tick, actions borrow a handful of arrows.
 func UnicodeIcons() IconSet {
+	const bar = "▍" // uniform section / nav marker
+
 	return IconSet{
-		// Navigation (Unicode)
+		// Navigation
 		ArrowRight: "→",
 		ArrowLeft:  "←",
 		ArrowUp:    "↑",
 		ArrowDown:  "↓",
-		Pointer:    "▶",
+		Pointer:    "▸",
 
 		// Status
 		Success:      "✓",
 		Error:        "✗",
-		Warning:      "⚠",
-		Info:         "i",
-		Pending:      "○",
-		Running:      "●",
+		Warning:      "!",
+		Info:         "·",
+		Pending:      "◦",
+		Running:      "◐",
 		Connected:    "●",
 		Disconnected: "○",
 
 		// Database
-		Database:   "◆",
+		Database:   bar,
 		Table:      "▤",
-		Column:     "│",
+		Column:     "·",
 		Index:      "≡",
 		Key:        "◇",
-		ForeignKey: "⇢",
+		ForeignKey: "→",
 
 		// Actions
-		Query:    "▷",
-		Execute:  "⏵",
-		Edit:     "✎",
-		Delete:   "×",
+		Query:    "»",
+		Execute:  "▶",
+		Edit:     "▎",
+		Delete:   "✗",
 		Add:      "+",
-		Refresh:  "⟳",
-		Export:   "↗",
-		Import:   "↙",
-		Settings: "⚙",
+		Refresh:  "↻",
+		Export:   "↑",
+		Import:   "↓",
+		Settings: bar,
 		Help:     "?",
-		Exit:     "⏻",
-		About:    "ⓘ",
+		Exit:     "✕",
+		About:    bar,
 
 		// UI Elements
 		Separator:  "│",
-		Bullet:     "•",
-		Checkbox:   "☐",
-		CheckboxOn: "☑",
+		Bullet:     "·",
+		Checkbox:   "○",
+		CheckboxOn: "●",
 		Folder:     "▸",
-		File:       "─",
-		Clock:      "◔",
+		File:       "·",
+		Clock:      "○",
 		Memory:     "▪",
-		CPU:        "▫",
-		Disk:       "▬",
-		Network:    "◈",
+		CPU:        "▪",
+		Disk:       "▪",
+		Network:    "▪",
 
-		// Sections
-		Dashboard:    "◈",
-		Browser:      "◆",
-		Backup:       "▣",
-		Users:        "◉",
-		Logs:         "≡",
-		Transactions: "⇄",
+		// Sections — all the same marker; the label carries the meaning
+		Dashboard:    bar,
+		Browser:      bar,
+		Backup:       bar,
+		Users:        bar,
+		Logs:         bar,
+		Transactions: bar,
 		Connections:  "●",
-		Performance:  "◔",
+		Performance:  bar,
 	}
 }
 

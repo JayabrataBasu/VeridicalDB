@@ -2,6 +2,9 @@
 package types
 
 import (
+	"fmt"
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -40,9 +43,34 @@ type ExecuteQueryMsg struct {
 
 // QueryCompletedMsg signals query completion.
 type QueryCompletedMsg struct {
-	Result *QueryResult
-	Error  error
+	Result   *QueryResult
+	Error    error
+	Duration time.Duration
 }
+
+// Summary returns a short, human-readable description of a completed query for
+// the status bar: row count and elapsed time, or the server's message.
+func (m QueryCompletedMsg) summary() string {
+	ms := m.Duration.Round(100 * time.Microsecond)
+	if m.Result == nil {
+		return "OK · " + ms.String()
+	}
+	if len(m.Result.Rows) > 0 {
+		n := len(m.Result.Rows)
+		unit := "rows"
+		if n == 1 {
+			unit = "row"
+		}
+		return fmt.Sprintf("%d %s · %s", n, unit, ms)
+	}
+	if m.Result.Message != "" {
+		return m.Result.Message + " · " + ms.String()
+	}
+	return "OK · " + ms.String()
+}
+
+// Summary is the exported form of summary for use across the tui package.
+func (m QueryCompletedMsg) Summary() string { return m.summary() }
 
 // QueryResult holds query execution results.
 type QueryResult struct {

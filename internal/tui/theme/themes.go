@@ -13,14 +13,14 @@ func darkTheme() *Theme {
 		Primary:   "#00D9FF",
 		Secondary: "#00AA88",
 		Accent:    "#FFB86C",
-		Muted:     "#6B7280",
+		Muted:     "#8A93A5",
 
 		Success: "#55FF55",
 		Warning: "#FFAA00",
 		Error:   "#FF5555",
 		Info:    "#8BE9FD",
 
-		Border:        "#3A3A3A",
+		Border:        "#4A4E5A",
 		BorderFocused: "#00D9FF",
 		Selection:     "#264F78",
 		Highlight:     "#00D9FF",
@@ -137,14 +137,14 @@ func draculaTheme() *Theme {
 		Primary:   "#BD93F9",
 		Secondary: "#50FA7B",
 		Accent:    "#FFB86C",
-		Muted:     "#6272A4",
+		Muted:     "#7A85C0",
 
 		Success: "#50FA7B",
 		Warning: "#F1FA8C",
 		Error:   "#FF5555",
 		Info:    "#8BE9FD",
 
-		Border:        "#44475A",
+		Border:        "#565A70",
 		BorderFocused: "#BD93F9",
 		Selection:     "#44475A",
 		Highlight:     "#FFB86C",
@@ -199,14 +199,14 @@ func monokaiTheme() *Theme {
 		Primary:   "#F92672",
 		Secondary: "#A6E22E",
 		Accent:    "#FD971F",
-		Muted:     "#75715E",
+		Muted:     "#8F8A76",
 
 		Success: "#A6E22E",
 		Warning: "#E6DB74",
 		Error:   "#F92672",
 		Info:    "#66D9EF",
 
-		Border:        "#3E3D32",
+		Border:        "#54524A",
 		BorderFocused: "#F92672",
 		Selection:     "#49483E",
 		Highlight:     "#FD971F",
@@ -261,14 +261,14 @@ func solarizedDarkTheme() *Theme {
 		Primary:   "#268BD2",
 		Secondary: "#2AA198",
 		Accent:    "#CB4B16",
-		Muted:     "#586E75",
+		Muted:     "#7C929A",
 
 		Success: "#859900",
 		Warning: "#B58900",
 		Error:   "#DC322F",
 		Info:    "#268BD2",
 
-		Border:        "#073642",
+		Border:        "#0E4B5C",
 		BorderFocused: "#268BD2",
 		Selection:     "#073642",
 		Highlight:     "#B58900",
@@ -385,14 +385,14 @@ func nordTheme() *Theme {
 		Primary:   "#88C0D0",
 		Secondary: "#81A1C1",
 		Accent:    "#D08770",
-		Muted:     "#4C566A",
+		Muted:     "#6E7994",
 
 		Success: "#A3BE8C",
 		Warning: "#EBCB8B",
 		Error:   "#BF616A",
 		Info:    "#88C0D0",
 
-		Border:        "#3B4252",
+		Border:        "#4C566A",
 		BorderFocused: "#88C0D0",
 		Selection:     "#434C5E",
 		Highlight:     "#EBCB8B",
@@ -447,14 +447,14 @@ func tokyoNightTheme() *Theme {
 		Primary:   "#7AA2F7",
 		Secondary: "#9ECE6A",
 		Accent:    "#FF9E64",
-		Muted:     "#565F89",
+		Muted:     "#7982B0",
 
 		Success: "#9ECE6A",
 		Warning: "#E0AF68",
 		Error:   "#F7768E",
 		Info:    "#7DCFFF",
 
-		Border:        "#292E42",
+		Border:        "#3B4261",
 		BorderFocused: "#7AA2F7",
 		Selection:     "#283457",
 		Highlight:     "#FF9E64",
@@ -509,14 +509,14 @@ func cyberpunkTheme() *Theme {
 		Primary:   "#7dce13", // Radioactive green
 		Secondary: "#2a2139", // Deep purple
 		Accent:    "#00f2ff", // Electric blue
-		Muted:     "#6e7681",
+		Muted:     "#8b95a3",
 
 		Success: "#7dce13", // Radioactive green
 		Warning: "#f0b429",
 		Error:   "#ff5370",
 		Info:    "#00f2ff", // Electric blue
 
-		Border:        "#21262d",
+		Border:        "#30363f",
 		BorderFocused: "#7dce13", // Radioactive green focus
 		Selection:     "#1c2938",
 		Highlight:     "#bd00ff", // Neon purple
