@@ -2,6 +2,8 @@ package sql
 
 import (
 	"testing"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 func TestParseDatabaseStatements(t *testing.T) {
@@ -9,14 +11,14 @@ func TestParseDatabaseStatements(t *testing.T) {
 		name    string
 		input   string
 		wantErr bool
-		check   func(t *testing.T, stmt Statement)
+		check   func(t *testing.T, stmt ast.Statement)
 	}{
 		{
 			name:    "CREATE DATABASE simple",
 			input:   "CREATE DATABASE mydb",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*CreateDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.CreateDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
 				}
@@ -35,8 +37,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "CREATE DATABASE IF NOT EXISTS",
 			input:   "CREATE DATABASE IF NOT EXISTS testdb",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*CreateDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.CreateDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
 				}
@@ -52,8 +54,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "CREATE DATABASE with owner string",
 			input:   "CREATE DATABASE mydb WITH OWNER = 'alice'",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*CreateDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.CreateDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
 				}
@@ -69,8 +71,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "CREATE DATABASE with owner identifier",
 			input:   "CREATE DATABASE mydb WITH OWNER = bob",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*CreateDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.CreateDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *CreateDatabaseStmt, got %T", stmt)
 				}
@@ -83,8 +85,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "DROP DATABASE simple",
 			input:   "DROP DATABASE mydb",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*DropDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.DropDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *DropDatabaseStmt, got %T", stmt)
 				}
@@ -100,8 +102,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "DROP DATABASE IF EXISTS",
 			input:   "DROP DATABASE IF EXISTS olddb",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*DropDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.DropDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *DropDatabaseStmt, got %T", stmt)
 				}
@@ -117,8 +119,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "USE DATABASE",
 			input:   "USE mydb",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*UseDatabaseStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.UseDatabaseStmt)
 				if !ok {
 					t.Fatalf("expected *UseDatabaseStmt, got %T", stmt)
 				}
@@ -131,8 +133,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "SHOW DATABASES",
 			input:   "SHOW DATABASES",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*ShowStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.ShowStmt)
 				if !ok {
 					t.Fatalf("expected *ShowStmt, got %T", stmt)
 				}
@@ -145,8 +147,8 @@ func TestParseDatabaseStatements(t *testing.T) {
 			name:    "SHOW DATABASE (singular)",
 			input:   "SHOW DATABASE",
 			wantErr: false,
-			check: func(t *testing.T, stmt Statement) {
-				s, ok := stmt.(*ShowStmt)
+			check: func(t *testing.T, stmt ast.Statement) {
+				s, ok := stmt.(*ast.ShowStmt)
 				if !ok {
 					t.Fatalf("expected *ShowStmt, got %T", stmt)
 				}

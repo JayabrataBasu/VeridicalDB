@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 func TestForeignKeyConstraints(t *testing.T) {
@@ -11,9 +13,9 @@ func TestForeignKeyConstraints(t *testing.T) {
 	executor := newParitySession(t, tm)
 
 	// Create parent table
-	_, err := executor.Execute(&CreateTableStmt{
+	_, err := executor.Execute(&ast.CreateTableStmt{
 		TableName: "users",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
 			{Name: "name", Type: catalog.TypeText},
 		},
@@ -23,9 +25,9 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Create child table with inline FK
-	_, err = executor.Execute(&CreateTableStmt{
+	_, err = executor.Execute(&ast.CreateTableStmt{
 		TableName: "posts",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
 			{Name: "user_id", Type: catalog.TypeInt32, ReferencesTable: "users", ReferencesColumn: "id"},
 			{Name: "title", Type: catalog.TypeText},
@@ -36,12 +38,12 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Insert into parent
-	_, err = executor.Execute(&InsertStmt{
+	_, err = executor.Execute(&ast.InsertStmt{
 		TableName: "users",
-		ValuesList: [][]Expression{
+		ValuesList: [][]ast.Expression{
 			{
-				&LiteralExpr{Value: catalog.NewInt32(1)},
-				&LiteralExpr{Value: catalog.NewText("Alice")},
+				&ast.LiteralExpr{Value: catalog.NewInt32(1)},
+				&ast.LiteralExpr{Value: catalog.NewText("Alice")},
 			},
 		},
 	})
@@ -50,13 +52,13 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Insert valid into child
-	_, err = executor.Execute(&InsertStmt{
+	_, err = executor.Execute(&ast.InsertStmt{
 		TableName: "posts",
-		ValuesList: [][]Expression{
+		ValuesList: [][]ast.Expression{
 			{
-				&LiteralExpr{Value: catalog.NewInt32(101)},
-				&LiteralExpr{Value: catalog.NewInt32(1)},
-				&LiteralExpr{Value: catalog.NewText("Hello")},
+				&ast.LiteralExpr{Value: catalog.NewInt32(101)},
+				&ast.LiteralExpr{Value: catalog.NewInt32(1)},
+				&ast.LiteralExpr{Value: catalog.NewText("Hello")},
 			},
 		},
 	})
@@ -65,13 +67,13 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Insert invalid into child (user_id 999 does not exist)
-	_, err = executor.Execute(&InsertStmt{
+	_, err = executor.Execute(&ast.InsertStmt{
 		TableName: "posts",
-		ValuesList: [][]Expression{
+		ValuesList: [][]ast.Expression{
 			{
-				&LiteralExpr{Value: catalog.NewInt32(102)},
-				&LiteralExpr{Value: catalog.NewInt32(999)},
-				&LiteralExpr{Value: catalog.NewText("Invalid")},
+				&ast.LiteralExpr{Value: catalog.NewInt32(102)},
+				&ast.LiteralExpr{Value: catalog.NewInt32(999)},
+				&ast.LiteralExpr{Value: catalog.NewText("Invalid")},
 			},
 		},
 	})
@@ -80,12 +82,12 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Delete parent row (should fail because it's referenced)
-	_, err = executor.Execute(&DeleteStmt{
+	_, err = executor.Execute(&ast.DeleteStmt{
 		TableName: "users",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "id"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewInt32(1)},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "id"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(1)},
 		},
 	})
 	if err == nil {
@@ -93,12 +95,12 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Delete child row
-	_, err = executor.Execute(&DeleteStmt{
+	_, err = executor.Execute(&ast.DeleteStmt{
 		TableName: "posts",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "id"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewInt32(101)},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "id"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(101)},
 		},
 	})
 	if err != nil {
@@ -106,12 +108,12 @@ func TestForeignKeyConstraints(t *testing.T) {
 	}
 
 	// Now delete parent row (should succeed)
-	_, err = executor.Execute(&DeleteStmt{
+	_, err = executor.Execute(&ast.DeleteStmt{
 		TableName: "users",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "id"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewInt32(1)},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "id"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(1)},
 		},
 	})
 	if err != nil {

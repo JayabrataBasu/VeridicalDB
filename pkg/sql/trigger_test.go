@@ -2,6 +2,8 @@ package sql
 
 import (
 	"testing"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 func TestParseTrigger_CreateBasic(t *testing.T) {
@@ -10,8 +12,8 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 		sql        string
 		wantName   string
 		wantTable  string
-		wantTiming TriggerTiming
-		wantEvent  TriggerEvent
+		wantTiming ast.TriggerTiming
+		wantEvent  ast.TriggerEvent
 		wantForRow bool
 		wantFunc   string
 	}{
@@ -20,8 +22,8 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 			sql:        "CREATE TRIGGER audit_insert BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION log_insert()",
 			wantName:   "audit_insert",
 			wantTable:  "users",
-			wantTiming: TriggerBefore,
-			wantEvent:  TriggerInsert,
+			wantTiming: ast.TriggerBefore,
+			wantEvent:  ast.TriggerInsert,
 			wantForRow: true,
 			wantFunc:   "log_insert",
 		},
@@ -30,8 +32,8 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 			sql:        "CREATE TRIGGER audit_update AFTER UPDATE ON orders FOR EACH STATEMENT EXECUTE FUNCTION log_update()",
 			wantName:   "audit_update",
 			wantTable:  "orders",
-			wantTiming: TriggerAfter,
-			wantEvent:  TriggerUpdate,
+			wantTiming: ast.TriggerAfter,
+			wantEvent:  ast.TriggerUpdate,
 			wantForRow: false,
 			wantFunc:   "log_update",
 		},
@@ -40,8 +42,8 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 			sql:        "CREATE TRIGGER audit_delete AFTER DELETE ON products EXECUTE FUNCTION log_delete()",
 			wantName:   "audit_delete",
 			wantTable:  "products",
-			wantTiming: TriggerAfter,
-			wantEvent:  TriggerDelete,
+			wantTiming: ast.TriggerAfter,
+			wantEvent:  ast.TriggerDelete,
 			wantForRow: false, // Default when FOR EACH not specified
 			wantFunc:   "log_delete",
 		},
@@ -50,8 +52,8 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 			sql:        "CREATE TRIGGER view_insert INSTEAD OF INSERT ON my_view FOR EACH ROW EXECUTE PROCEDURE handle_insert()",
 			wantName:   "view_insert",
 			wantTable:  "my_view",
-			wantTiming: TriggerInsteadOf,
-			wantEvent:  TriggerInsert,
+			wantTiming: ast.TriggerInsteadOf,
+			wantEvent:  ast.TriggerInsert,
 			wantForRow: true,
 			wantFunc:   "handle_insert",
 		},
@@ -65,7 +67,7 @@ func TestParseTrigger_CreateBasic(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			createTrigger, ok := stmt.(*CreateTriggerStmt)
+			createTrigger, ok := stmt.(*ast.CreateTriggerStmt)
 			if !ok {
 				t.Fatalf("expected CreateTriggerStmt, got %T", stmt)
 			}
@@ -100,7 +102,7 @@ func TestParseTrigger_CreateIfNotExists(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	createTrigger, ok := stmt.(*CreateTriggerStmt)
+	createTrigger, ok := stmt.(*ast.CreateTriggerStmt)
 	if !ok {
 		t.Fatalf("expected CreateTriggerStmt, got %T", stmt)
 	}
@@ -121,7 +123,7 @@ func TestParseTrigger_DropBasic(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	dropTrigger, ok := stmt.(*DropTriggerStmt)
+	dropTrigger, ok := stmt.(*ast.DropTriggerStmt)
 	if !ok {
 		t.Fatalf("expected DropTriggerStmt, got %T", stmt)
 	}
@@ -145,7 +147,7 @@ func TestParseTrigger_DropIfExists(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	dropTrigger, ok := stmt.(*DropTriggerStmt)
+	dropTrigger, ok := stmt.(*ast.DropTriggerStmt)
 	if !ok {
 		t.Fatalf("expected DropTriggerStmt, got %T", stmt)
 	}
@@ -187,7 +189,7 @@ func TestParseTrigger_ShowTriggers(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			showStmt, ok := stmt.(*ShowStmt)
+			showStmt, ok := stmt.(*ast.ShowStmt)
 			if !ok {
 				t.Fatalf("expected ShowStmt, got %T", stmt)
 			}

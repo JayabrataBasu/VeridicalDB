@@ -5,6 +5,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 )
 
@@ -65,13 +67,13 @@ func TestPlanner_CostBasedIndexSelection(t *testing.T) {
 	}
 
 	// Query with high selectivity: age = 25 (should prefer IndexScan)
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
 	}
 
@@ -155,13 +157,13 @@ func TestPlanner_CostBasedTableScanSelection(t *testing.T) {
 	}
 
 	// Query with low selectivity: age > 10 (most rows match)
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_GT,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(10)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_GT,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(10)},
 		},
 	}
 
@@ -222,53 +224,53 @@ func TestPlanner_SelectivityEstimation(t *testing.T) {
 
 	tests := []struct {
 		name                string
-		expression          Expression
+		expression          ast.Expression
 		expectedSelectivity float64
 		tolerance           float64
 	}{
 		{
 			name: "Equality on unique column",
-			expression: &BinaryExpr{
-				Op:    TOKEN_EQ,
-				Left:  &ColumnRef{Name: "id"},
-				Right: &LiteralExpr{Value: catalog.NewInt32(123)},
+			expression: &ast.BinaryExpr{
+				Op:    token.TOKEN_EQ,
+				Left:  &ast.ColumnRef{Name: "id"},
+				Right: &ast.LiteralExpr{Value: catalog.NewInt32(123)},
 			},
 			expectedSelectivity: 1.0 / 1000.0, // 1/n_distinct
 			tolerance:           0.001,
 		},
 		{
 			name: "Equality on MCV",
-			expression: &BinaryExpr{
-				Op:    TOKEN_EQ,
-				Left:  &ColumnRef{Name: "category"},
-				Right: &LiteralExpr{Value: catalog.NewText("A")},
+			expression: &ast.BinaryExpr{
+				Op:    token.TOKEN_EQ,
+				Left:  &ast.ColumnRef{Name: "category"},
+				Right: &ast.LiteralExpr{Value: catalog.NewText("A")},
 			},
 			expectedSelectivity: 0.4, // MCV frequency
 			tolerance:           0.01,
 		},
 		{
 			name: "Equality on non-MCV",
-			expression: &BinaryExpr{
-				Op:    TOKEN_EQ,
-				Left:  &ColumnRef{Name: "category"},
-				Right: &LiteralExpr{Value: catalog.NewText("Z")},
+			expression: &ast.BinaryExpr{
+				Op:    token.TOKEN_EQ,
+				Left:  &ast.ColumnRef{Name: "category"},
+				Right: &ast.LiteralExpr{Value: catalog.NewText("Z")},
 			},
 			expectedSelectivity: 1.0 / 5.0, // 1/n_distinct for non-MCV
 			tolerance:           0.01,
 		},
 		{
 			name: "AND combination",
-			expression: &BinaryExpr{
-				Op: TOKEN_AND,
-				Left: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "category"},
-					Right: &LiteralExpr{Value: catalog.NewText("A")},
+			expression: &ast.BinaryExpr{
+				Op: token.TOKEN_AND,
+				Left: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "category"},
+					Right: &ast.LiteralExpr{Value: catalog.NewText("A")},
 				},
-				Right: &BinaryExpr{
-					Op:    TOKEN_GT,
-					Left:  &ColumnRef{Name: "score"},
-					Right: &LiteralExpr{Value: catalog.NewInt32(50)},
+				Right: &ast.BinaryExpr{
+					Op:    token.TOKEN_GT,
+					Left:  &ast.ColumnRef{Name: "score"},
+					Right: &ast.LiteralExpr{Value: catalog.NewInt32(50)},
 				},
 			},
 			expectedSelectivity: 0.4 * 0.33, // sel(category='A') * sel(score>50)
@@ -276,17 +278,17 @@ func TestPlanner_SelectivityEstimation(t *testing.T) {
 		},
 		{
 			name: "OR combination",
-			expression: &BinaryExpr{
-				Op: TOKEN_OR,
-				Left: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "category"},
-					Right: &LiteralExpr{Value: catalog.NewText("A")},
+			expression: &ast.BinaryExpr{
+				Op: token.TOKEN_OR,
+				Left: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "category"},
+					Right: &ast.LiteralExpr{Value: catalog.NewText("A")},
 				},
-				Right: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "category"},
-					Right: &LiteralExpr{Value: catalog.NewText("B")},
+				Right: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "category"},
+					Right: &ast.LiteralExpr{Value: catalog.NewText("B")},
 				},
 			},
 			// sel(A OR B) = sel(A) + sel(B) - sel(A)*sel(B)
@@ -355,24 +357,24 @@ func TestPlanner_JoinOrderOptimization(t *testing.T) {
 	_ = planner.statsMgr.SetTableStats(tableStats)
 
 	// Create a join query (basic test - full join optimization would be more complex)
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Joins: []JoinClause{
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Joins: []ast.JoinClause{
 			{
 				JoinType:  "INNER",
 				TableName: "orders",
-				Condition: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "users.id"},
-					Right: &ColumnRef{Name: "orders.user_id"},
+				Condition: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "users.id"},
+					Right: &ast.ColumnRef{Name: "orders.user_id"},
 				},
 			},
 		},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "status"},
-			Right: &LiteralExpr{Value: catalog.NewText("active")},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "status"},
+			Right: &ast.LiteralExpr{Value: catalog.NewText("active")},
 		},
 	}
 
@@ -421,13 +423,13 @@ func TestPlanner_RuleBased_Fallback(t *testing.T) {
 	_ = idxMgr.CreateIndex(*idxMeta)
 
 	// Query with equality (should use index in rule-based mode)
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
 	}
 
@@ -463,13 +465,13 @@ func TestPlanner_NoStats_Fallback(t *testing.T) {
 		Schema: schema,
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "name"},
-			Right: &LiteralExpr{Value: catalog.NewText("Alice")},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "name"},
+			Right: &ast.LiteralExpr{Value: catalog.NewText("Alice")},
 		},
 	}
 
@@ -533,13 +535,13 @@ func TestPlanner_CostComparison(t *testing.T) {
 	_ = planner.statsMgr.SetTableStats(tableStats)
 
 	// Highly selective query
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
 	}
 
@@ -642,7 +644,7 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 
 	tests := []struct {
 		name              string
-		stmt              *SelectStmt
+		stmt              *ast.SelectStmt
 		expectedType      PlanType
 		expectedIndexName string
 		minSelectivity    float64
@@ -650,20 +652,20 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 	}{
 		{
 			name:           "no where uses table scan",
-			stmt:           &SelectStmt{TableName: "users", Columns: []SelectColumn{{Star: true}}},
+			stmt:           &ast.SelectStmt{TableName: "users", Columns: []ast.SelectColumn{{Star: true}}},
 			expectedType:   PlanTableScan,
 			minSelectivity: 1.0,
 			maxSelectivity: 1.0,
 		},
 		{
 			name: "indexed equality uses index scan",
-			stmt: &SelectStmt{
+			stmt: &ast.SelectStmt{
 				TableName: "users",
-				Columns:   []SelectColumn{{Star: true}},
-				Where: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "age"},
-					Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+				Columns:   []ast.SelectColumn{{Star: true}},
+				Where: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "age"},
+					Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 				},
 			},
 			expectedType:      PlanIndexScan,
@@ -673,13 +675,13 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 		},
 		{
 			name: "mcv equality remains selective",
-			stmt: &SelectStmt{
+			stmt: &ast.SelectStmt{
 				TableName: "users",
-				Columns:   []SelectColumn{{Star: true}},
-				Where: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "status"},
-					Right: &LiteralExpr{Value: catalog.NewText("active")},
+				Columns:   []ast.SelectColumn{{Star: true}},
+				Where: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "status"},
+					Right: &ast.LiteralExpr{Value: catalog.NewText("active")},
 				},
 			},
 			expectedType:   PlanTableScan,
@@ -688,20 +690,20 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 		},
 		{
 			name: "compound predicate reduces selectivity",
-			stmt: &SelectStmt{
+			stmt: &ast.SelectStmt{
 				TableName: "users",
-				Columns:   []SelectColumn{{Star: true}},
-				Where: &BinaryExpr{
-					Op: TOKEN_AND,
-					Left: &BinaryExpr{
-						Op:    TOKEN_EQ,
-						Left:  &ColumnRef{Name: "age"},
-						Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+				Columns:   []ast.SelectColumn{{Star: true}},
+				Where: &ast.BinaryExpr{
+					Op: token.TOKEN_AND,
+					Left: &ast.BinaryExpr{
+						Op:    token.TOKEN_EQ,
+						Left:  &ast.ColumnRef{Name: "age"},
+						Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 					},
-					Right: &BinaryExpr{
-						Op:    TOKEN_EQ,
-						Left:  &ColumnRef{Name: "status"},
-						Right: &LiteralExpr{Value: catalog.NewText("active")},
+					Right: &ast.BinaryExpr{
+						Op:    token.TOKEN_EQ,
+						Left:  &ast.ColumnRef{Name: "status"},
+						Right: &ast.LiteralExpr{Value: catalog.NewText("active")},
 					},
 				},
 			},
@@ -738,13 +740,13 @@ func TestPlanner_PlanSelectionMatrix(t *testing.T) {
 	}
 
 	planner.SetStatsManager(nil)
-	ruleBasedPlan := planner.Plan(&SelectStmt{
+	ruleBasedPlan := planner.Plan(&ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
 	}, tableMeta)
 
@@ -804,13 +806,13 @@ func TestPlanner_UniqueEqualityPrefersIndexWithLiteral(t *testing.T) {
 		t.Fatalf("failed to set table stats: %v", err)
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "id"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "id"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(42)},
 		},
 	}
 
@@ -883,13 +885,13 @@ func TestPlanner_IndexedRangeSelectivityCap_SingleSided(t *testing.T) {
 		t.Fatalf("failed to set table stats: %v", err)
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_LE,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(100)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_LE,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(100)},
 		},
 	}
 
@@ -952,20 +954,20 @@ func TestPlanner_IndexedRangeSelectivityCap_BoundedRange(t *testing.T) {
 		t.Fatalf("failed to set table stats: %v", err)
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op: TOKEN_AND,
-			Left: &BinaryExpr{
-				Op:    TOKEN_GE,
-				Left:  &ColumnRef{Name: "age"},
-				Right: &LiteralExpr{Value: catalog.NewInt32(10)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op: token.TOKEN_AND,
+			Left: &ast.BinaryExpr{
+				Op:    token.TOKEN_GE,
+				Left:  &ast.ColumnRef{Name: "age"},
+				Right: &ast.LiteralExpr{Value: catalog.NewInt32(10)},
 			},
-			Right: &BinaryExpr{
-				Op:    TOKEN_LT,
-				Left:  &ColumnRef{Name: "age"},
-				Right: &LiteralExpr{Value: catalog.NewInt32(90)},
+			Right: &ast.BinaryExpr{
+				Op:    token.TOKEN_LT,
+				Left:  &ast.ColumnRef{Name: "age"},
+				Right: &ast.LiteralExpr{Value: catalog.NewInt32(90)},
 			},
 		},
 	}
@@ -1004,13 +1006,13 @@ func TestPlanner_DynamicBufferHitRatio(t *testing.T) {
 		},
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "test",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "id"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "id"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(42)},
 		},
 	}
 
@@ -1099,13 +1101,13 @@ func TestPlanner_StatsManagerIntegration(t *testing.T) {
 	}
 	tableMeta := &catalog.TableMeta{Name: "orders", Schema: schema}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "orders",
-		Columns:   []SelectColumn{{Star: true}},
-		Where: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "customer_id"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(123)},
+		Columns:   []ast.SelectColumn{{Star: true}},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "customer_id"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(123)},
 		},
 	}
 
@@ -1175,9 +1177,9 @@ func TestPlanner_CostSensitivityToCachePerformance(t *testing.T) {
 		},
 	}
 
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "large_table",
-		Columns:   []SelectColumn{{Star: true}},
+		Columns:   []ast.SelectColumn{{Star: true}},
 		Where:     nil, // Full scan
 	}
 
@@ -1256,13 +1258,13 @@ func TestPlanner_IndexVsTableScanThreshold(t *testing.T) {
 			}
 			_ = planner.statsMgr.SetTableStats(tableStats)
 
-			stmt := &SelectStmt{
+			stmt := &ast.SelectStmt{
 				TableName: "test",
-				Columns:   []SelectColumn{{Star: true}},
-				Where: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "key"},
-					Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+				Columns:   []ast.SelectColumn{{Star: true}},
+				Where: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "key"},
+					Right: &ast.LiteralExpr{Value: catalog.NewInt32(42)},
 				},
 			}
 

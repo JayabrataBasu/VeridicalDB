@@ -7,6 +7,21 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
+### Changed (P4 — splitting `pkg/sql`, in progress)
+
+- The SQL lexer moved out of the monolithic `pkg/sql` package. `pkg/sql/lexer.go`
+  is now two leaf packages: `pkg/sql/token` (the `TokenType` enum, the keyword
+  table, `LookupKeyword`, and the `Token` struct) and `pkg/sql/lex` (the `Lexer`).
+  `pkg/sql` and `pkg/shard` reference them through `token.` / `lex.` qualifiers.
+- The SQL abstract syntax tree moved to `pkg/sql/ast` (`pkg/sql/ast.go` →
+  `pkg/sql/ast/ast.go`). Every AST node type, the `Statement` / `Expression` /
+  `PLStatement` interfaces, and the partition / grouping-set / trigger / parameter
+  enums now live there; the parser, planner, executors, session, `pkg/pgwire`, and
+  `pkg/shard` reference them through `ast.` qualifiers.
+- No behavior change — token values, lexer output, and AST shape are identical;
+  this is plan phase P4, which splits `pkg/sql` into
+  `token / lex / ast / parse / plan / exec / session` in dependency order.
+
 ### Changed (P3 — config & logging consolidation)
 
 - One config package. `internal/config` (which used viper) was merged into

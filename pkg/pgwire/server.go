@@ -16,6 +16,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/log"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -909,7 +910,7 @@ func describeResultColumns(query string) ([]string, bool) {
 		return nil, false
 	}
 
-	sel, ok := stmt.(*sql.SelectStmt)
+	sel, ok := stmt.(*ast.SelectStmt)
 	if !ok {
 		return nil, false
 	}

@@ -6,6 +6,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 )
 
@@ -94,8 +96,8 @@ type ExecutionPlan struct {
 	// For IndexScan plans
 	IndexName string
 	IndexCol  string
-	ScanKey   []byte    // For equality scans
-	ScanOp    TokenType // =, <, >, <=, >=
+	ScanKey   []byte          // For equality scans
+	ScanOp    token.TokenType // =, <, >, <=, >=
 
 	// For range scans
 	StartKey       []byte // Lower bound (nil = unbounded)
@@ -104,7 +106,7 @@ type ExecutionPlan struct {
 	EndInclusive   bool   // Include end key in results
 
 	// Remaining conditions to evaluate after scan
-	RemainingWhere Expression
+	RemainingWhere ast.Expression
 
 	// Optimization metadata
 	EstimatedRows int64   // Estimated number of rows returned
@@ -112,7 +114,7 @@ type ExecutionPlan struct {
 }
 
 // Plan creates an execution plan for a SELECT statement using cost-based optimization.
-func (p *Planner) Plan(stmt *SelectStmt, tableMeta *catalog.TableMeta) *ExecutionPlan {
+func (p *Planner) Plan(stmt *ast.SelectStmt, tableMeta *catalog.TableMeta) *ExecutionPlan {
 	// Generate candidate plans
 	candidatePlans := p.generateCandidatePlans(stmt, tableMeta)
 
@@ -142,7 +144,7 @@ func (p *Planner) Plan(stmt *SelectStmt, tableMeta *catalog.TableMeta) *Executio
 }
 
 // generateCandidatePlans creates all possible execution plans and estimates their costs.
-func (p *Planner) generateCandidatePlans(stmt *SelectStmt, tableMeta *catalog.TableMeta) []*ExecutionPlan {
+func (p *Planner) generateCandidatePlans(stmt *ast.SelectStmt, tableMeta *catalog.TableMeta) []*ExecutionPlan {
 	var plans []*ExecutionPlan
 
 	// Plan 1: Table scan
@@ -164,7 +166,7 @@ func (p *Planner) generateCandidatePlans(stmt *SelectStmt, tableMeta *catalog.Ta
 }
 
 // generateIndexPlans creates index scan plans for all applicable indexes.
-func (p *Planner) generateIndexPlans(stmt *SelectStmt, tableMeta *catalog.TableMeta) []*ExecutionPlan {
+func (p *Planner) generateIndexPlans(stmt *ast.SelectStmt, tableMeta *catalog.TableMeta) []*ExecutionPlan {
 	var plans []*ExecutionPlan
 
 	// Find all index opportunities
@@ -191,12 +193,12 @@ func (p *Planner) generateIndexPlans(stmt *SelectStmt, tableMeta *catalog.TableM
 type IndexInfo struct {
 	IndexName string
 	Key       []byte
-	Op        TokenType
+	Op        token.TokenType
 	Column    string
 }
 
 // estimateCost calculates the estimated cost for an execution plan.
-func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where Expression) {
+func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where ast.Expression) {
 	if p.statsMgr == nil {
 		p.estimateCostWithoutStats(plan, tableMeta, where)
 		return
@@ -259,8 +261,8 @@ func (p *Planner) estimateCost(plan *ExecutionPlan, tableMeta *catalog.TableMeta
 	}
 }
 
-func (p *Planner) uniqueEqualitySelectivity(plan *ExecutionPlan, where Expression, schema *catalog.Schema, rowCount int64) (float64, bool) {
-	if plan == nil || plan.Type != PlanIndexScan || plan.ScanOp != TOKEN_EQ {
+func (p *Planner) uniqueEqualitySelectivity(plan *ExecutionPlan, where ast.Expression, schema *catalog.Schema, rowCount int64) (float64, bool) {
+	if plan == nil || plan.Type != PlanIndexScan || plan.ScanOp != token.TOKEN_EQ {
 		return 0, false
 	}
 	if schema == nil || plan.IndexCol == "" {
@@ -286,27 +288,27 @@ func isUniqueSchemaColumn(schema *catalog.Schema, colName string) bool {
 	return col.PrimaryKey || col.Unique
 }
 
-func isLiteralEqualityOnColumn(where Expression, colName string) bool {
+func isLiteralEqualityOnColumn(where ast.Expression, colName string) bool {
 	if where == nil {
 		return false
 	}
 
 	switch expr := where.(type) {
-	case *BinaryExpr:
-		if expr.Op == TOKEN_AND {
+	case *ast.BinaryExpr:
+		if expr.Op == token.TOKEN_AND {
 			return isLiteralEqualityOnColumn(expr.Left, colName) || isLiteralEqualityOnColumn(expr.Right, colName)
 		}
-		if expr.Op != TOKEN_EQ {
+		if expr.Op != token.TOKEN_EQ {
 			return false
 		}
 
-		if colRef, ok := expr.Left.(*ColumnRef); ok {
-			if _, ok := expr.Right.(*LiteralExpr); ok {
+		if colRef, ok := expr.Left.(*ast.ColumnRef); ok {
+			if _, ok := expr.Right.(*ast.LiteralExpr); ok {
 				return strings.EqualFold(colRef.Name, colName)
 			}
 		}
-		if colRef, ok := expr.Right.(*ColumnRef); ok {
-			if _, ok := expr.Left.(*LiteralExpr); ok {
+		if colRef, ok := expr.Right.(*ast.ColumnRef); ok {
+			if _, ok := expr.Left.(*ast.LiteralExpr); ok {
 				return strings.EqualFold(colRef.Name, colName)
 			}
 		}
@@ -315,7 +317,7 @@ func isLiteralEqualityOnColumn(where Expression, colName string) bool {
 	return false
 }
 
-func (p *Planner) rangeIndexSelectivityCap(plan *ExecutionPlan, where Expression) (float64, bool) {
+func (p *Planner) rangeIndexSelectivityCap(plan *ExecutionPlan, where ast.Expression) (float64, bool) {
 	if plan == nil || plan.Type != PlanIndexScan || plan.IndexCol == "" {
 		return 0, false
 	}
@@ -336,14 +338,14 @@ func (p *Planner) rangeIndexSelectivityCap(plan *ExecutionPlan, where Expression
 	return 0.45, true
 }
 
-func collectIndexedRangePredicates(where Expression, colName string) (hasRange bool, hasLower bool, hasUpper bool, hasStrict bool) {
+func collectIndexedRangePredicates(where ast.Expression, colName string) (hasRange bool, hasLower bool, hasUpper bool, hasStrict bool) {
 	if where == nil {
 		return false, false, false, false
 	}
 
 	switch expr := where.(type) {
-	case *BinaryExpr:
-		if expr.Op == TOKEN_AND {
+	case *ast.BinaryExpr:
+		if expr.Op == token.TOKEN_AND {
 			lHasRange, lHasLower, lHasUpper, lHasStrict := collectIndexedRangePredicates(expr.Left, colName)
 			rHasRange, rHasLower, rHasUpper, rHasStrict := collectIndexedRangePredicates(expr.Right, colName)
 			return lHasRange || rHasRange, lHasLower || rHasLower, lHasUpper || rHasUpper, lHasStrict || rHasStrict
@@ -355,13 +357,13 @@ func collectIndexedRangePredicates(where Expression, colName string) (hasRange b
 		}
 
 		switch op {
-		case TOKEN_GT:
+		case token.TOKEN_GT:
 			return true, true, false, true
-		case TOKEN_GE:
+		case token.TOKEN_GE:
 			return true, true, false, false
-		case TOKEN_LT:
+		case token.TOKEN_LT:
 			return true, false, true, true
-		case TOKEN_LE:
+		case token.TOKEN_LE:
 			return true, false, true, false
 		}
 	}
@@ -369,28 +371,28 @@ func collectIndexedRangePredicates(where Expression, colName string) (hasRange b
 	return false, false, false, false
 }
 
-func comparisonOnColumnLiteral(expr *BinaryExpr) (colName string, op TokenType, ok bool) {
+func comparisonOnColumnLiteral(expr *ast.BinaryExpr) (colName string, op token.TokenType, ok bool) {
 	if expr == nil {
-		return "", TOKEN_ILLEGAL, false
+		return "", token.TOKEN_ILLEGAL, false
 	}
 
-	if col, isCol := expr.Left.(*ColumnRef); isCol {
-		if _, isLit := expr.Right.(*LiteralExpr); isLit {
+	if col, isCol := expr.Left.(*ast.ColumnRef); isCol {
+		if _, isLit := expr.Right.(*ast.LiteralExpr); isLit {
 			return col.Name, expr.Op, true
 		}
 	}
 
-	if col, isCol := expr.Right.(*ColumnRef); isCol {
-		if _, isLit := expr.Left.(*LiteralExpr); isLit {
+	if col, isCol := expr.Right.(*ast.ColumnRef); isCol {
+		if _, isLit := expr.Left.(*ast.LiteralExpr); isLit {
 			return col.Name, flipComparisonOp(expr.Op), true
 		}
 	}
 
-	return "", TOKEN_ILLEGAL, false
+	return "", token.TOKEN_ILLEGAL, false
 }
 
 // estimateCostWithoutStats provides fallback cost estimation when statistics are unavailable.
-func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where Expression) {
+func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catalog.TableMeta, where ast.Expression) {
 	// Rough estimates without statistics
 	_ = tableMeta                  // unused, but kept for function signature compatibility
 	assumedRowCount := int64(1000) // Assume 1K rows
@@ -417,32 +419,32 @@ func (p *Planner) estimateCostWithoutStats(plan *ExecutionPlan, tableMeta *catal
 }
 
 // estimateSelectivity calculates the selectivity of a WHERE expression using statistics.
-func (p *Planner) estimateSelectivity(where Expression, tableStats *stats.TableStats, schema *catalog.Schema) float64 {
+func (p *Planner) estimateSelectivity(where ast.Expression, tableStats *stats.TableStats, schema *catalog.Schema) float64 {
 	if where == nil {
 		return 1.0
 	}
 
 	switch expr := where.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch expr.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			// Assume independence: sel(A AND B) = sel(A) * sel(B)
 			leftSel := p.estimateSelectivity(expr.Left, tableStats, schema)
 			rightSel := p.estimateSelectivity(expr.Right, tableStats, schema)
 			return leftSel * rightSel
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			// sel(A OR B) = sel(A) + sel(B) - sel(A) * sel(B)
 			leftSel := p.estimateSelectivity(expr.Left, tableStats, schema)
 			rightSel := p.estimateSelectivity(expr.Right, tableStats, schema)
 			return leftSel + rightSel - (leftSel * rightSel)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_GT, TOKEN_LE, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_GT, token.TOKEN_LE, token.TOKEN_GE:
 			return p.estimateComparisonSelectivity(expr, tableStats, schema)
 		}
 
-	case *UnaryExpr:
-		if expr.Op == TOKEN_NOT {
+	case *ast.UnaryExpr:
+		if expr.Op == token.TOKEN_NOT {
 			// NOT: 1 - selectivity of inner expression
 			innerSel := p.estimateSelectivity(expr.Expr, tableStats, schema)
 			return 1.0 - innerSel
@@ -454,19 +456,19 @@ func (p *Planner) estimateSelectivity(where Expression, tableStats *stats.TableS
 }
 
 // estimateComparisonSelectivity estimates selectivity for comparison operators.
-func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *stats.TableStats, schema *catalog.Schema) float64 {
+func (p *Planner) estimateComparisonSelectivity(expr *ast.BinaryExpr, tableStats *stats.TableStats, schema *catalog.Schema) float64 {
 	// Extract column and value from comparison
 	_ = schema // unused, but kept for function signature compatibility
 	var colName string
-	var value *LiteralExpr
+	var value *ast.LiteralExpr
 
-	if col, ok := expr.Left.(*ColumnRef); ok {
-		if lit, ok := expr.Right.(*LiteralExpr); ok {
+	if col, ok := expr.Left.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Right.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			value = lit
 		}
-	} else if col, ok := expr.Right.(*ColumnRef); ok {
-		if lit, ok := expr.Left.(*LiteralExpr); ok {
+	} else if col, ok := expr.Right.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Left.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			value = lit
 			// Note: for flipped expressions, we'd need to flip the operator
@@ -476,13 +478,13 @@ func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *st
 	if colName == "" || value == nil {
 		// Can't analyze - use defaults
 		switch expr.Op {
-		case TOKEN_EQ:
+		case token.TOKEN_EQ:
 			return 0.1
-		case TOKEN_NE:
+		case token.TOKEN_NE:
 			return 0.9
-		case TOKEN_LT, TOKEN_GT:
+		case token.TOKEN_LT, token.TOKEN_GT:
 			return 0.33
-		case TOKEN_LE, TOKEN_GE:
+		case token.TOKEN_LE, token.TOKEN_GE:
 			return 0.5
 		}
 	}
@@ -502,7 +504,7 @@ func (p *Planner) estimateComparisonSelectivity(expr *BinaryExpr, tableStats *st
 }
 
 // convertLiteralToStatsValue converts a LiteralExpr to stats.Value.
-func convertLiteralToStatsValue(lit *LiteralExpr) stats.Value {
+func convertLiteralToStatsValue(lit *ast.LiteralExpr) stats.Value {
 	val := lit.Value
 	switch val.Type {
 	case catalog.TypeInt32:
@@ -520,20 +522,20 @@ func convertLiteralToStatsValue(lit *LiteralExpr) stats.Value {
 	}
 }
 
-// tokenToString converts TokenType to string for statistics.
-func tokenToString(token TokenType) string {
-	switch token {
-	case TOKEN_EQ:
+// tokenToString converts token.TokenType to string for statistics.
+func tokenToString(tt token.TokenType) string {
+	switch tt {
+	case token.TOKEN_EQ:
 		return "="
-	case TOKEN_NE:
+	case token.TOKEN_NE:
 		return "!="
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		return "<"
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		return ">"
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		return "<="
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		return ">="
 	default:
 		return "="
@@ -541,7 +543,7 @@ func tokenToString(token TokenType) string {
 }
 
 // findAllIndexesForCondition finds all indexes that could be used for a WHERE clause.
-func (p *Planner) findAllIndexesForCondition(tableName string, where Expression, schema *catalog.Schema) []*IndexInfo {
+func (p *Planner) findAllIndexesForCondition(tableName string, where ast.Expression, schema *catalog.Schema) []*IndexInfo {
 	var indexInfos []*IndexInfo
 
 	if where == nil {
@@ -557,13 +559,13 @@ func (p *Planner) findAllIndexesForCondition(tableName string, where Expression,
 }
 
 // findIndexForCondition checks if an index can be used for a WHERE clause.
-func (p *Planner) findIndexForCondition(tableName string, where Expression, schema *catalog.Schema) *IndexInfo {
+func (p *Planner) findIndexForCondition(tableName string, where ast.Expression, schema *catalog.Schema) *IndexInfo {
 	if where == nil {
 		return nil
 	}
 
 	// Handle AND expressions recursively
-	if binExpr, ok := where.(*BinaryExpr); ok && binExpr.Op == TOKEN_AND {
+	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == token.TOKEN_AND {
 		if info := p.findIndexForCondition(tableName, binExpr.Left, schema); info != nil {
 			return info
 		}
@@ -571,19 +573,19 @@ func (p *Planner) findIndexForCondition(tableName string, where Expression, sche
 	}
 
 	// Only handle simple binary expressions for now
-	binExpr, ok := where.(*BinaryExpr)
+	binExpr, ok := where.(*ast.BinaryExpr)
 	if !ok {
 		return nil
 	}
 
 	// Check for equality: column = literal
-	if binExpr.Op == TOKEN_EQ {
+	if binExpr.Op == token.TOKEN_EQ {
 		return p.matchEqualityToIndex(tableName, binExpr, schema)
 	}
 
 	// Check for range conditions: <, >, <=, >=
-	if binExpr.Op == TOKEN_LT || binExpr.Op == TOKEN_GT ||
-		binExpr.Op == TOKEN_LE || binExpr.Op == TOKEN_GE {
+	if binExpr.Op == token.TOKEN_LT || binExpr.Op == token.TOKEN_GT ||
+		binExpr.Op == token.TOKEN_LE || binExpr.Op == token.TOKEN_GE {
 		return p.matchRangeToIndex(tableName, binExpr, schema)
 	}
 
@@ -591,20 +593,20 @@ func (p *Planner) findIndexForCondition(tableName string, where Expression, sche
 }
 
 // matchRangeToIndex tries to match column <op> literal to an index for range scans.
-func (p *Planner) matchRangeToIndex(tableName string, expr *BinaryExpr, _ *catalog.Schema) *IndexInfo {
+func (p *Planner) matchRangeToIndex(tableName string, expr *ast.BinaryExpr, _ *catalog.Schema) *IndexInfo {
 	var colName string
-	var literal *LiteralExpr
+	var literal *ast.LiteralExpr
 	op := expr.Op
 
 	// Check both orderings: column <op> literal and literal <op> column
-	if col, ok := expr.Left.(*ColumnRef); ok {
-		if lit, ok := expr.Right.(*LiteralExpr); ok {
+	if col, ok := expr.Left.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Right.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			literal = lit
 			// op stays the same: column < 10 means op is <
 		}
-	} else if col, ok := expr.Right.(*ColumnRef); ok {
-		if lit, ok := expr.Left.(*LiteralExpr); ok {
+	} else if col, ok := expr.Right.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Left.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			literal = lit
 			// Flip the operator: 10 < column means column > 10
@@ -637,34 +639,34 @@ func (p *Planner) matchRangeToIndex(tableName string, expr *BinaryExpr, _ *catal
 }
 
 // flipComparisonOp flips a comparison operator (for when literal is on left side).
-func flipComparisonOp(op TokenType) TokenType {
+func flipComparisonOp(op token.TokenType) token.TokenType {
 	switch op {
-	case TOKEN_LT:
-		return TOKEN_GT
-	case TOKEN_GT:
-		return TOKEN_LT
-	case TOKEN_LE:
-		return TOKEN_GE
-	case TOKEN_GE:
-		return TOKEN_LE
+	case token.TOKEN_LT:
+		return token.TOKEN_GT
+	case token.TOKEN_GT:
+		return token.TOKEN_LT
+	case token.TOKEN_LE:
+		return token.TOKEN_GE
+	case token.TOKEN_GE:
+		return token.TOKEN_LE
 	default:
 		return op
 	}
 }
 
 // matchEqualityToIndex tries to match column = literal to an index.
-func (p *Planner) matchEqualityToIndex(tableName string, expr *BinaryExpr, _ *catalog.Schema) *IndexInfo {
+func (p *Planner) matchEqualityToIndex(tableName string, expr *ast.BinaryExpr, _ *catalog.Schema) *IndexInfo {
 	var colName string
-	var literal *LiteralExpr
+	var literal *ast.LiteralExpr
 
 	// Check both orderings: column = literal and literal = column
-	if col, ok := expr.Left.(*ColumnRef); ok {
-		if lit, ok := expr.Right.(*LiteralExpr); ok {
+	if col, ok := expr.Left.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Right.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			literal = lit
 		}
-	} else if col, ok := expr.Right.(*ColumnRef); ok {
-		if lit, ok := expr.Left.(*LiteralExpr); ok {
+	} else if col, ok := expr.Right.(*ast.ColumnRef); ok {
+		if lit, ok := expr.Left.(*ast.LiteralExpr); ok {
 			colName = col.Name
 			literal = lit
 		}
@@ -684,7 +686,7 @@ func (p *Planner) matchEqualityToIndex(tableName string, expr *BinaryExpr, _ *ca
 				return &IndexInfo{
 					IndexName: meta.Name,
 					Key:       key,
-					Op:        TOKEN_EQ,
+					Op:        token.TOKEN_EQ,
 					Column:    colName,
 				}
 			}

@@ -6,18 +6,21 @@ import (
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/lex"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 // Parser parses SQL statements.
 type Parser struct {
-	lexer *Lexer
-	cur   Token
-	peek  Token
+	lexer *lex.Lexer
+	cur   token.Token
+	peek  token.Token
 }
 
 // NewParser creates a new parser for the input SQL.
 func NewParser(input string) *Parser {
-	p := &Parser{lexer: NewLexer(input)}
+	p := &Parser{lexer: lex.NewLexer(input)}
 	// Read two tokens to initialize cur and peek
 	p.nextToken()
 	p.nextToken()
@@ -29,18 +32,18 @@ func (p *Parser) nextToken() {
 	p.peek = p.lexer.NextToken()
 }
 
-func (p *Parser) curTokenIs(t TokenType) bool {
+func (p *Parser) curTokenIs(t token.TokenType) bool {
 	return p.cur.Type == t
 }
 
 // Note: peekTokenIs and expectPeek are reserved for future parser extensions.
 // They are commented out to avoid unused function warnings.
 /*
-func (p *Parser) peekTokenIs(t TokenType) bool {
+func (p *Parser) peekTokenIs(t token.TokenType) bool {
 	return p.peek.Type == t
 }
 
-func (p *Parser) expectPeek(t TokenType) error {
+func (p *Parser) expectPeek(t token.TokenType) error {
 	if p.peekTokenIs(t) {
 		p.nextToken()
 		return nil
@@ -49,7 +52,7 @@ func (p *Parser) expectPeek(t TokenType) error {
 }
 */
 
-func (p *Parser) expect(t TokenType) error {
+func (p *Parser) expect(t token.TokenType) error {
 	if p.curTokenIs(t) {
 		p.nextToken()
 		return nil
@@ -58,61 +61,61 @@ func (p *Parser) expect(t TokenType) error {
 }
 
 // Parse parses a single SQL statement.
-func (p *Parser) Parse() (Statement, error) {
+func (p *Parser) Parse() (ast.Statement, error) {
 	switch p.cur.Type {
-	case TOKEN_WITH:
+	case token.TOKEN_WITH:
 		return p.parseWith()
-	case TOKEN_SELECT:
+	case token.TOKEN_SELECT:
 		selectStmt, err := p.parseSelect()
 		if err != nil {
 			return nil, err
 		}
 		// Check for UNION/INTERSECT/EXCEPT
-		if p.curTokenIs(TOKEN_UNION) || p.curTokenIs(TOKEN_INTERSECT) || p.curTokenIs(TOKEN_EXCEPT) {
+		if p.curTokenIs(token.TOKEN_UNION) || p.curTokenIs(token.TOKEN_INTERSECT) || p.curTokenIs(token.TOKEN_EXCEPT) {
 			return p.parseSetOperation(selectStmt)
 		}
 		return selectStmt, nil
-	case TOKEN_INSERT:
+	case token.TOKEN_INSERT:
 		return p.parseInsert()
-	case TOKEN_UPDATE:
+	case token.TOKEN_UPDATE:
 		return p.parseUpdate()
-	case TOKEN_DELETE:
+	case token.TOKEN_DELETE:
 		return p.parseDelete()
-	case TOKEN_CREATE:
+	case token.TOKEN_CREATE:
 		return p.parseCreate()
-	case TOKEN_DROP:
+	case token.TOKEN_DROP:
 		return p.parseDrop()
-	case TOKEN_BEGIN:
+	case token.TOKEN_BEGIN:
 		return p.parseBegin()
-	case TOKEN_COMMIT:
+	case token.TOKEN_COMMIT:
 		return p.parseCommit()
-	case TOKEN_ROLLBACK:
+	case token.TOKEN_ROLLBACK:
 		return p.parseRollback()
-	case TOKEN_ALTER:
+	case token.TOKEN_ALTER:
 		return p.parseAlter()
-	case TOKEN_TRUNCATE:
+	case token.TOKEN_TRUNCATE:
 		return p.parseTruncate()
-	case TOKEN_SHOW:
+	case token.TOKEN_SHOW:
 		return p.parseShow()
-	case TOKEN_EXPLAIN:
+	case token.TOKEN_EXPLAIN:
 		return p.parseExplain()
-	case TOKEN_ANALYZE:
+	case token.TOKEN_ANALYZE:
 		return p.parseAnalyze()
-	case TOKEN_MERGE:
+	case token.TOKEN_MERGE:
 		return p.parseMerge()
-	case TOKEN_PREPARE:
+	case token.TOKEN_PREPARE:
 		return p.parsePrepare()
-	case TOKEN_EXECUTE:
+	case token.TOKEN_EXECUTE:
 		return p.parseExecute()
-	case TOKEN_DEALLOCATE:
+	case token.TOKEN_DEALLOCATE:
 		return p.parseDeallocate()
-	case TOKEN_GRANT:
+	case token.TOKEN_GRANT:
 		return p.parseGrant()
-	case TOKEN_REVOKE:
+	case token.TOKEN_REVOKE:
 		return p.parseRevoke()
-	case TOKEN_USE:
+	case token.TOKEN_USE:
 		return p.parseUseDatabase()
-	case TOKEN_CALL:
+	case token.TOKEN_CALL:
 		return p.parseCall()
 	default:
 		return nil, fmt.Errorf("unexpected token %v (%q) at position %d", p.cur.Type, p.cur.Literal, p.cur.Pos)
@@ -121,20 +124,20 @@ func (p *Parser) Parse() (Statement, error) {
 
 // parseWith parses WITH clause (Common Table Expressions).
 // WITH [RECURSIVE] cte_name [(col1, col2)] AS (SELECT ...) [, cte_name2 AS (...)] SELECT ...
-func (p *Parser) parseWith() (Statement, error) {
+func (p *Parser) parseWith() (ast.Statement, error) {
 	p.nextToken() // consume WITH
 
-	withClause := &WithClause{}
+	withClause := &ast.WithClause{}
 
 	// Check for RECURSIVE
-	if p.curTokenIs(TOKEN_RECURSIVE) {
+	if p.curTokenIs(token.TOKEN_RECURSIVE) {
 		withClause.Recursive = true
 		p.nextToken() // consume RECURSIVE
 	}
 
 	// Parse CTE definitions (at least one required)
 	for {
-		cte := CTE{}
+		cte := ast.CTE{}
 
 		// CTE name
 		if !p.isIdentifierOrContextualKeyword() {
@@ -148,7 +151,7 @@ func (p *Parser) parseWith() (Statement, error) {
 		cte.Recursive = withClause.Recursive
 
 		// Optional column list: (col1, col2, ...)
-		if p.curTokenIs(TOKEN_LPAREN) {
+		if p.curTokenIs(token.TOKEN_LPAREN) {
 			p.nextToken() // consume '('
 			for {
 				if !p.isIdentifierOrContextualKeyword() {
@@ -160,28 +163,28 @@ func (p *Parser) parseWith() (Statement, error) {
 				}
 				cte.Columns = append(cte.Columns, col)
 
-				if p.curTokenIs(TOKEN_COMMA) {
+				if p.curTokenIs(token.TOKEN_COMMA) {
 					p.nextToken() // consume comma
 				} else {
 					break
 				}
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after CTE column list: %w", err)
 			}
 		}
 
 		// AS
-		if err := p.expect(TOKEN_AS); err != nil {
+		if err := p.expect(token.TOKEN_AS); err != nil {
 			return nil, fmt.Errorf("expected AS after CTE name: %w", err)
 		}
 
 		// (SELECT ...)
-		if err := p.expect(TOKEN_LPAREN); err != nil {
+		if err := p.expect(token.TOKEN_LPAREN); err != nil {
 			return nil, fmt.Errorf("expected '(' after AS: %w", err)
 		}
 
-		if !p.curTokenIs(TOKEN_SELECT) {
+		if !p.curTokenIs(token.TOKEN_SELECT) {
 			return nil, fmt.Errorf("expected SELECT in CTE definition, got %v", p.cur.Type)
 		}
 		cteQuery, err := p.parseSelect()
@@ -190,7 +193,7 @@ func (p *Parser) parseWith() (Statement, error) {
 		}
 
 		// Check if there's a UNION/INTERSECT/EXCEPT after the SELECT
-		if p.curTokenIs(TOKEN_UNION) || p.curTokenIs(TOKEN_INTERSECT) || p.curTokenIs(TOKEN_EXCEPT) {
+		if p.curTokenIs(token.TOKEN_UNION) || p.curTokenIs(token.TOKEN_INTERSECT) || p.curTokenIs(token.TOKEN_EXCEPT) {
 			unionStmt, err := p.parseSetOperation(cteQuery)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse UNION in CTE: %w", err)
@@ -200,14 +203,14 @@ func (p *Parser) parseWith() (Statement, error) {
 			cte.Query = cteQuery
 		}
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after CTE query: %w", err)
 		}
 
 		withClause.CTEs = append(withClause.CTEs, cte)
 
 		// Check for more CTEs
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 			continue
 		}
@@ -215,7 +218,7 @@ func (p *Parser) parseWith() (Statement, error) {
 	}
 
 	// Now parse the main query (SELECT or UNION/INTERSECT/EXCEPT)
-	if !p.curTokenIs(TOKEN_SELECT) {
+	if !p.curTokenIs(token.TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT after WITH clause, got %v", p.cur.Type)
 	}
 
@@ -226,7 +229,7 @@ func (p *Parser) parseWith() (Statement, error) {
 	selectStmt.With = withClause
 
 	// Check for UNION/INTERSECT/EXCEPT
-	if p.curTokenIs(TOKEN_UNION) || p.curTokenIs(TOKEN_INTERSECT) || p.curTokenIs(TOKEN_EXCEPT) {
+	if p.curTokenIs(token.TOKEN_UNION) || p.curTokenIs(token.TOKEN_INTERSECT) || p.curTokenIs(token.TOKEN_EXCEPT) {
 		unionStmt, err := p.parseSetOperation(selectStmt)
 		if err != nil {
 			return nil, err
@@ -241,51 +244,51 @@ func (p *Parser) parseWith() (Statement, error) {
 }
 
 // parseSelect parses: SELECT [DISTINCT [ON (cols)]] columns FROM table [WHERE expr] [ORDER BY cols] [LIMIT n] [OFFSET n]
-func (p *Parser) parseSelect() (*SelectStmt, error) {
+func (p *Parser) parseSelect() (*ast.SelectStmt, error) {
 	return p.parseSelectFull(true)
 }
 
 // parseSelectForSetOp parses SELECT without ORDER BY/LIMIT/OFFSET (for UNION/INTERSECT/EXCEPT right side)
-func (p *Parser) parseSelectForSetOp() (*SelectStmt, error) {
+func (p *Parser) parseSelectForSetOp() (*ast.SelectStmt, error) {
 	return p.parseSelectFull(false)
 }
 
 // parseSelectFull parses a SELECT statement. If parseTrailingClauses is false,
 // it stops before ORDER BY/LIMIT/OFFSET (used for right side of set operations).
-func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error) {
-	stmt := &SelectStmt{}
+func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*ast.SelectStmt, error) {
+	stmt := &ast.SelectStmt{}
 
 	p.nextToken() // consume SELECT
 
 	// Optional DISTINCT [ON (col1, col2, ...)]
-	if p.curTokenIs(TOKEN_DISTINCT) {
+	if p.curTokenIs(token.TOKEN_DISTINCT) {
 		stmt.Distinct = true
 		p.nextToken()
 
 		// Check for DISTINCT ON (PostgreSQL style)
-		if p.curTokenIs(TOKEN_ON) {
+		if p.curTokenIs(token.TOKEN_ON) {
 			p.nextToken() // consume ON
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, fmt.Errorf("expected '(' after DISTINCT ON")
 			}
 
 			// Parse column list
 			var distinctCols []string
 			for {
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected column name in DISTINCT ON, got %v", p.cur.Type)
 				}
 				distinctCols = append(distinctCols, p.cur.Literal)
 				p.nextToken()
 
-				if p.curTokenIs(TOKEN_COMMA) {
+				if p.curTokenIs(token.TOKEN_COMMA) {
 					p.nextToken() // consume comma
 				} else {
 					break
 				}
 			}
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after DISTINCT ON columns")
 			}
 			stmt.DistinctOn = distinctCols
@@ -300,7 +303,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	stmt.Columns = cols
 
 	// FROM
-	if err := p.expect(TOKEN_FROM); err != nil {
+	if err := p.expect(token.TOKEN_FROM); err != nil {
 		return nil, err
 	}
 
@@ -315,7 +318,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	stmt.TableName = tableName
 
 	// Optional table alias: AS alias or just alias
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken() // consume AS
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS")
@@ -335,45 +338,45 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	}
 
 	// Optional JOIN clauses (including LATERAL)
-	for p.curTokenIs(TOKEN_JOIN) || p.curTokenIs(TOKEN_INNER) || p.curTokenIs(TOKEN_LEFT) || p.curTokenIs(TOKEN_RIGHT) || p.curTokenIs(TOKEN_FULL) || p.curTokenIs(TOKEN_CROSS) || p.curTokenIs(TOKEN_LATERAL) || p.curTokenIs(TOKEN_COMMA) {
+	for p.curTokenIs(token.TOKEN_JOIN) || p.curTokenIs(token.TOKEN_INNER) || p.curTokenIs(token.TOKEN_LEFT) || p.curTokenIs(token.TOKEN_RIGHT) || p.curTokenIs(token.TOKEN_FULL) || p.curTokenIs(token.TOKEN_CROSS) || p.curTokenIs(token.TOKEN_LATERAL) || p.curTokenIs(token.TOKEN_COMMA) {
 		// Handle comma-separated LATERAL subquery: FROM t, LATERAL (SELECT ...)
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
-			if p.curTokenIs(TOKEN_LATERAL) {
+			if p.curTokenIs(token.TOKEN_LATERAL) {
 				// Comma + LATERAL: treat as implicit CROSS JOIN LATERAL
 				p.nextToken() // consume LATERAL
-				if !p.curTokenIs(TOKEN_LPAREN) {
+				if !p.curTokenIs(token.TOKEN_LPAREN) {
 					return nil, fmt.Errorf("expected '(' after LATERAL, got %v", p.cur.Type)
 				}
 				p.nextToken() // consume '('
 
-				if !p.curTokenIs(TOKEN_SELECT) {
+				if !p.curTokenIs(token.TOKEN_SELECT) {
 					return nil, fmt.Errorf("expected SELECT after LATERAL '(', got %v", p.cur.Type)
 				}
 				subquery, err := p.parseSelectStatement()
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse LATERAL subquery: %w", err)
 				}
-				selectStmt, ok := subquery.(*SelectStmt)
+				selectStmt, ok := subquery.(*ast.SelectStmt)
 				if !ok {
 					return nil, fmt.Errorf("expected SELECT statement in LATERAL subquery")
 				}
 
-				if err := p.expect(TOKEN_RPAREN); err != nil {
+				if err := p.expect(token.TOKEN_RPAREN); err != nil {
 					return nil, fmt.Errorf("expected ')' after LATERAL subquery: %w", err)
 				}
 
-				join := JoinClause{
+				join := ast.JoinClause{
 					JoinType: "CROSS",
 					Lateral:  true,
 					Subquery: selectStmt,
 				}
 
 				// Subquery alias (required)
-				if p.curTokenIs(TOKEN_AS) {
+				if p.curTokenIs(token.TOKEN_AS) {
 					p.nextToken() // consume AS
 				}
-				if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 					join.TableAlias = p.cur.Literal
 					p.nextToken()
 				} else {
@@ -384,24 +387,24 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 				continue
 			} else {
 				// Regular comma-separated table - treat as implicit CROSS JOIN
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected table name after comma, got %v", p.cur.Type)
 				}
-				join := JoinClause{
+				join := ast.JoinClause{
 					JoinType:  "CROSS",
 					TableName: p.cur.Literal,
 				}
 				p.nextToken()
 
 				// Optional alias
-				if p.curTokenIs(TOKEN_AS) {
+				if p.curTokenIs(token.TOKEN_AS) {
 					p.nextToken()
-					if !p.curTokenIs(TOKEN_IDENT) {
+					if !p.curTokenIs(token.TOKEN_IDENT) {
 						return nil, fmt.Errorf("expected alias after AS")
 					}
 					join.TableAlias = p.cur.Literal
 					p.nextToken()
-				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 					join.TableAlias = p.cur.Literal
 					p.nextToken()
 				}
@@ -419,7 +422,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	}
 
 	// Optional WHERE
-	if p.curTokenIs(TOKEN_WHERE) {
+	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
 		expr, err := p.parseExpression()
 		if err != nil {
@@ -429,9 +432,9 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	}
 
 	// Optional GROUP BY
-	if p.curTokenIs(TOKEN_GROUP) {
+	if p.curTokenIs(token.TOKEN_GROUP) {
 		p.nextToken() // consume GROUP
-		if err := p.expect(TOKEN_BY); err != nil {
+		if err := p.expect(token.TOKEN_BY); err != nil {
 			return nil, err
 		}
 		groupBy, groupingSets, err := p.parseGroupByClause()
@@ -443,7 +446,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	}
 
 	// Optional HAVING (only valid with GROUP BY or GROUPING SETS)
-	if p.curTokenIs(TOKEN_HAVING) {
+	if p.curTokenIs(token.TOKEN_HAVING) {
 		if len(stmt.GroupBy) == 0 && len(stmt.GroupingSets) == 0 {
 			return nil, fmt.Errorf("HAVING requires GROUP BY clause")
 		}
@@ -459,9 +462,9 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 	// (not for right side of UNION/INTERSECT/EXCEPT where these apply to the whole set operation)
 	if parseTrailingClauses {
 		// Optional ORDER BY
-		if p.curTokenIs(TOKEN_ORDER) {
+		if p.curTokenIs(token.TOKEN_ORDER) {
 			p.nextToken() // consume ORDER
-			if err := p.expect(TOKEN_BY); err != nil {
+			if err := p.expect(token.TOKEN_BY); err != nil {
 				return nil, err
 			}
 			orderBy, err := p.parseOrderByList()
@@ -472,11 +475,11 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 		}
 
 		// Optional LIMIT
-		if p.curTokenIs(TOKEN_LIMIT) {
+		if p.curTokenIs(token.TOKEN_LIMIT) {
 			p.nextToken() // consume LIMIT
 
 			// Check for integer literal (common case)
-			if p.curTokenIs(TOKEN_INT) {
+			if p.curTokenIs(token.TOKEN_INT) {
 				limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
 				if err != nil {
 					return nil, fmt.Errorf("invalid LIMIT value: %s", p.cur.Literal)
@@ -486,7 +489,7 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 				}
 				stmt.Limit = &limit
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_LPAREN) {
+			} else if p.curTokenIs(token.TOKEN_LPAREN) {
 				// LIMIT with subquery or expression: LIMIT (SELECT ...)
 				expr, err := p.parsePrimaryExpression()
 				if err != nil {
@@ -499,9 +502,9 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 		}
 
 		// Optional OFFSET
-		if p.curTokenIs(TOKEN_OFFSET) {
+		if p.curTokenIs(token.TOKEN_OFFSET) {
 			p.nextToken() // consume OFFSET
-			if !p.curTokenIs(TOKEN_INT) {
+			if !p.curTokenIs(token.TOKEN_INT) {
 				return nil, fmt.Errorf("expected integer after OFFSET, got %v", p.cur.Type)
 			}
 			offset, err := strconv.ParseInt(p.cur.Literal, 10, 64)
@@ -520,28 +523,28 @@ func (p *Parser) parseSelectFull(parseTrailingClauses bool) (*SelectStmt, error)
 }
 
 // parseOrderByList parses: column [ASC|DESC] [, column [ASC|DESC] ...]
-func (p *Parser) parseOrderByList() ([]OrderByClause, error) {
-	var orderBy []OrderByClause
+func (p *Parser) parseOrderByList() ([]ast.OrderByClause, error) {
+	var orderBy []ast.OrderByClause
 
 	for {
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
 		}
-		clause := OrderByClause{Column: p.cur.Literal}
+		clause := ast.OrderByClause{Column: p.cur.Literal}
 		p.nextToken()
 
 		// Optional ASC/DESC
-		if p.curTokenIs(TOKEN_ASC) {
+		if p.curTokenIs(token.TOKEN_ASC) {
 			clause.Desc = false
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_DESC) {
+		} else if p.curTokenIs(token.TOKEN_DESC) {
 			clause.Desc = true
 			p.nextToken()
 		}
 
 		orderBy = append(orderBy, clause)
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume comma
@@ -558,12 +561,12 @@ func (p *Parser) parseOrderByList() ([]OrderByClause, error) {
 //	GROUP BY CUBE(col1, col2)
 //	GROUP BY GROUPING SETS ((col1, col2), (col1), ())
 //	GROUP BY col1, ROLLUP(col2, col3)
-func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
+func (p *Parser) parseGroupByClause() ([]string, []ast.GroupingSet, error) {
 	var simpleGroupBy []string
-	var groupingSets []GroupingSet
+	var groupingSets []ast.GroupingSet
 
 	for {
-		if p.curTokenIs(TOKEN_ROLLUP) {
+		if p.curTokenIs(token.TOKEN_ROLLUP) {
 			// ROLLUP(col1, col2, ...) expands to (col1,col2,...), (col1,col2), ..., (col1), ()
 			p.nextToken() // consume ROLLUP
 			cols, err := p.parseColumnListInParens()
@@ -574,7 +577,7 @@ func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
 			rollupSets := expandRollup(cols)
 			groupingSets = append(groupingSets, rollupSets...)
 
-		} else if p.curTokenIs(TOKEN_CUBE) {
+		} else if p.curTokenIs(token.TOKEN_CUBE) {
 			// CUBE(col1, col2, ...) expands to all combinations
 			p.nextToken() // consume CUBE
 			cols, err := p.parseColumnListInParens()
@@ -585,13 +588,13 @@ func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
 			cubeSets := expandCube(cols)
 			groupingSets = append(groupingSets, cubeSets...)
 
-		} else if p.curTokenIs(TOKEN_GROUPING) {
+		} else if p.curTokenIs(token.TOKEN_GROUPING) {
 			// GROUPING SETS ((col1, col2), (col1), ())
 			p.nextToken() // consume GROUPING
-			if err := p.expect(TOKEN_SETS); err != nil {
+			if err := p.expect(token.TOKEN_SETS); err != nil {
 				return nil, nil, fmt.Errorf("expected SETS after GROUPING: %w", err)
 			}
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, nil, fmt.Errorf("expected '(' after GROUPING SETS: %w", err)
 			}
 
@@ -603,13 +606,13 @@ func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
 				}
 				groupingSets = append(groupingSets, set)
 
-				if !p.curTokenIs(TOKEN_COMMA) {
+				if !p.curTokenIs(token.TOKEN_COMMA) {
 					break
 				}
 				p.nextToken() // consume comma
 			}
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, nil, fmt.Errorf("expected ')' after GROUPING SETS list: %w", err)
 			}
 
@@ -625,7 +628,7 @@ func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
 			return nil, nil, fmt.Errorf("expected column name, ROLLUP, CUBE, or GROUPING SETS in GROUP BY, got %v", p.cur.Type)
 		}
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume comma
@@ -636,12 +639,12 @@ func (p *Parser) parseGroupByClause() ([]string, []GroupingSet, error) {
 
 // parseColumnListInParens parses (col1, col2, ...) and returns the column names.
 func (p *Parser) parseColumnListInParens() ([]string, error) {
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, err
 	}
 
 	var cols []string
-	for !p.curTokenIs(TOKEN_RPAREN) {
+	for !p.curTokenIs(token.TOKEN_RPAREN) {
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
 		}
@@ -651,13 +654,13 @@ func (p *Parser) parseColumnListInParens() ([]string, error) {
 		}
 		cols = append(cols, colName)
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume comma
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
@@ -665,51 +668,51 @@ func (p *Parser) parseColumnListInParens() ([]string, error) {
 }
 
 // parseGroupingSet parses a single grouping set: (col1, col2) or () for grand total
-func (p *Parser) parseGroupingSet() (GroupingSet, error) {
-	if err := p.expect(TOKEN_LPAREN); err != nil {
-		return GroupingSet{}, fmt.Errorf("expected '(' for grouping set: %w", err)
+func (p *Parser) parseGroupingSet() (ast.GroupingSet, error) {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
+		return ast.GroupingSet{}, fmt.Errorf("expected '(' for grouping set: %w", err)
 	}
 
 	var cols []string
-	for !p.curTokenIs(TOKEN_RPAREN) {
+	for !p.curTokenIs(token.TOKEN_RPAREN) {
 		if !p.isIdentifierOrContextualKeyword() {
-			return GroupingSet{}, fmt.Errorf("expected column name in grouping set, got %v", p.cur.Type)
+			return ast.GroupingSet{}, fmt.Errorf("expected column name in grouping set, got %v", p.cur.Type)
 		}
 		colName, err := p.parseIdentifier()
 		if err != nil {
-			return GroupingSet{}, err
+			return ast.GroupingSet{}, err
 		}
 		cols = append(cols, colName)
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume comma
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
-		return GroupingSet{}, fmt.Errorf("expected ')' after grouping set: %w", err)
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
+		return ast.GroupingSet{}, fmt.Errorf("expected ')' after grouping set: %w", err)
 	}
 
-	return GroupingSet{Columns: cols}, nil
+	return ast.GroupingSet{Columns: cols}, nil
 }
 
 // expandRollup generates grouping sets for ROLLUP(col1, col2, col3).
 // ROLLUP(a, b, c) = (a, b, c), (a, b), (a), ()
-func expandRollup(cols []string) []GroupingSet {
-	var sets []GroupingSet
+func expandRollup(cols []string) []ast.GroupingSet {
+	var sets []ast.GroupingSet
 	for i := len(cols); i >= 0; i-- {
-		sets = append(sets, GroupingSet{Columns: cols[:i]})
+		sets = append(sets, ast.GroupingSet{Columns: cols[:i]})
 	}
 	return sets
 }
 
 // expandCube generates grouping sets for CUBE(col1, col2, col3).
 // CUBE(a, b) = (), (a), (b), (a, b)
-func expandCube(cols []string) []GroupingSet {
+func expandCube(cols []string) []ast.GroupingSet {
 	n := len(cols)
 	count := 1 << n // 2^n combinations
-	sets := make([]GroupingSet, 0, count)
+	sets := make([]ast.GroupingSet, 0, count)
 
 	for mask := 0; mask < count; mask++ {
 		var setCols []string
@@ -718,91 +721,91 @@ func expandCube(cols []string) []GroupingSet {
 				setCols = append(setCols, cols[i])
 			}
 		}
-		sets = append(sets, GroupingSet{Columns: setCols})
+		sets = append(sets, ast.GroupingSet{Columns: setCols})
 	}
 	return sets
 }
 
 // parseJoinClause parses: [INNER|LEFT|RIGHT|FULL|CROSS] [LATERAL] JOIN table|subquery [ON condition]
-func (p *Parser) parseJoinClause() (JoinClause, error) {
-	join := JoinClause{JoinType: "INNER"} // default
+func (p *Parser) parseJoinClause() (ast.JoinClause, error) {
+	join := ast.JoinClause{JoinType: "INNER"} // default
 	isCrossJoin := false
 
 	// Parse optional join type
-	if p.curTokenIs(TOKEN_INNER) {
+	if p.curTokenIs(token.TOKEN_INNER) {
 		p.nextToken()
-	} else if p.curTokenIs(TOKEN_LEFT) {
+	} else if p.curTokenIs(token.TOKEN_LEFT) {
 		join.JoinType = "LEFT"
 		p.nextToken()
-		if p.curTokenIs(TOKEN_OUTER) {
+		if p.curTokenIs(token.TOKEN_OUTER) {
 			p.nextToken() // optional OUTER
 		}
-	} else if p.curTokenIs(TOKEN_RIGHT) {
+	} else if p.curTokenIs(token.TOKEN_RIGHT) {
 		join.JoinType = "RIGHT"
 		p.nextToken()
-		if p.curTokenIs(TOKEN_OUTER) {
+		if p.curTokenIs(token.TOKEN_OUTER) {
 			p.nextToken() // optional OUTER
 		}
-	} else if p.curTokenIs(TOKEN_FULL) {
+	} else if p.curTokenIs(token.TOKEN_FULL) {
 		join.JoinType = "FULL"
 		p.nextToken()
-		if p.curTokenIs(TOKEN_OUTER) {
+		if p.curTokenIs(token.TOKEN_OUTER) {
 			p.nextToken() // optional OUTER
 		}
-	} else if p.curTokenIs(TOKEN_CROSS) {
+	} else if p.curTokenIs(token.TOKEN_CROSS) {
 		join.JoinType = "CROSS"
 		isCrossJoin = true
 		p.nextToken()
-	} else if p.curTokenIs(TOKEN_LATERAL) {
+	} else if p.curTokenIs(token.TOKEN_LATERAL) {
 		// LATERAL without explicit join type defaults to INNER
 		join.Lateral = true
 		p.nextToken()
 	}
 
 	// Check for LATERAL after join type (e.g., LEFT LATERAL JOIN, CROSS LATERAL JOIN)
-	if p.curTokenIs(TOKEN_LATERAL) {
+	if p.curTokenIs(token.TOKEN_LATERAL) {
 		join.Lateral = true
 		p.nextToken()
 	}
 
 	// Expect JOIN keyword
-	if err := p.expect(TOKEN_JOIN); err != nil {
+	if err := p.expect(token.TOKEN_JOIN); err != nil {
 		return join, err
 	}
 
 	// Check for LATERAL after JOIN keyword (e.g., JOIN LATERAL)
-	if p.curTokenIs(TOKEN_LATERAL) {
+	if p.curTokenIs(token.TOKEN_LATERAL) {
 		join.Lateral = true
 		p.nextToken()
 	}
 
 	// Check if joining a subquery (derived table)
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume '('
 
 		// Parse the subquery
-		if !p.curTokenIs(TOKEN_SELECT) {
+		if !p.curTokenIs(token.TOKEN_SELECT) {
 			return join, fmt.Errorf("expected SELECT after '(' in JOIN, got %v", p.cur.Type)
 		}
 		subquery, err := p.parseSelectStatement()
 		if err != nil {
 			return join, fmt.Errorf("failed to parse subquery in JOIN: %w", err)
 		}
-		selectStmt, ok := subquery.(*SelectStmt)
+		selectStmt, ok := subquery.(*ast.SelectStmt)
 		if !ok {
 			return join, fmt.Errorf("expected SELECT statement in JOIN subquery")
 		}
 		join.Subquery = selectStmt
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return join, fmt.Errorf("expected ')' after subquery in JOIN: %w", err)
 		}
 
 		// Subquery alias (required for derived tables)
-		if p.curTokenIs(TOKEN_AS) {
+		if p.curTokenIs(token.TOKEN_AS) {
 			p.nextToken() // consume AS
 		}
-		if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+		if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 			join.TableAlias = p.cur.Literal
 			p.nextToken()
 		} else if join.Subquery != nil && join.TableAlias == "" {
@@ -810,21 +813,21 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 		}
 	} else {
 		// Table name
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.curTokenIs(token.TOKEN_IDENT) {
 			return join, fmt.Errorf("expected table name after JOIN, got %v", p.cur.Type)
 		}
 		join.TableName = p.cur.Literal
 		p.nextToken()
 
 		// Optional table alias: AS alias or just alias (before ON)
-		if p.curTokenIs(TOKEN_AS) {
+		if p.curTokenIs(token.TOKEN_AS) {
 			p.nextToken() // consume AS
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(token.TOKEN_IDENT) {
 				return join, fmt.Errorf("expected alias after AS")
 			}
 			join.TableAlias = p.cur.Literal
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_IDENT) && !p.curTokenIs(TOKEN_ON) && !p.isKeyword() {
+		} else if p.curTokenIs(token.TOKEN_IDENT) && !p.curTokenIs(token.TOKEN_ON) && !p.isKeyword() {
 			// Implicit alias without AS
 			join.TableAlias = p.cur.Literal
 			p.nextToken()
@@ -837,12 +840,12 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 	}
 
 	// For LATERAL without ON clause (implicit join), condition is optional
-	if join.Lateral && !p.curTokenIs(TOKEN_ON) {
+	if join.Lateral && !p.curTokenIs(token.TOKEN_ON) {
 		return join, nil
 	}
 
 	// ON keyword (required for non-CROSS, non-implicit-LATERAL joins)
-	if err := p.expect(TOKEN_ON); err != nil {
+	if err := p.expect(token.TOKEN_ON); err != nil {
 		return join, err
 	}
 
@@ -859,7 +862,7 @@ func (p *Parser) parseJoinClause() (JoinClause, error) {
 // isAggregateToken returns true if the token is an aggregate function keyword.
 func (p *Parser) isAggregateToken() bool {
 	switch p.cur.Type {
-	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
+	case token.TOKEN_COUNT, token.TOKEN_SUM, token.TOKEN_AVG, token.TOKEN_MIN, token.TOKEN_MAX:
 		return true
 	}
 	return false
@@ -868,8 +871,8 @@ func (p *Parser) isAggregateToken() bool {
 // isWindowFunctionToken returns true if the token is a window-specific function.
 func (p *Parser) isWindowFunctionToken() bool {
 	switch p.cur.Type {
-	case TOKEN_ROW_NUMBER, TOKEN_RANK, TOKEN_DENSE_RANK, TOKEN_NTILE,
-		TOKEN_LAG, TOKEN_LEAD, TOKEN_FIRST_VALUE, TOKEN_LAST_VALUE, TOKEN_NTH_VALUE:
+	case token.TOKEN_ROW_NUMBER, token.TOKEN_RANK, token.TOKEN_DENSE_RANK, token.TOKEN_NTILE,
+		token.TOKEN_LAG, token.TOKEN_LEAD, token.TOKEN_FIRST_VALUE, token.TOKEN_LAST_VALUE, token.TOKEN_NTH_VALUE:
 		return true
 	}
 	return false
@@ -878,23 +881,23 @@ func (p *Parser) isWindowFunctionToken() bool {
 // windowFunctionName returns the name of the current window function token.
 func (p *Parser) windowFunctionName() string {
 	switch p.cur.Type {
-	case TOKEN_ROW_NUMBER:
+	case token.TOKEN_ROW_NUMBER:
 		return "ROW_NUMBER"
-	case TOKEN_RANK:
+	case token.TOKEN_RANK:
 		return "RANK"
-	case TOKEN_DENSE_RANK:
+	case token.TOKEN_DENSE_RANK:
 		return "DENSE_RANK"
-	case TOKEN_NTILE:
+	case token.TOKEN_NTILE:
 		return "NTILE"
-	case TOKEN_LAG:
+	case token.TOKEN_LAG:
 		return "LAG"
-	case TOKEN_LEAD:
+	case token.TOKEN_LEAD:
 		return "LEAD"
-	case TOKEN_FIRST_VALUE:
+	case token.TOKEN_FIRST_VALUE:
 		return "FIRST_VALUE"
-	case TOKEN_LAST_VALUE:
+	case token.TOKEN_LAST_VALUE:
 		return "LAST_VALUE"
-	case TOKEN_NTH_VALUE:
+	case token.TOKEN_NTH_VALUE:
 		return "NTH_VALUE"
 	}
 	return ""
@@ -903,11 +906,11 @@ func (p *Parser) windowFunctionName() string {
 // isKeyword returns true if the current token is a SQL keyword (not suitable for implicit alias).
 func (p *Parser) isKeyword() bool {
 	switch p.cur.Type {
-	case TOKEN_FROM, TOKEN_WHERE, TOKEN_ORDER, TOKEN_GROUP, TOKEN_HAVING,
-		TOKEN_LIMIT, TOKEN_OFFSET, TOKEN_JOIN, TOKEN_INNER, TOKEN_LEFT,
-		TOKEN_RIGHT, TOKEN_FULL, TOKEN_CROSS, TOKEN_OUTER, TOKEN_ON, TOKEN_AND, TOKEN_OR, TOKEN_AS,
-		TOKEN_IN, TOKEN_BETWEEN, TOKEN_COMMA, TOKEN_SEMICOLON, TOKEN_OVER, TOKEN_PARTITION,
-		TOKEN_WHEN, TOKEN_THEN, TOKEN_MATCHED:
+	case token.TOKEN_FROM, token.TOKEN_WHERE, token.TOKEN_ORDER, token.TOKEN_GROUP, token.TOKEN_HAVING,
+		token.TOKEN_LIMIT, token.TOKEN_OFFSET, token.TOKEN_JOIN, token.TOKEN_INNER, token.TOKEN_LEFT,
+		token.TOKEN_RIGHT, token.TOKEN_FULL, token.TOKEN_CROSS, token.TOKEN_OUTER, token.TOKEN_ON, token.TOKEN_AND, token.TOKEN_OR, token.TOKEN_AS,
+		token.TOKEN_IN, token.TOKEN_BETWEEN, token.TOKEN_COMMA, token.TOKEN_SEMICOLON, token.TOKEN_OVER, token.TOKEN_PARTITION,
+		token.TOKEN_WHEN, token.TOKEN_THEN, token.TOKEN_MATCHED:
 		return true
 	}
 	return false
@@ -917,15 +920,15 @@ func (p *Parser) isKeyword() bool {
 // or a contextual keyword that can be used as an identifier in certain positions.
 // This allows table/column names like "target", "source", "matched" etc.
 func (p *Parser) isIdentifierOrContextualKeyword() bool {
-	if p.curTokenIs(TOKEN_IDENT) {
+	if p.curTokenIs(token.TOKEN_IDENT) {
 		return true
 	}
 	// Contextual keywords that can be used as identifiers
 	switch p.cur.Type {
-	case TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING,
-		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
-		TOKEN_DATE,    // Allow "date" as column/table name
-		TOKEN_DEFAULT: // Allow "default" as database name
+	case token.TOKEN_TARGET, token.TOKEN_SOURCE, token.TOKEN_MATCHED, token.TOKEN_NOTHING,
+		token.TOKEN_YEAR, token.TOKEN_MONTH, token.TOKEN_DAY, token.TOKEN_HOUR, token.TOKEN_MINUTE, token.TOKEN_SECOND,
+		token.TOKEN_DATE,    // Allow "date" as column/table name
+		token.TOKEN_DEFAULT: // Allow "default" as database name
 		return true
 	}
 	return false
@@ -942,10 +945,10 @@ func (p *Parser) parseIdentifier() (string, error) {
 	return "", fmt.Errorf("expected identifier, got %v (%q)", p.cur.Type, p.cur.Literal)
 }
 
-// parseSelectStatement parses a SELECT statement when the cursor is on TOKEN_SELECT.
+// parseSelectStatement parses a SELECT statement when the cursor is on token.TOKEN_SELECT.
 // This is a helper for parsing subqueries.
-func (p *Parser) parseSelectStatement() (Statement, error) {
-	if !p.curTokenIs(TOKEN_SELECT) {
+func (p *Parser) parseSelectStatement() (ast.Statement, error) {
+	if !p.curTokenIs(token.TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT, got %v", p.cur.Type)
 	}
 	return p.parseSelect()
@@ -954,15 +957,15 @@ func (p *Parser) parseSelectStatement() (Statement, error) {
 // aggregateName returns the name of the current aggregate function token.
 func (p *Parser) aggregateName() string {
 	switch p.cur.Type {
-	case TOKEN_COUNT:
+	case token.TOKEN_COUNT:
 		return "COUNT"
-	case TOKEN_SUM:
+	case token.TOKEN_SUM:
 		return "SUM"
-	case TOKEN_AVG:
+	case token.TOKEN_AVG:
 		return "AVG"
-	case TOKEN_MIN:
+	case token.TOKEN_MIN:
 		return "MIN"
-	case TOKEN_MAX:
+	case token.TOKEN_MAX:
 		return "MAX"
 	}
 	return ""
@@ -971,9 +974,9 @@ func (p *Parser) aggregateName() string {
 // isDateFunction returns true if the current token is a date/time function.
 func (p *Parser) isDateFunction() bool {
 	switch p.cur.Type {
-	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE,
-		TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND,
-		TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+	case token.TOKEN_NOW, token.TOKEN_CURRENT_TIMESTAMP, token.TOKEN_CURRENT_DATE,
+		token.TOKEN_YEAR, token.TOKEN_MONTH, token.TOKEN_DAY, token.TOKEN_HOUR, token.TOKEN_MINUTE, token.TOKEN_SECOND,
+		token.TOKEN_DATE_ADD, token.TOKEN_DATE_SUB:
 		return true
 	}
 	return false
@@ -983,83 +986,83 @@ func (p *Parser) isDateFunction() bool {
 func (p *Parser) isFunctionToken() bool {
 	switch p.cur.Type {
 	// String functions
-	case TOKEN_COALESCE, TOKEN_NULLIF, TOKEN_UPPER, TOKEN_LOWER, TOKEN_LENGTH,
-		TOKEN_CONCAT, TOKEN_SUBSTR, TOKEN_SUBSTRING:
+	case token.TOKEN_COALESCE, token.TOKEN_NULLIF, token.TOKEN_UPPER, token.TOKEN_LOWER, token.TOKEN_LENGTH,
+		token.TOKEN_CONCAT, token.TOKEN_SUBSTR, token.TOKEN_SUBSTRING:
 		return true
 	// Extended string functions
-	case TOKEN_TRIM, TOKEN_LTRIM, TOKEN_RTRIM, TOKEN_REPLACE, TOKEN_POSITION,
-		TOKEN_REVERSE, TOKEN_REPEAT, TOKEN_LPAD, TOKEN_RPAD:
+	case token.TOKEN_TRIM, token.TOKEN_LTRIM, token.TOKEN_RTRIM, token.TOKEN_REPLACE, token.TOKEN_POSITION,
+		token.TOKEN_REVERSE, token.TOKEN_REPEAT, token.TOKEN_LPAD, token.TOKEN_RPAD:
 		return true
 	// Math functions
-	case TOKEN_ABS, TOKEN_ROUND, TOKEN_FLOOR, TOKEN_CEIL, TOKEN_CEILING,
-		TOKEN_MOD, TOKEN_POWER, TOKEN_SQRT:
+	case token.TOKEN_ABS, token.TOKEN_ROUND, token.TOKEN_FLOOR, token.TOKEN_CEIL, token.TOKEN_CEILING,
+		token.TOKEN_MOD, token.TOKEN_POWER, token.TOKEN_SQRT:
 		return true
 	// Special expressions
-	case TOKEN_CAST, TOKEN_EXTRACT:
+	case token.TOKEN_CAST, token.TOKEN_EXTRACT:
 		return true
 	// Grouping function (for GROUPING SETS/CUBE/ROLLUP)
-	case TOKEN_GROUPING:
+	case token.TOKEN_GROUPING:
 		return true
 	// Full-Text Search functions
-	case TOKEN_TO_TSVECTOR, TOKEN_TO_TSQUERY, TOKEN_PLAINTO_TSQUERY, TOKEN_WEBSEARCH,
-		TOKEN_TS_RANK, TOKEN_TS_HEADLINE, TOKEN_MATCH:
+	case token.TOKEN_TO_TSVECTOR, token.TOKEN_TO_TSQUERY, token.TOKEN_PLAINTO_TSQUERY, token.TOKEN_WEBSEARCH,
+		token.TOKEN_TS_RANK, token.TOKEN_TS_HEADLINE, token.TOKEN_MATCH:
 		return true
 	}
 	return false
 }
 
 // parseDateFunctionInSelect parses date functions when they appear in SELECT columns.
-func (p *Parser) parseDateFunctionInSelect() (Expression, error) {
+func (p *Parser) parseDateFunctionInSelect() (ast.Expression, error) {
 	switch p.cur.Type {
-	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE:
+	case token.TOKEN_NOW, token.TOKEN_CURRENT_TIMESTAMP, token.TOKEN_CURRENT_DATE:
 		return p.parseDateFunction()
-	case TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+	case token.TOKEN_YEAR, token.TOKEN_MONTH, token.TOKEN_DAY, token.TOKEN_HOUR, token.TOKEN_MINUTE, token.TOKEN_SECOND:
 		return p.parseDatePartFunction()
-	case TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+	case token.TOKEN_DATE_ADD, token.TOKEN_DATE_SUB:
 		return p.parseDateAddFunction()
 	default:
 		return nil, fmt.Errorf("not a date function: %v", p.cur.Type)
 	}
 }
 
-func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
-	var cols []SelectColumn
+func (p *Parser) parseSelectColumns() ([]ast.SelectColumn, error) {
+	var cols []ast.SelectColumn
 
 	for {
-		if p.curTokenIs(TOKEN_STAR) {
-			cols = append(cols, SelectColumn{Star: true})
+		if p.curTokenIs(token.TOKEN_STAR) {
+			cols = append(cols, ast.SelectColumn{Star: true})
 			p.nextToken()
 		} else if p.isWindowFunctionToken() {
 			// Parse window-specific functions: ROW_NUMBER(), RANK(), etc.
 			funcName := p.windowFunctionName()
 			p.nextToken() // consume function name
 
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, fmt.Errorf("expected ( after %s", funcName)
 			}
 
 			// Parse optional arguments (e.g., NTILE(4), LAG(col, 1))
-			var args []Expression
-			if !p.curTokenIs(TOKEN_RPAREN) {
+			var args []ast.Expression
+			if !p.curTokenIs(token.TOKEN_RPAREN) {
 				for {
 					arg, err := p.parseExpression()
 					if err != nil {
 						return nil, err
 					}
 					args = append(args, arg)
-					if !p.curTokenIs(TOKEN_COMMA) {
+					if !p.curTokenIs(token.TOKEN_COMMA) {
 						break
 					}
 					p.nextToken() // consume comma
 				}
 			}
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, err
 			}
 
 			// Window functions MUST have OVER clause
-			if !p.curTokenIs(TOKEN_OVER) {
+			if !p.curTokenIs(token.TOKEN_OVER) {
 				return nil, fmt.Errorf("%s requires OVER clause", funcName)
 			}
 
@@ -1068,23 +1071,23 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				return nil, err
 			}
 
-			windowExpr := &WindowFuncExpr{
+			windowExpr := &ast.WindowFuncExpr{
 				Function: funcName,
 				Args:     args,
 				Over:     overClause,
 			}
 
-			col := SelectColumn{Expression: windowExpr}
+			col := ast.SelectColumn{Expression: windowExpr}
 
 			// Check for alias
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken()
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				col.Alias = p.cur.Literal
 				p.nextToken()
 			}
@@ -1096,55 +1099,55 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 			funcName := p.aggregateName()
 			p.nextToken() // consume function name
 
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, fmt.Errorf("expected ( after %s", funcName)
 			}
 
 			var arg string
-			if p.curTokenIs(TOKEN_STAR) {
+			if p.curTokenIs(token.TOKEN_STAR) {
 				arg = "*"
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) {
+			} else if p.curTokenIs(token.TOKEN_IDENT) {
 				arg = p.cur.Literal
 				p.nextToken()
 			} else {
 				return nil, fmt.Errorf("expected column name or * in %s(), got %v", funcName, p.cur.Type)
 			}
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, err
 			}
 
 			// Check if this is a window function (aggregate with OVER clause)
-			if p.curTokenIs(TOKEN_OVER) {
+			if p.curTokenIs(token.TOKEN_OVER) {
 				overClause, err := p.parseOverClause()
 				if err != nil {
 					return nil, err
 				}
 
 				// Convert to window function expression
-				var args []Expression
+				var args []ast.Expression
 				if arg != "*" {
-					args = append(args, &ColumnRef{Name: arg})
+					args = append(args, &ast.ColumnRef{Name: arg})
 				}
 
-				windowExpr := &WindowFuncExpr{
+				windowExpr := &ast.WindowFuncExpr{
 					Function: funcName,
 					Args:     args,
 					Over:     overClause,
 				}
 
-				col := SelectColumn{Expression: windowExpr}
+				col := ast.SelectColumn{Expression: windowExpr}
 
 				// Check for alias
-				if p.curTokenIs(TOKEN_AS) {
+				if p.curTokenIs(token.TOKEN_AS) {
 					p.nextToken()
-					if !p.curTokenIs(TOKEN_IDENT) {
+					if !p.curTokenIs(token.TOKEN_IDENT) {
 						return nil, fmt.Errorf("expected alias name after AS")
 					}
 					col.Alias = p.cur.Literal
 					p.nextToken()
-				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 					col.Alias = p.cur.Literal
 					p.nextToken()
 				}
@@ -1152,19 +1155,19 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				cols = append(cols, col)
 			} else {
 				// Regular aggregate function (no OVER)
-				col := SelectColumn{
-					Aggregate: &AggregateFunc{Function: funcName, Arg: arg},
+				col := ast.SelectColumn{
+					Aggregate: &ast.AggregateFunc{Function: funcName, Arg: arg},
 				}
 
 				// Check for alias: AS name or just name
-				if p.curTokenIs(TOKEN_AS) {
+				if p.curTokenIs(token.TOKEN_AS) {
 					p.nextToken() // consume AS
-					if !p.curTokenIs(TOKEN_IDENT) {
+					if !p.curTokenIs(token.TOKEN_IDENT) {
 						return nil, fmt.Errorf("expected alias name after AS")
 					}
 					col.Alias = p.cur.Literal
 					p.nextToken()
-				} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+				} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 					// Implicit alias (without AS)
 					col.Alias = p.cur.Literal
 					p.nextToken()
@@ -1172,24 +1175,24 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 
 				cols = append(cols, col)
 			}
-		} else if p.curTokenIs(TOKEN_CASE) {
+		} else if p.curTokenIs(token.TOKEN_CASE) {
 			// Parse CASE expression
 			expr, err := p.parseCaseExpression()
 			if err != nil {
 				return nil, err
 			}
 
-			col := SelectColumn{Expression: expr}
+			col := ast.SelectColumn{Expression: expr}
 
 			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				// Implicit alias (without AS)
 				col.Alias = p.cur.Literal
 				p.nextToken()
@@ -1203,17 +1206,17 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				return nil, err
 			}
 
-			col := SelectColumn{Expression: expr}
+			col := ast.SelectColumn{Expression: expr}
 
 			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				// Implicit alias (without AS)
 				col.Alias = p.cur.Literal
 				p.nextToken()
@@ -1227,72 +1230,72 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 				return nil, err
 			}
 
-			col := SelectColumn{Expression: expr}
+			col := ast.SelectColumn{Expression: expr}
 
 			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				// Implicit alias (without AS)
 				col.Alias = p.cur.Literal
 				p.nextToken()
 			}
 
 			cols = append(cols, col)
-		} else if p.curTokenIs(TOKEN_INT) || p.curTokenIs(TOKEN_STRING) || p.curTokenIs(TOKEN_TRUE) || p.curTokenIs(TOKEN_FALSE) || p.curTokenIs(TOKEN_NULL) {
+		} else if p.curTokenIs(token.TOKEN_INT) || p.curTokenIs(token.TOKEN_STRING) || p.curTokenIs(token.TOKEN_TRUE) || p.curTokenIs(token.TOKEN_FALSE) || p.curTokenIs(token.TOKEN_NULL) {
 			// Parse literal as expression (e.g., SELECT 1 FROM dual)
 			expr, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, err
 			}
 
-			col := SelectColumn{Expression: expr}
+			col := ast.SelectColumn{Expression: expr}
 
 			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				// Implicit alias (without AS)
 				col.Alias = p.cur.Literal
 				p.nextToken()
 			}
 
 			cols = append(cols, col)
-		} else if p.curTokenIs(TOKEN_IDENT) {
+		} else if p.curTokenIs(token.TOKEN_IDENT) {
 			name := p.cur.Literal
 			p.nextToken()
 
 			// Check for qualified name (table.column)
 			if p.cur.Literal == "." {
 				p.nextToken() // consume .
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected column name after '.', got %v", p.cur.Type)
 				}
 				name = name + "." + p.cur.Literal
 				p.nextToken()
 			}
 
-			col := SelectColumn{Name: name}
+			col := ast.SelectColumn{Name: name}
 
 			// Check for alias: AS name or just name
-			if p.curTokenIs(TOKEN_AS) {
+			if p.curTokenIs(token.TOKEN_AS) {
 				p.nextToken() // consume AS
-				if !p.curTokenIs(TOKEN_IDENT) {
+				if !p.curTokenIs(token.TOKEN_IDENT) {
 					return nil, fmt.Errorf("expected alias name after AS")
 				}
 				col.Alias = p.cur.Literal
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_IDENT) && !p.isKeyword() {
+			} else if p.curTokenIs(token.TOKEN_IDENT) && !p.isKeyword() {
 				// Implicit alias (without AS)
 				col.Alias = p.cur.Literal
 				p.nextToken()
@@ -1303,7 +1306,7 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 			return nil, fmt.Errorf("expected column name or *, got %v", p.cur.Type)
 		}
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume comma
@@ -1313,12 +1316,12 @@ func (p *Parser) parseSelectColumns() ([]SelectColumn, error) {
 }
 
 // parseInsert parses: INSERT INTO table [(columns)] VALUES (values)
-func (p *Parser) parseInsert() (*InsertStmt, error) {
-	stmt := &InsertStmt{}
+func (p *Parser) parseInsert() (*ast.InsertStmt, error) {
+	stmt := &ast.InsertStmt{}
 
 	p.nextToken() // consume INSERT
 
-	if err := p.expect(TOKEN_INTO); err != nil {
+	if err := p.expect(token.TOKEN_INTO); err != nil {
 		return nil, err
 	}
 
@@ -1333,7 +1336,7 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 	stmt.TableName = tableName
 
 	// Optional column list
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken()
 		for {
 			if !p.isIdentifierOrContextualKeyword() {
@@ -1345,27 +1348,27 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 			}
 			stmt.Columns = append(stmt.Columns, colName)
 
-			if !p.curTokenIs(TOKEN_COMMA) {
+			if !p.curTokenIs(token.TOKEN_COMMA) {
 				break
 			}
 			p.nextToken()
 		}
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, err
 		}
 	}
 
 	// VALUES or SELECT
-	if p.curTokenIs(TOKEN_VALUES) {
+	if p.curTokenIs(token.TOKEN_VALUES) {
 		p.nextToken()
 		// Parse multiple value rows: (v1, v2), (v3, v4), ...
 		for {
 			// (values)
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, err
 			}
 
-			var rowValues []Expression
+			var rowValues []ast.Expression
 			for {
 				expr, err := p.parsePrimaryExpression()
 				if err != nil {
@@ -1373,25 +1376,25 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 				}
 				rowValues = append(rowValues, expr)
 
-				if !p.curTokenIs(TOKEN_COMMA) {
+				if !p.curTokenIs(token.TOKEN_COMMA) {
 					break
 				}
 				p.nextToken()
 			}
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, err
 			}
 
 			stmt.ValuesList = append(stmt.ValuesList, rowValues)
 
 			// Check for more value rows
-			if !p.curTokenIs(TOKEN_COMMA) {
+			if !p.curTokenIs(token.TOKEN_COMMA) {
 				break
 			}
 			p.nextToken() // consume comma between value rows
 		}
-	} else if p.curTokenIs(TOKEN_SELECT) {
+	} else if p.curTokenIs(token.TOKEN_SELECT) {
 		selectStmt, err := p.parseSelect()
 		if err != nil {
 			return nil, err
@@ -1402,17 +1405,17 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 	}
 
 	// Parse optional ON CONFLICT clause
-	if p.curTokenIs(TOKEN_ON) {
+	if p.curTokenIs(token.TOKEN_ON) {
 		p.nextToken() // consume ON
-		if !p.curTokenIs(TOKEN_CONFLICT) {
+		if !p.curTokenIs(token.TOKEN_CONFLICT) {
 			return nil, fmt.Errorf("expected CONFLICT after ON, got %v", p.cur.Type)
 		}
 		p.nextToken() // consume CONFLICT
 
-		onConflict := &OnConflictClause{}
+		onConflict := &ast.OnConflictClause{}
 
 		// Parse optional conflict columns: ON CONFLICT (col1, col2)
-		if p.curTokenIs(TOKEN_LPAREN) {
+		if p.curTokenIs(token.TOKEN_LPAREN) {
 			p.nextToken() // consume (
 			for {
 				if !p.isIdentifierOrContextualKeyword() {
@@ -1423,28 +1426,28 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 					return nil, err
 				}
 				onConflict.ConflictColumns = append(onConflict.ConflictColumns, colName)
-				if !p.curTokenIs(TOKEN_COMMA) {
+				if !p.curTokenIs(token.TOKEN_COMMA) {
 					break
 				}
 				p.nextToken() // consume comma
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, err
 			}
 		}
 
 		// Parse DO NOTHING or DO UPDATE SET ...
-		if !p.curTokenIs(TOKEN_DO) {
+		if !p.curTokenIs(token.TOKEN_DO) {
 			return nil, fmt.Errorf("expected DO after ON CONFLICT, got %v", p.cur.Type)
 		}
 		p.nextToken() // consume DO
 
-		if p.curTokenIs(TOKEN_NOTHING) {
+		if p.curTokenIs(token.TOKEN_NOTHING) {
 			p.nextToken() // consume NOTHING
 			onConflict.DoNothing = true
-		} else if p.curTokenIs(TOKEN_UPDATE) {
+		} else if p.curTokenIs(token.TOKEN_UPDATE) {
 			p.nextToken() // consume UPDATE
-			if err := p.expect(TOKEN_SET); err != nil {
+			if err := p.expect(token.TOKEN_SET); err != nil {
 				return nil, fmt.Errorf("expected SET after DO UPDATE, got %v", p.cur.Type)
 			}
 
@@ -1458,7 +1461,7 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 					return nil, err
 				}
 
-				if err := p.expect(TOKEN_EQ); err != nil {
+				if err := p.expect(token.TOKEN_EQ); err != nil {
 					return nil, err
 				}
 
@@ -1467,9 +1470,9 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 					return nil, err
 				}
 
-				onConflict.UpdateSet = append(onConflict.UpdateSet, Assignment{Column: colName, Value: expr})
+				onConflict.UpdateSet = append(onConflict.UpdateSet, ast.Assignment{Column: colName, Value: expr})
 
-				if !p.curTokenIs(TOKEN_COMMA) {
+				if !p.curTokenIs(token.TOKEN_COMMA) {
 					break
 				}
 				p.nextToken() // consume comma
@@ -1485,8 +1488,8 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 }
 
 // parseUpdate parses: UPDATE table SET assignments [WHERE expr]
-func (p *Parser) parseUpdate() (*UpdateStmt, error) {
-	stmt := &UpdateStmt{}
+func (p *Parser) parseUpdate() (*ast.UpdateStmt, error) {
+	stmt := &ast.UpdateStmt{}
 
 	p.nextToken() // consume UPDATE
 
@@ -1501,7 +1504,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 	stmt.TableName = tableName
 
 	// Optional alias for target table
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken() // consume AS
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
@@ -1511,7 +1514,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 			return nil, err
 		}
 		stmt.TableAlias = alias
-	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SET) {
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_SET) {
 		// Alias without AS keyword
 		alias, err := p.parseIdentifier()
 		if err != nil {
@@ -1521,7 +1524,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 	}
 
 	// SET
-	if err := p.expect(TOKEN_SET); err != nil {
+	if err := p.expect(token.TOKEN_SET); err != nil {
 		return nil, err
 	}
 
@@ -1535,7 +1538,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 			return nil, err
 		}
 
-		if err := p.expect(TOKEN_EQ); err != nil {
+		if err := p.expect(token.TOKEN_EQ); err != nil {
 			return nil, err
 		}
 
@@ -1544,16 +1547,16 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 			return nil, err
 		}
 
-		stmt.Assignments = append(stmt.Assignments, Assignment{Column: colName, Value: expr})
+		stmt.Assignments = append(stmt.Assignments, ast.Assignment{Column: colName, Value: expr})
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken()
 	}
 
 	// Optional FROM clause (PostgreSQL style: UPDATE t1 SET ... FROM t2 WHERE ...)
-	if p.curTokenIs(TOKEN_FROM) {
+	if p.curTokenIs(token.TOKEN_FROM) {
 		p.nextToken() // consume FROM
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected table name in FROM, got %v", p.cur.Type)
@@ -1565,7 +1568,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 		stmt.FromTable = fromTable
 
 		// Optional alias for FROM table
-		if p.curTokenIs(TOKEN_AS) {
+		if p.curTokenIs(token.TOKEN_AS) {
 			p.nextToken() // consume AS
 			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
@@ -1575,7 +1578,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 				return nil, err
 			}
 			stmt.FromAlias = alias
-		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHERE) {
+		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_WHERE) {
 			// Alias without AS keyword
 			alias, err := p.parseIdentifier()
 			if err != nil {
@@ -1586,7 +1589,7 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 	}
 
 	// Optional WHERE
-	if p.curTokenIs(TOKEN_WHERE) {
+	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
 		expr, err := p.parseExpression()
 		if err != nil {
@@ -1599,12 +1602,12 @@ func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 }
 
 // parseDelete parses: DELETE FROM table [USING table] [WHERE expr]
-func (p *Parser) parseDelete() (*DeleteStmt, error) {
-	stmt := &DeleteStmt{}
+func (p *Parser) parseDelete() (*ast.DeleteStmt, error) {
+	stmt := &ast.DeleteStmt{}
 
 	p.nextToken() // consume DELETE
 
-	if err := p.expect(TOKEN_FROM); err != nil {
+	if err := p.expect(token.TOKEN_FROM); err != nil {
 		return nil, err
 	}
 
@@ -1619,7 +1622,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	stmt.TableName = tableName
 
 	// Optional alias for target table
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken() // consume AS
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
@@ -1629,7 +1632,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 			return nil, err
 		}
 		stmt.TableAlias = alias
-	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_USING) && !p.curTokenIs(TOKEN_WHERE) {
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_USING) && !p.curTokenIs(token.TOKEN_WHERE) {
 		// Alias without AS keyword
 		alias, err := p.parseIdentifier()
 		if err != nil {
@@ -1639,7 +1642,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	}
 
 	// Optional USING clause (PostgreSQL style: DELETE FROM t1 USING t2 WHERE ...)
-	if p.curTokenIs(TOKEN_USING) {
+	if p.curTokenIs(token.TOKEN_USING) {
 		p.nextToken() // consume USING
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected table name in USING, got %v", p.cur.Type)
@@ -1651,7 +1654,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 		stmt.UsingTable = usingTable
 
 		// Optional alias for USING table
-		if p.curTokenIs(TOKEN_AS) {
+		if p.curTokenIs(token.TOKEN_AS) {
 			p.nextToken() // consume AS
 			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected alias after AS, got %v", p.cur.Type)
@@ -1661,7 +1664,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 				return nil, err
 			}
 			stmt.UsingAlias = alias
-		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHERE) {
+		} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_WHERE) {
 			// Alias without AS keyword
 			alias, err := p.parseIdentifier()
 			if err != nil {
@@ -1672,7 +1675,7 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 	}
 
 	// Optional WHERE
-	if p.curTokenIs(TOKEN_WHERE) {
+	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
 		expr, err := p.parseExpression()
 		if err != nil {
@@ -1688,13 +1691,13 @@ func (p *Parser) parseDelete() (*DeleteStmt, error) {
 //
 //	WHEN MATCHED [AND condition] THEN UPDATE SET ... / DELETE / DO NOTHING
 //	WHEN NOT MATCHED [AND condition] THEN INSERT (...) VALUES (...) / DO NOTHING
-func (p *Parser) parseMerge() (*MergeStmt, error) {
-	stmt := &MergeStmt{}
+func (p *Parser) parseMerge() (*ast.MergeStmt, error) {
+	stmt := &ast.MergeStmt{}
 
 	p.nextToken() // consume MERGE
 
 	// INTO keyword
-	if err := p.expect(TOKEN_INTO); err != nil {
+	if err := p.expect(token.TOKEN_INTO); err != nil {
 		return nil, fmt.Errorf("expected INTO after MERGE: %w", err)
 	}
 
@@ -1709,7 +1712,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 	stmt.TargetTable = tableName
 
 	// Optional target alias
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken() // consume AS
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS")
@@ -1719,7 +1722,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 			return nil, err
 		}
 		stmt.TargetAlias = alias
-	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_USING) {
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_USING) {
 		alias, err := p.parseIdentifier()
 		if err != nil {
 			return nil, err
@@ -1728,28 +1731,28 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 	}
 
 	// USING keyword
-	if err := p.expect(TOKEN_USING); err != nil {
+	if err := p.expect(token.TOKEN_USING); err != nil {
 		return nil, fmt.Errorf("expected USING after target table: %w", err)
 	}
 
 	// Source: can be a table name or subquery
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		// Subquery source
 		p.nextToken() // consume '('
-		if !p.curTokenIs(TOKEN_SELECT) {
+		if !p.curTokenIs(token.TOKEN_SELECT) {
 			return nil, fmt.Errorf("expected SELECT after '(' in USING, got %v", p.cur.Type)
 		}
 		subquery, err := p.parseSelectStatement()
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse source subquery: %w", err)
 		}
-		selectStmt, ok := subquery.(*SelectStmt)
+		selectStmt, ok := subquery.(*ast.SelectStmt)
 		if !ok {
 			return nil, fmt.Errorf("expected SELECT statement in USING subquery")
 		}
 		stmt.SourceQuery = selectStmt
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after source subquery: %w", err)
 		}
 	} else if p.isIdentifierOrContextualKeyword() {
@@ -1764,7 +1767,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 	}
 
 	// Optional source alias
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken() // consume AS
 		if !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected alias after AS")
@@ -1774,7 +1777,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 			return nil, err
 		}
 		stmt.SourceAlias = alias
-	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_ON) {
+	} else if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_ON) {
 		alias, err := p.parseIdentifier()
 		if err != nil {
 			return nil, err
@@ -1783,7 +1786,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 	}
 
 	// ON keyword
-	if err := p.expect(TOKEN_ON); err != nil {
+	if err := p.expect(token.TOKEN_ON); err != nil {
 		return nil, fmt.Errorf("expected ON after source: %w", err)
 	}
 
@@ -1795,7 +1798,7 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 	stmt.Condition = condition
 
 	// Parse WHEN clauses
-	for p.curTokenIs(TOKEN_WHEN) {
+	for p.curTokenIs(token.TOKEN_WHEN) {
 		whenClause, err := p.parseMergeWhenClause()
 		if err != nil {
 			return nil, err
@@ -1811,19 +1814,19 @@ func (p *Parser) parseMerge() (*MergeStmt, error) {
 }
 
 // parseMergeWhenClause parses: WHEN [NOT] MATCHED [AND condition] THEN action
-func (p *Parser) parseMergeWhenClause() (MergeWhenClause, error) {
-	clause := MergeWhenClause{}
+func (p *Parser) parseMergeWhenClause() (ast.MergeWhenClause, error) {
+	clause := ast.MergeWhenClause{}
 
 	p.nextToken() // consume WHEN
 
 	// Check for NOT MATCHED
-	if p.curTokenIs(TOKEN_NOT) {
+	if p.curTokenIs(token.TOKEN_NOT) {
 		clause.Matched = false
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_MATCHED); err != nil {
+		if err := p.expect(token.TOKEN_MATCHED); err != nil {
 			return clause, fmt.Errorf("expected MATCHED after NOT: %w", err)
 		}
-	} else if p.curTokenIs(TOKEN_MATCHED) {
+	} else if p.curTokenIs(token.TOKEN_MATCHED) {
 		clause.Matched = true
 		p.nextToken() // consume MATCHED
 	} else {
@@ -1831,7 +1834,7 @@ func (p *Parser) parseMergeWhenClause() (MergeWhenClause, error) {
 	}
 
 	// Optional AND condition
-	if p.curTokenIs(TOKEN_AND) {
+	if p.curTokenIs(token.TOKEN_AND) {
 		p.nextToken() // consume AND
 		cond, err := p.parseExpression()
 		if err != nil {
@@ -1841,7 +1844,7 @@ func (p *Parser) parseMergeWhenClause() (MergeWhenClause, error) {
 	}
 
 	// THEN keyword
-	if err := p.expect(TOKEN_THEN); err != nil {
+	if err := p.expect(token.TOKEN_THEN); err != nil {
 		return clause, fmt.Errorf("expected THEN: %w", err)
 	}
 
@@ -1856,17 +1859,17 @@ func (p *Parser) parseMergeWhenClause() (MergeWhenClause, error) {
 }
 
 // parseMergeAction parses: UPDATE SET ... / DELETE / INSERT (...) VALUES (...) / DO NOTHING
-func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
-	action := MergeAction{}
+func (p *Parser) parseMergeAction(matched bool) (ast.MergeAction, error) {
+	action := ast.MergeAction{}
 
-	if p.curTokenIs(TOKEN_UPDATE) {
+	if p.curTokenIs(token.TOKEN_UPDATE) {
 		if !matched {
 			return action, fmt.Errorf("UPDATE action is only valid for WHEN MATCHED clause")
 		}
 		action.ActionType = "UPDATE"
 		p.nextToken() // consume UPDATE
 
-		if err := p.expect(TOKEN_SET); err != nil {
+		if err := p.expect(token.TOKEN_SET); err != nil {
 			return action, fmt.Errorf("expected SET after UPDATE: %w", err)
 		}
 
@@ -1877,14 +1880,14 @@ func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
 		}
 		action.Assignments = assignments
 
-	} else if p.curTokenIs(TOKEN_DELETE) {
+	} else if p.curTokenIs(token.TOKEN_DELETE) {
 		if !matched {
 			return action, fmt.Errorf("DELETE action is only valid for WHEN MATCHED clause")
 		}
 		action.ActionType = "DELETE"
 		p.nextToken() // consume DELETE
 
-	} else if p.curTokenIs(TOKEN_INSERT) {
+	} else if p.curTokenIs(token.TOKEN_INSERT) {
 		if matched {
 			return action, fmt.Errorf("INSERT action is only valid for WHEN NOT MATCHED clause")
 		}
@@ -1892,7 +1895,7 @@ func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
 		p.nextToken() // consume INSERT
 
 		// Optional column list
-		if p.curTokenIs(TOKEN_LPAREN) {
+		if p.curTokenIs(token.TOKEN_LPAREN) {
 			p.nextToken() // consume '('
 			for {
 				if !p.isIdentifierOrContextualKeyword() {
@@ -1904,23 +1907,23 @@ func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
 				}
 				action.Columns = append(action.Columns, colName)
 
-				if p.curTokenIs(TOKEN_RPAREN) {
+				if p.curTokenIs(token.TOKEN_RPAREN) {
 					p.nextToken() // consume ')'
 					break
 				}
-				if err := p.expect(TOKEN_COMMA); err != nil {
+				if err := p.expect(token.TOKEN_COMMA); err != nil {
 					return action, fmt.Errorf("expected ',' or ')' in column list: %w", err)
 				}
 			}
 		}
 
 		// VALUES keyword
-		if err := p.expect(TOKEN_VALUES); err != nil {
+		if err := p.expect(token.TOKEN_VALUES); err != nil {
 			return action, fmt.Errorf("expected VALUES after INSERT: %w", err)
 		}
 
 		// Value list
-		if err := p.expect(TOKEN_LPAREN); err != nil {
+		if err := p.expect(token.TOKEN_LPAREN); err != nil {
 			return action, fmt.Errorf("expected '(' after VALUES: %w", err)
 		}
 
@@ -1931,18 +1934,18 @@ func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
 			}
 			action.Values = append(action.Values, expr)
 
-			if p.curTokenIs(TOKEN_RPAREN) {
+			if p.curTokenIs(token.TOKEN_RPAREN) {
 				p.nextToken() // consume ')'
 				break
 			}
-			if err := p.expect(TOKEN_COMMA); err != nil {
+			if err := p.expect(token.TOKEN_COMMA); err != nil {
 				return action, fmt.Errorf("expected ',' or ')' in VALUES list: %w", err)
 			}
 		}
 
-	} else if p.curTokenIs(TOKEN_DO) {
+	} else if p.curTokenIs(token.TOKEN_DO) {
 		p.nextToken() // consume DO
-		if err := p.expect(TOKEN_NOTHING); err != nil {
+		if err := p.expect(token.TOKEN_NOTHING); err != nil {
 			return action, fmt.Errorf("expected NOTHING after DO: %w", err)
 		}
 		action.ActionType = "DO NOTHING"
@@ -1955,8 +1958,8 @@ func (p *Parser) parseMergeAction(matched bool) (MergeAction, error) {
 }
 
 // parseAssignments parses: col1 = expr1, col2 = expr2, ...
-func (p *Parser) parseAssignments() ([]Assignment, error) {
-	var assignments []Assignment
+func (p *Parser) parseAssignments() ([]ast.Assignment, error) {
+	var assignments []ast.Assignment
 
 	for {
 		if !p.isIdentifierOrContextualKeyword() {
@@ -1967,7 +1970,7 @@ func (p *Parser) parseAssignments() ([]Assignment, error) {
 			return nil, err
 		}
 
-		if err := p.expect(TOKEN_EQ); err != nil {
+		if err := p.expect(token.TOKEN_EQ); err != nil {
 			return nil, fmt.Errorf("expected '=' after column name: %w", err)
 		}
 
@@ -1976,9 +1979,9 @@ func (p *Parser) parseAssignments() ([]Assignment, error) {
 			return nil, fmt.Errorf("expected value expression: %w", err)
 		}
 
-		assignments = append(assignments, Assignment{Column: colName, Value: expr})
+		assignments = append(assignments, ast.Assignment{Column: colName, Value: expr})
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken() // consume ','
@@ -1988,12 +1991,12 @@ func (p *Parser) parseAssignments() ([]Assignment, error) {
 }
 
 // parseCreate parses: CREATE TABLE name (columns) or CREATE [UNIQUE] INDEX name ON table (columns)
-func (p *Parser) parseCreate() (Statement, error) {
+func (p *Parser) parseCreate() (ast.Statement, error) {
 	p.nextToken() // consume CREATE
 
 	// Check for OR REPLACE (for CREATE OR REPLACE VIEW)
 	orReplace := false
-	if p.curTokenIs(TOKEN_OR) {
+	if p.curTokenIs(token.TOKEN_OR) {
 		p.nextToken() // consume OR
 		if p.cur.Literal != "REPLACE" {
 			return nil, fmt.Errorf("expected REPLACE after OR, got %v", p.cur.Literal)
@@ -2004,33 +2007,33 @@ func (p *Parser) parseCreate() (Statement, error) {
 
 	// Check for UNIQUE (for CREATE UNIQUE INDEX)
 	isUnique := false
-	if p.curTokenIs(TOKEN_UNIQUE) {
+	if p.curTokenIs(token.TOKEN_UNIQUE) {
 		isUnique = true
 		p.nextToken()
 	}
 
 	// CREATE FULLTEXT INDEX
-	if p.curTokenIs(TOKEN_FULLTEXT) {
+	if p.curTokenIs(token.TOKEN_FULLTEXT) {
 		if isUnique {
 			return nil, fmt.Errorf("UNIQUE not valid for FULLTEXT INDEX")
 		}
 		p.nextToken() // consume FULLTEXT
-		if !p.curTokenIs(TOKEN_INDEX) {
+		if !p.curTokenIs(token.TOKEN_INDEX) {
 			return nil, fmt.Errorf("expected INDEX after FULLTEXT")
 		}
 		return p.parseCreateFTSIndex()
 	}
 
-	if p.curTokenIs(TOKEN_INDEX) {
+	if p.curTokenIs(token.TOKEN_INDEX) {
 		return p.parseCreateIndex(isUnique)
 	}
 
-	if p.curTokenIs(TOKEN_VIEW) {
+	if p.curTokenIs(token.TOKEN_VIEW) {
 		return p.parseCreateView(orReplace)
 	}
 
 	// CREATE USER
-	if p.curTokenIs(TOKEN_USER) {
+	if p.curTokenIs(token.TOKEN_USER) {
 		if isUnique || orReplace {
 			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE USER")
 		}
@@ -2038,7 +2041,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	// CREATE DATABASE
-	if p.curTokenIs(TOKEN_DATABASE) {
+	if p.curTokenIs(token.TOKEN_DATABASE) {
 		if isUnique || orReplace {
 			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE DATABASE")
 		}
@@ -2046,7 +2049,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	// CREATE TRIGGER
-	if p.curTokenIs(TOKEN_TRIGGER) {
+	if p.curTokenIs(token.TOKEN_TRIGGER) {
 		if isUnique || orReplace {
 			return nil, fmt.Errorf("UNIQUE/OR REPLACE not valid for CREATE TRIGGER")
 		}
@@ -2054,7 +2057,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	// CREATE PROCEDURE
-	if p.curTokenIs(TOKEN_PROCEDURE) {
+	if p.curTokenIs(token.TOKEN_PROCEDURE) {
 		if isUnique {
 			return nil, fmt.Errorf("UNIQUE not valid for CREATE PROCEDURE")
 		}
@@ -2062,7 +2065,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	// CREATE FUNCTION
-	if p.curTokenIs(TOKEN_FUNCTION) {
+	if p.curTokenIs(token.TOKEN_FUNCTION) {
 		if isUnique {
 			return nil, fmt.Errorf("UNIQUE not valid for CREATE FUNCTION")
 		}
@@ -2076,11 +2079,11 @@ func (p *Parser) parseCreate() (Statement, error) {
 		return nil, fmt.Errorf("OR REPLACE only valid for CREATE VIEW")
 	}
 
-	if err := p.expect(TOKEN_TABLE); err != nil {
+	if err := p.expect(token.TOKEN_TABLE); err != nil {
 		return nil, err
 	}
 
-	stmt := &CreateTableStmt{}
+	stmt := &ast.CreateTableStmt{}
 
 	// Table name (can be a keyword like "target" used as identifier)
 	if !p.isIdentifierOrContextualKeyword() {
@@ -2093,18 +2096,18 @@ func (p *Parser) parseCreate() (Statement, error) {
 	stmt.TableName = tableName
 
 	// (columns)
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, err
 	}
 
 	for {
-		if p.curTokenIs(TOKEN_FOREIGN) {
+		if p.curTokenIs(token.TOKEN_FOREIGN) {
 			fk, err := p.parseForeignKeyDef()
 			if err != nil {
 				return nil, err
 			}
 			stmt.ForeignKeys = append(stmt.ForeignKeys, fk)
-		} else if p.curTokenIs(TOKEN_CONSTRAINT) {
+		} else if p.curTokenIs(token.TOKEN_CONSTRAINT) {
 			p.nextToken() // consume CONSTRAINT
 			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected constraint name")
@@ -2114,7 +2117,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 				return nil, err
 			}
 
-			if p.curTokenIs(TOKEN_FOREIGN) {
+			if p.curTokenIs(token.TOKEN_FOREIGN) {
 				fk, err := p.parseForeignKeyDef()
 				if err != nil {
 					return nil, err
@@ -2132,24 +2135,24 @@ func (p *Parser) parseCreate() (Statement, error) {
 			stmt.Columns = append(stmt.Columns, col)
 		}
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken()
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
 	// Optional USING COLUMN clause
 	stmt.StorageType = "ROW" // default
-	if p.curTokenIs(TOKEN_USING) {
+	if p.curTokenIs(token.TOKEN_USING) {
 		p.nextToken() // consume USING
-		if p.curTokenIs(TOKEN_COLUMN) {
+		if p.curTokenIs(token.TOKEN_COLUMN) {
 			stmt.StorageType = "COLUMN"
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_ROW) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ROW") {
+		} else if p.curTokenIs(token.TOKEN_ROW) || (p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ROW") {
 			stmt.StorageType = "ROW"
 			p.nextToken()
 		} else {
@@ -2158,7 +2161,7 @@ func (p *Parser) parseCreate() (Statement, error) {
 	}
 
 	// Optional PARTITION BY clause
-	if p.curTokenIs(TOKEN_PARTITION) {
+	if p.curTokenIs(token.TOKEN_PARTITION) {
 		partSpec, err := p.parsePartitionBy()
 		if err != nil {
 			return nil, err
@@ -2169,16 +2172,16 @@ func (p *Parser) parseCreate() (Statement, error) {
 	return stmt, nil
 }
 
-func (p *Parser) parseForeignKeyDef() (ForeignKeyDef, error) {
-	fk := ForeignKeyDef{}
-	if err := p.expect(TOKEN_FOREIGN); err != nil {
+func (p *Parser) parseForeignKeyDef() (ast.ForeignKeyDef, error) {
+	fk := ast.ForeignKeyDef{}
+	if err := p.expect(token.TOKEN_FOREIGN); err != nil {
 		return fk, err
 	}
-	if err := p.expect(TOKEN_KEY); err != nil {
+	if err := p.expect(token.TOKEN_KEY); err != nil {
 		return fk, err
 	}
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return fk, err
 	}
 
@@ -2192,18 +2195,18 @@ func (p *Parser) parseForeignKeyDef() (ForeignKeyDef, error) {
 		}
 		fk.Columns = append(fk.Columns, col)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return fk, err
 	}
 
-	if err := p.expect(TOKEN_REFERENCES); err != nil {
+	if err := p.expect(token.TOKEN_REFERENCES); err != nil {
 		return fk, err
 	}
 
@@ -2216,7 +2219,7 @@ func (p *Parser) parseForeignKeyDef() (ForeignKeyDef, error) {
 	}
 	fk.RefTable = refTable
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return fk, err
 	}
 
@@ -2230,25 +2233,25 @@ func (p *Parser) parseForeignKeyDef() (ForeignKeyDef, error) {
 		}
 		fk.RefColumns = append(fk.RefColumns, col)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return fk, err
 	}
 
 	return fk, nil
 }
 
-func (p *Parser) parseColumnDef() (ColumnDef, error) {
-	col := ColumnDef{}
+func (p *Parser) parseColumnDef() (ast.ColumnDef, error) {
+	col := ast.ColumnDef{}
 
 	// Column name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return col, fmt.Errorf("expected column name, got %v", p.cur.Type)
 	}
 	col.Name = p.cur.Literal
@@ -2256,17 +2259,17 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 
 	// Type
 	switch p.cur.Type {
-	case TOKEN_INT_TYPE:
+	case token.TOKEN_INT_TYPE:
 		col.Type = catalog.TypeInt32
-	case TOKEN_BIGINT:
+	case token.TOKEN_BIGINT:
 		col.Type = catalog.TypeInt64
-	case TOKEN_TEXT:
+	case token.TOKEN_TEXT:
 		col.Type = catalog.TypeText
-		// Check for VARCHAR(n) - handle both TOKEN_TEXT and possible length
-		if p.peek.Type == TOKEN_LPAREN {
+		// Check for VARCHAR(n) - handle both token.TOKEN_TEXT and possible length
+		if p.peek.Type == token.TOKEN_LPAREN {
 			p.nextToken() // consume TEXT/VARCHAR
 			p.nextToken() // consume (
-			if !p.curTokenIs(TOKEN_INT) {
+			if !p.curTokenIs(token.TOKEN_INT) {
 				return col, fmt.Errorf("expected integer after VARCHAR(, got %v", p.cur.Type)
 			}
 			length, err := strconv.Atoi(p.cur.Literal)
@@ -2279,18 +2282,18 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 			// Length of 0 means unbounded (unlimited length)
 			col.Length = length
 			p.nextToken() // consume length
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return col, fmt.Errorf("expected ) after VARCHAR length: %w", err)
 			}
 			goto parseModifiers
 		}
-	case TOKEN_BOOL:
+	case token.TOKEN_BOOL:
 		col.Type = catalog.TypeBool
-	case TOKEN_TIMESTAMP:
+	case token.TOKEN_TIMESTAMP:
 		col.Type = catalog.TypeTimestamp
-	case TOKEN_DATE:
+	case token.TOKEN_DATE:
 		col.Type = catalog.TypeDate
-	case TOKEN_JSON_TYPE:
+	case token.TOKEN_JSON_TYPE:
 		col.Type = catalog.TypeJSON
 	default:
 		return col, fmt.Errorf("expected type, got %v (%q)", p.cur.Type, p.cur.Literal)
@@ -2300,23 +2303,23 @@ func (p *Parser) parseColumnDef() (ColumnDef, error) {
 parseModifiers:
 	// Optional NOT NULL, PRIMARY KEY, DEFAULT, CHECK, UNIQUE, and AUTO_INCREMENT
 	for {
-		if p.curTokenIs(TOKEN_NOT) {
+		if p.curTokenIs(token.TOKEN_NOT) {
 			p.nextToken()
-			if err := p.expect(TOKEN_NULL); err != nil {
+			if err := p.expect(token.TOKEN_NULL); err != nil {
 				return col, err
 			}
 			col.NotNull = true
-		} else if p.curTokenIs(TOKEN_PRIMARY) {
+		} else if p.curTokenIs(token.TOKEN_PRIMARY) {
 			p.nextToken()
-			if err := p.expect(TOKEN_KEY); err != nil {
+			if err := p.expect(token.TOKEN_KEY); err != nil {
 				return col, err
 			}
 			col.PrimaryKey = true
 			col.NotNull = true // primary keys are implicitly not null
-		} else if p.curTokenIs(TOKEN_UNIQUE) {
+		} else if p.curTokenIs(token.TOKEN_UNIQUE) {
 			p.nextToken()
 			col.Unique = true
-		} else if p.curTokenIs(TOKEN_DEFAULT) {
+		} else if p.curTokenIs(token.TOKEN_DEFAULT) {
 			p.nextToken()
 			// Parse default value (literal expression)
 			expr, err := p.parsePrimaryExpression()
@@ -2325,14 +2328,14 @@ parseModifiers:
 			}
 			col.HasDefault = true
 			col.Default = expr
-		} else if p.curTokenIs(TOKEN_AUTO_INCREMENT) {
+		} else if p.curTokenIs(token.TOKEN_AUTO_INCREMENT) {
 			p.nextToken()
 			col.AutoIncrement = true
 			col.NotNull = true // auto-increment columns are implicitly not null
-		} else if p.curTokenIs(TOKEN_CHECK) {
+		} else if p.curTokenIs(token.TOKEN_CHECK) {
 			// Parse CHECK constraint: CHECK(expression)
 			p.nextToken() // consume CHECK
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return col, fmt.Errorf("expected ( after CHECK: %w", err)
 			}
 			// Parse the check expression
@@ -2342,10 +2345,10 @@ parseModifiers:
 			}
 			col.Check = expr
 			// We'll serialize the expression to string when storing in catalog
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return col, fmt.Errorf("expected ) after CHECK expression: %w", err)
 			}
-		} else if p.curTokenIs(TOKEN_REFERENCES) {
+		} else if p.curTokenIs(token.TOKEN_REFERENCES) {
 			p.nextToken() // consume REFERENCES
 			if !p.isIdentifierOrContextualKeyword() {
 				return col, fmt.Errorf("expected referenced table name")
@@ -2357,7 +2360,7 @@ parseModifiers:
 			col.ReferencesTable = refTable
 
 			// Optional (column)
-			if p.curTokenIs(TOKEN_LPAREN) {
+			if p.curTokenIs(token.TOKEN_LPAREN) {
 				p.nextToken() // consume (
 				if !p.isIdentifierOrContextualKeyword() {
 					return col, fmt.Errorf("expected referenced column name")
@@ -2367,7 +2370,7 @@ parseModifiers:
 					return col, err
 				}
 				col.ReferencesColumn = refCol
-				if err := p.expect(TOKEN_RPAREN); err != nil {
+				if err := p.expect(token.TOKEN_RPAREN); err != nil {
 					return col, err
 				}
 			}
@@ -2380,49 +2383,49 @@ parseModifiers:
 }
 
 // parseCreateIndex parses: INDEX name ON table (columns)
-func (p *Parser) parseCreateIndex(unique bool) (*CreateIndexStmt, error) {
+func (p *Parser) parseCreateIndex(unique bool) (*ast.CreateIndexStmt, error) {
 	p.nextToken() // consume INDEX
 
-	stmt := &CreateIndexStmt{Unique: unique}
+	stmt := &ast.CreateIndexStmt{Unique: unique}
 
 	// Index name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected index name, got %v", p.cur.Type)
 	}
 	stmt.IndexName = p.cur.Literal
 	p.nextToken()
 
 	// ON
-	if err := p.expect(TOKEN_ON); err != nil {
+	if err := p.expect(token.TOKEN_ON); err != nil {
 		return nil, err
 	}
 
 	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
 	stmt.TableName = p.cur.Literal
 	p.nextToken()
 
 	// (columns)
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, err
 	}
 
 	for {
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.curTokenIs(token.TOKEN_IDENT) {
 			return nil, fmt.Errorf("expected column name, got %v", p.cur.Type)
 		}
 		stmt.Columns = append(stmt.Columns, p.cur.Literal)
 		p.nextToken()
 
-		if !p.curTokenIs(TOKEN_COMMA) {
+		if !p.curTokenIs(token.TOKEN_COMMA) {
 			break
 		}
 		p.nextToken()
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
@@ -2430,44 +2433,44 @@ func (p *Parser) parseCreateIndex(unique bool) (*CreateIndexStmt, error) {
 }
 
 // parseCreateView parses: CREATE [OR REPLACE] VIEW name [(columns)] AS SELECT ...
-func (p *Parser) parseCreateView(orReplace bool) (*CreateViewStmt, error) {
+func (p *Parser) parseCreateView(orReplace bool) (*ast.CreateViewStmt, error) {
 	p.nextToken() // consume VIEW
 
-	stmt := &CreateViewStmt{OrReplace: orReplace}
+	stmt := &ast.CreateViewStmt{OrReplace: orReplace}
 
 	// View name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected view name, got %v", p.cur.Type)
 	}
 	stmt.ViewName = p.cur.Literal
 	p.nextToken()
 
 	// Optional column list
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
 		for {
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(token.TOKEN_IDENT) {
 				return nil, fmt.Errorf("expected column name in view definition, got %v", p.cur.Type)
 			}
 			stmt.Columns = append(stmt.Columns, p.cur.Literal)
 			p.nextToken()
-			if !p.curTokenIs(TOKEN_COMMA) {
+			if !p.curTokenIs(token.TOKEN_COMMA) {
 				break
 			}
 			p.nextToken() // consume comma
 		}
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, err
 		}
 	}
 
 	// AS keyword
-	if err := p.expect(TOKEN_AS); err != nil {
+	if err := p.expect(token.TOKEN_AS); err != nil {
 		return nil, fmt.Errorf("expected AS after view name")
 	}
 
 	// Parse the SELECT statement
-	if !p.curTokenIs(TOKEN_SELECT) {
+	if !p.curTokenIs(token.TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT after AS in CREATE VIEW")
 	}
 	selectStmt, err := p.parseSelect()
@@ -2480,14 +2483,14 @@ func (p *Parser) parseCreateView(orReplace bool) (*CreateViewStmt, error) {
 }
 
 // parseSetOperation parses UNION/INTERSECT/EXCEPT between SELECT statements
-func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
+func (p *Parser) parseSetOperation(left *ast.SelectStmt) (*ast.UnionStmt, error) {
 	var op string
 	switch p.cur.Type {
-	case TOKEN_UNION:
+	case token.TOKEN_UNION:
 		op = "UNION"
-	case TOKEN_INTERSECT:
+	case token.TOKEN_INTERSECT:
 		op = "INTERSECT"
-	case TOKEN_EXCEPT:
+	case token.TOKEN_EXCEPT:
 		op = "EXCEPT"
 	default:
 		return nil, fmt.Errorf("expected UNION, INTERSECT, or EXCEPT")
@@ -2496,13 +2499,13 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 
 	// Check for ALL
 	all := false
-	if p.curTokenIs(TOKEN_ALL) {
+	if p.curTokenIs(token.TOKEN_ALL) {
 		all = true
 		p.nextToken()
 	}
 
 	// Parse the right SELECT (without ORDER BY/LIMIT/OFFSET - those belong to UNION)
-	if !p.curTokenIs(TOKEN_SELECT) {
+	if !p.curTokenIs(token.TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT after %s", op)
 	}
 	right, err := p.parseSelectForSetOp()
@@ -2510,7 +2513,7 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 		return nil, fmt.Errorf("error parsing right side of %s: %w", op, err)
 	}
 
-	stmt := &UnionStmt{
+	stmt := &ast.UnionStmt{
 		Left:  left,
 		Right: right,
 		Op:    op,
@@ -2518,9 +2521,9 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 	}
 
 	// Optional ORDER BY (applies to the combined result)
-	if p.curTokenIs(TOKEN_ORDER) {
+	if p.curTokenIs(token.TOKEN_ORDER) {
 		p.nextToken() // consume ORDER
-		if err := p.expect(TOKEN_BY); err != nil {
+		if err := p.expect(token.TOKEN_BY); err != nil {
 			return nil, err
 		}
 		orderBy, err := p.parseOrderByList()
@@ -2531,9 +2534,9 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 	}
 
 	// Optional LIMIT
-	if p.curTokenIs(TOKEN_LIMIT) {
+	if p.curTokenIs(token.TOKEN_LIMIT) {
 		p.nextToken()
-		if !p.curTokenIs(TOKEN_INT) {
+		if !p.curTokenIs(token.TOKEN_INT) {
 			return nil, fmt.Errorf("expected integer after LIMIT")
 		}
 		limit, err := strconv.ParseInt(p.cur.Literal, 10, 64)
@@ -2545,9 +2548,9 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 	}
 
 	// Optional OFFSET
-	if p.curTokenIs(TOKEN_OFFSET) {
+	if p.curTokenIs(token.TOKEN_OFFSET) {
 		p.nextToken()
-		if !p.curTokenIs(TOKEN_INT) {
+		if !p.curTokenIs(token.TOKEN_INT) {
 			return nil, fmt.Errorf("expected integer after OFFSET")
 		}
 		offset, err := strconv.ParseInt(p.cur.Literal, 10, 64)
@@ -2562,44 +2565,44 @@ func (p *Parser) parseSetOperation(left *SelectStmt) (*UnionStmt, error) {
 }
 
 // parseDrop parses: DROP TABLE name or DROP INDEX name or DROP VIEW name or DROP USER name
-func (p *Parser) parseDrop() (Statement, error) {
+func (p *Parser) parseDrop() (ast.Statement, error) {
 	p.nextToken() // consume DROP
 
-	if p.curTokenIs(TOKEN_INDEX) {
+	if p.curTokenIs(token.TOKEN_INDEX) {
 		return p.parseDropIndex()
 	}
 
-	if p.curTokenIs(TOKEN_VIEW) {
+	if p.curTokenIs(token.TOKEN_VIEW) {
 		return p.parseDropView()
 	}
 
-	if p.curTokenIs(TOKEN_USER) {
+	if p.curTokenIs(token.TOKEN_USER) {
 		return p.parseDropUser()
 	}
 
-	if p.curTokenIs(TOKEN_DATABASE) {
+	if p.curTokenIs(token.TOKEN_DATABASE) {
 		return p.parseDropDatabase()
 	}
 
-	if p.curTokenIs(TOKEN_TRIGGER) {
+	if p.curTokenIs(token.TOKEN_TRIGGER) {
 		return p.parseDropTrigger()
 	}
 
-	if p.curTokenIs(TOKEN_PROCEDURE) {
+	if p.curTokenIs(token.TOKEN_PROCEDURE) {
 		return p.parseDropProcedure()
 	}
 
-	if p.curTokenIs(TOKEN_FUNCTION) {
+	if p.curTokenIs(token.TOKEN_FUNCTION) {
 		return p.parseDropFunction()
 	}
 
-	if err := p.expect(TOKEN_TABLE); err != nil {
+	if err := p.expect(token.TOKEN_TABLE); err != nil {
 		return nil, err
 	}
 
-	stmt := &DropTableStmt{}
+	stmt := &ast.DropTableStmt{}
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
 	stmt.TableName = p.cur.Literal
@@ -2609,12 +2612,12 @@ func (p *Parser) parseDrop() (Statement, error) {
 }
 
 // parseDropIndex parses: INDEX name
-func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
+func (p *Parser) parseDropIndex() (*ast.DropIndexStmt, error) {
 	p.nextToken() // consume INDEX
 
-	stmt := &DropIndexStmt{}
+	stmt := &ast.DropIndexStmt{}
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected index name, got %v", p.cur.Type)
 	}
 	stmt.IndexName = p.cur.Literal
@@ -2624,21 +2627,21 @@ func (p *Parser) parseDropIndex() (*DropIndexStmt, error) {
 }
 
 // parseDropView parses: DROP VIEW [IF EXISTS] name
-func (p *Parser) parseDropView() (*DropViewStmt, error) {
+func (p *Parser) parseDropView() (*ast.DropViewStmt, error) {
 	p.nextToken() // consume VIEW
 
-	stmt := &DropViewStmt{}
+	stmt := &ast.DropViewStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
 	}
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected view name, got %v", p.cur.Type)
 	}
 	stmt.ViewName = p.cur.Literal
@@ -2649,70 +2652,70 @@ func (p *Parser) parseDropView() (*DropViewStmt, error) {
 
 // Expression parsing with precedence
 
-func (p *Parser) parseExpression() (Expression, error) {
+func (p *Parser) parseExpression() (ast.Expression, error) {
 	return p.parseOrExpr()
 }
 
-func (p *Parser) parseOrExpr() (Expression, error) {
+func (p *Parser) parseOrExpr() (ast.Expression, error) {
 	left, err := p.parseAndExpr()
 	if err != nil {
 		return nil, err
 	}
 
-	for p.curTokenIs(TOKEN_OR) {
+	for p.curTokenIs(token.TOKEN_OR) {
 		op := p.cur.Type
 		p.nextToken()
 		right, err := p.parseAndExpr()
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Left: left, Op: op, Right: right}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
 	}
 
 	return left, nil
 }
 
-func (p *Parser) parseAndExpr() (Expression, error) {
+func (p *Parser) parseAndExpr() (ast.Expression, error) {
 	left, err := p.parseNotExpr()
 	if err != nil {
 		return nil, err
 	}
 
-	for p.curTokenIs(TOKEN_AND) {
+	for p.curTokenIs(token.TOKEN_AND) {
 		op := p.cur.Type
 		p.nextToken()
 		right, err := p.parseNotExpr()
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Left: left, Op: op, Right: right}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
 	}
 
 	return left, nil
 }
 
-func (p *Parser) parseNotExpr() (Expression, error) {
-	if p.curTokenIs(TOKEN_NOT) {
+func (p *Parser) parseNotExpr() (ast.Expression, error) {
+	if p.curTokenIs(token.TOKEN_NOT) {
 		p.nextToken()
 		// Check for NOT IN or NOT BETWEEN
-		if p.curTokenIs(TOKEN_IN) || p.curTokenIs(TOKEN_BETWEEN) {
+		if p.curTokenIs(token.TOKEN_IN) || p.curTokenIs(token.TOKEN_BETWEEN) {
 			// This is a standalone NOT, parse the rest and negate
 			expr, err := p.parseNotExpr()
 			if err != nil {
 				return nil, err
 			}
-			return &UnaryExpr{Op: TOKEN_NOT, Expr: expr}, nil
+			return &ast.UnaryExpr{Op: token.TOKEN_NOT, Expr: expr}, nil
 		}
 		expr, err := p.parseNotExpr()
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: TOKEN_NOT, Expr: expr}, nil
+		return &ast.UnaryExpr{Op: token.TOKEN_NOT, Expr: expr}, nil
 	}
 	return p.parseComparisonExpr()
 }
 
-func (p *Parser) parseComparisonExpr() (Expression, error) {
+func (p *Parser) parseComparisonExpr() (ast.Expression, error) {
 	left, err := p.parseAddExpr()
 	if err != nil {
 		return nil, err
@@ -2720,32 +2723,32 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 
 	// Check for NOT IN or NOT BETWEEN first
 	isNot := false
-	if p.curTokenIs(TOKEN_NOT) {
+	if p.curTokenIs(token.TOKEN_NOT) {
 		p.nextToken()
 		isNot = true
 	}
 
 	// Handle IN expression
-	if p.curTokenIs(TOKEN_IN) {
+	if p.curTokenIs(token.TOKEN_IN) {
 		p.nextToken() // consume IN
-		if err := p.expect(TOKEN_LPAREN); err != nil {
+		if err := p.expect(token.TOKEN_LPAREN); err != nil {
 			return nil, fmt.Errorf("expected '(' after IN")
 		}
 
 		// Check if it's a subquery: IN (SELECT ...)
-		if p.curTokenIs(TOKEN_SELECT) {
+		if p.curTokenIs(token.TOKEN_SELECT) {
 			subquery, err := p.parseSelect()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing IN subquery: %v", err)
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after IN subquery")
 			}
-			return &InExpr{Left: left, Subquery: subquery, Not: isNot}, nil
+			return &ast.InExpr{Left: left, Subquery: subquery, Not: isNot}, nil
 		}
 
 		// Parse value list: IN (1, 2, 3)
-		var values []Expression
+		var values []ast.Expression
 		for {
 			val, err := p.parsePrimaryExpression()
 			if err != nil {
@@ -2753,29 +2756,29 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 			}
 			values = append(values, val)
 
-			if p.curTokenIs(TOKEN_COMMA) {
+			if p.curTokenIs(token.TOKEN_COMMA) {
 				p.nextToken() // consume comma
 			} else {
 				break
 			}
 		}
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after IN list")
 		}
 
-		return &InExpr{Left: left, Values: values, Not: isNot}, nil
+		return &ast.InExpr{Left: left, Values: values, Not: isNot}, nil
 	}
 
 	// Handle BETWEEN expression
-	if p.curTokenIs(TOKEN_BETWEEN) {
+	if p.curTokenIs(token.TOKEN_BETWEEN) {
 		p.nextToken() // consume BETWEEN
 		low, err := p.parsePrimaryExpression()
 		if err != nil {
 			return nil, err
 		}
 
-		if !p.curTokenIs(TOKEN_AND) {
+		if !p.curTokenIs(token.TOKEN_AND) {
 			return nil, fmt.Errorf("expected AND in BETWEEN expression")
 		}
 		p.nextToken() // consume AND
@@ -2785,12 +2788,12 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 			return nil, err
 		}
 
-		return &BetweenExpr{Expr: left, Low: low, High: high, Not: isNot}, nil
+		return &ast.BetweenExpr{Expr: left, Low: low, High: high, Not: isNot}, nil
 	}
 
 	// Handle LIKE/ILIKE expression
-	if p.curTokenIs(TOKEN_LIKE) || p.curTokenIs(TOKEN_ILIKE) {
-		caseInsensitive := p.curTokenIs(TOKEN_ILIKE)
+	if p.curTokenIs(token.TOKEN_LIKE) || p.curTokenIs(token.TOKEN_ILIKE) {
+		caseInsensitive := p.curTokenIs(token.TOKEN_ILIKE)
 		p.nextToken() // consume LIKE/ILIKE
 
 		pattern, err := p.parsePrimaryExpression()
@@ -2798,22 +2801,22 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 			return nil, err
 		}
 
-		return &LikeExpr{Expr: left, Pattern: pattern, CaseInsensitive: caseInsensitive, Not: isNot}, nil
+		return &ast.LikeExpr{Expr: left, Pattern: pattern, CaseInsensitive: caseInsensitive, Not: isNot}, nil
 	}
 
 	// Handle IS NULL / IS NOT NULL
-	if p.curTokenIs(TOKEN_IS) {
+	if p.curTokenIs(token.TOKEN_IS) {
 		p.nextToken() // consume IS
 		not := false
-		if p.curTokenIs(TOKEN_NOT) {
+		if p.curTokenIs(token.TOKEN_NOT) {
 			not = true
 			p.nextToken() // consume NOT
 		}
-		if !p.curTokenIs(TOKEN_NULL) {
+		if !p.curTokenIs(token.TOKEN_NULL) {
 			return nil, fmt.Errorf("expected NULL after IS%s", map[bool]string{true: " NOT", false: ""}[not])
 		}
 		p.nextToken() // consume NULL
-		return &IsNullExpr{Expr: left, Not: not}, nil
+		return &ast.IsNullExpr{Expr: left, Not: not}, nil
 	}
 
 	// If we saw NOT but it wasn't IN/BETWEEN/LIKE, that's an error
@@ -2822,71 +2825,71 @@ func (p *Parser) parseComparisonExpr() (Expression, error) {
 	}
 
 	// Handle @@ text search match operator
-	if p.curTokenIs(TOKEN_MATCH) {
+	if p.curTokenIs(token.TOKEN_MATCH) {
 		p.nextToken() // consume @@
 		right, err := p.parseAddExpr()
 		if err != nil {
 			return nil, err
 		}
-		return &TSMatchExpr{Left: left, Right: right}, nil
+		return &ast.TSMatchExpr{Left: left, Right: right}, nil
 	}
 
 	switch p.cur.Type {
-	case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+	case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 		op := p.cur.Type
 		p.nextToken()
 		right, err := p.parseAddExpr()
 		if err != nil {
 			return nil, err
 		}
-		return &BinaryExpr{Left: left, Op: op, Right: right}, nil
+		return &ast.BinaryExpr{Left: left, Op: op, Right: right}, nil
 	}
 
 	return left, nil
 }
 
 // parseAddExpr parses addition and subtraction expressions.
-func (p *Parser) parseAddExpr() (Expression, error) {
+func (p *Parser) parseAddExpr() (ast.Expression, error) {
 	left, err := p.parseMulExpr()
 	if err != nil {
 		return nil, err
 	}
 
-	for p.curTokenIs(TOKEN_PLUS) || p.curTokenIs(TOKEN_MINUS) {
+	for p.curTokenIs(token.TOKEN_PLUS) || p.curTokenIs(token.TOKEN_MINUS) {
 		op := p.cur.Type
 		p.nextToken()
 		right, err := p.parseMulExpr()
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Left: left, Op: op, Right: right}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
 	}
 
 	return left, nil
 }
 
 // parseMulExpr parses multiplication and division expressions.
-func (p *Parser) parseMulExpr() (Expression, error) {
+func (p *Parser) parseMulExpr() (ast.Expression, error) {
 	left, err := p.parseJSONExpr()
 	if err != nil {
 		return nil, err
 	}
 
-	for p.curTokenIs(TOKEN_STAR) || p.curTokenIs(TOKEN_SLASH) {
+	for p.curTokenIs(token.TOKEN_STAR) || p.curTokenIs(token.TOKEN_SLASH) {
 		op := p.cur.Type
 		p.nextToken()
 		right, err := p.parseJSONExpr()
 		if err != nil {
 			return nil, err
 		}
-		left = &BinaryExpr{Left: left, Op: op, Right: right}
+		left = &ast.BinaryExpr{Left: left, Op: op, Right: right}
 	}
 
 	return left, nil
 }
 
 // parseJSONExpr parses JSON operators (postfix operators like ->, ->>, etc.)
-func (p *Parser) parseJSONExpr() (Expression, error) {
+func (p *Parser) parseJSONExpr() (ast.Expression, error) {
 	left, err := p.parsePrimaryExpression()
 	if err != nil {
 		return nil, err
@@ -2895,77 +2898,77 @@ func (p *Parser) parseJSONExpr() (Expression, error) {
 	// Handle JSON postfix operators
 	for {
 		switch p.cur.Type {
-		case TOKEN_ARROW: // ->
+		case token.TOKEN_ARROW: // ->
 			p.nextToken() // consume ->
 			key, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, fmt.Errorf("expected key after ->: %v", err)
 			}
-			left = &JSONAccessExpr{Object: left, Key: key, AsText: false}
+			left = &ast.JSONAccessExpr{Object: left, Key: key, AsText: false}
 
-		case TOKEN_ARROW_TEXT: // ->>
+		case token.TOKEN_ARROW_TEXT: // ->>
 			p.nextToken() // consume ->>
 			key, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, fmt.Errorf("expected key after ->>: %v", err)
 			}
-			left = &JSONAccessExpr{Object: left, Key: key, AsText: true}
+			left = &ast.JSONAccessExpr{Object: left, Key: key, AsText: true}
 
-		case TOKEN_HASH_ARROW: // #>
+		case token.TOKEN_HASH_ARROW: // #>
 			p.nextToken() // consume #>
 			path, err := p.parseJSONPath()
 			if err != nil {
 				return nil, fmt.Errorf("expected path after #>: %v", err)
 			}
-			left = &JSONPathExpr{Object: left, Path: path, AsText: false}
+			left = &ast.JSONPathExpr{Object: left, Path: path, AsText: false}
 
-		case TOKEN_HASH_ARROW_T: // #>>
+		case token.TOKEN_HASH_ARROW_T: // #>>
 			p.nextToken() // consume #>>
 			path, err := p.parseJSONPath()
 			if err != nil {
 				return nil, fmt.Errorf("expected path after #>>: %v", err)
 			}
-			left = &JSONPathExpr{Object: left, Path: path, AsText: true}
+			left = &ast.JSONPathExpr{Object: left, Path: path, AsText: true}
 
-		case TOKEN_AT_GT: // @>
+		case token.TOKEN_AT_GT: // @>
 			p.nextToken() // consume @>
 			right, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, fmt.Errorf("expected JSON after @>: %v", err)
 			}
-			left = &JSONContainsExpr{Left: left, Right: right, Contains: true}
+			left = &ast.JSONContainsExpr{Left: left, Right: right, Contains: true}
 
-		case TOKEN_LT_AT: // <@
+		case token.TOKEN_LT_AT: // <@
 			p.nextToken() // consume <@
 			right, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, fmt.Errorf("expected JSON after <@: %v", err)
 			}
-			left = &JSONContainsExpr{Left: left, Right: right, Contains: false}
+			left = &ast.JSONContainsExpr{Left: left, Right: right, Contains: false}
 
-		case TOKEN_QUESTION: // ?
+		case token.TOKEN_QUESTION: // ?
 			p.nextToken() // consume ?
 			key, err := p.parsePrimaryExpression()
 			if err != nil {
 				return nil, fmt.Errorf("expected key after ?: %v", err)
 			}
-			left = &JSONExistsExpr{Object: left, Keys: []Expression{key}, Mode: "any"}
+			left = &ast.JSONExistsExpr{Object: left, Keys: []ast.Expression{key}, Mode: "any"}
 
-		case TOKEN_QUESTION_OR: // ?|
+		case token.TOKEN_QUESTION_OR: // ?|
 			p.nextToken() // consume ?|
 			keys, err := p.parseJSONKeyArray()
 			if err != nil {
 				return nil, fmt.Errorf("expected key array after ?|: %v", err)
 			}
-			left = &JSONExistsExpr{Object: left, Keys: keys, Mode: "or"}
+			left = &ast.JSONExistsExpr{Object: left, Keys: keys, Mode: "or"}
 
-		case TOKEN_QUESTION_AND: // ?&
+		case token.TOKEN_QUESTION_AND: // ?&
 			p.nextToken() // consume ?&
 			keys, err := p.parseJSONKeyArray()
 			if err != nil {
 				return nil, fmt.Errorf("expected key array after ?&: %v", err)
 			}
-			left = &JSONExistsExpr{Object: left, Keys: keys, Mode: "and"}
+			left = &ast.JSONExistsExpr{Object: left, Keys: keys, Mode: "and"}
 
 		default:
 			return left, nil
@@ -2974,18 +2977,18 @@ func (p *Parser) parseJSONExpr() (Expression, error) {
 }
 
 // parseJSONPath parses a JSON path like '{a,b,c}'
-func (p *Parser) parseJSONPath() ([]Expression, error) {
+func (p *Parser) parseJSONPath() ([]ast.Expression, error) {
 	// Expect a string literal like '{a,b,c}'
-	if p.curTokenIs(TOKEN_STRING) {
+	if p.curTokenIs(token.TOKEN_STRING) {
 		pathStr := p.cur.Literal
 		p.nextToken()
 		// Parse the path string: {a,b,c} -> ["a", "b", "c"]
 		pathStr = strings.TrimPrefix(pathStr, "{")
 		pathStr = strings.TrimSuffix(pathStr, "}")
 		parts := strings.Split(pathStr, ",")
-		var path []Expression
+		var path []ast.Expression
 		for _, part := range parts {
-			path = append(path, &LiteralExpr{Value: catalog.NewText(strings.TrimSpace(part))})
+			path = append(path, &ast.LiteralExpr{Value: catalog.NewText(strings.TrimSpace(part))})
 		}
 		return path, nil
 	}
@@ -2993,39 +2996,39 @@ func (p *Parser) parseJSONPath() ([]Expression, error) {
 }
 
 // parseJSONKeyArray parses an ARRAY['a', 'b'] expression for ?| and ?& operators
-func (p *Parser) parseJSONKeyArray() ([]Expression, error) {
+func (p *Parser) parseJSONKeyArray() ([]ast.Expression, error) {
 	// Check for ARRAY keyword or literal array
-	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ARRAY" {
+	if p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "ARRAY" {
 		p.nextToken() // consume ARRAY
 	}
 
-	if !p.curTokenIs(TOKEN_LBRACKET) {
+	if !p.curTokenIs(token.TOKEN_LBRACKET) {
 		// Maybe it's a single string
-		if p.curTokenIs(TOKEN_STRING) {
-			key := &LiteralExpr{Value: catalog.NewText(p.cur.Literal)}
+		if p.curTokenIs(token.TOKEN_STRING) {
+			key := &ast.LiteralExpr{Value: catalog.NewText(p.cur.Literal)}
 			p.nextToken()
-			return []Expression{key}, nil
+			return []ast.Expression{key}, nil
 		}
 		return nil, fmt.Errorf("expected '[' for array")
 	}
 	p.nextToken() // consume [
 
-	var keys []Expression
-	for !p.curTokenIs(TOKEN_RBRACKET) && !p.curTokenIs(TOKEN_EOF) {
+	var keys []ast.Expression
+	for !p.curTokenIs(token.TOKEN_RBRACKET) && !p.curTokenIs(token.TOKEN_EOF) {
 		key, err := p.parsePrimaryExpression()
 		if err != nil {
 			return nil, err
 		}
 		keys = append(keys, key)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 		} else {
 			break
 		}
 	}
 
-	if !p.curTokenIs(TOKEN_RBRACKET) {
+	if !p.curTokenIs(token.TOKEN_RBRACKET) {
 		return nil, fmt.Errorf("expected ']' after array elements")
 	}
 	p.nextToken() // consume ]
@@ -3033,11 +3036,11 @@ func (p *Parser) parseJSONKeyArray() ([]Expression, error) {
 	return keys, nil
 }
 
-func (p *Parser) parsePrimaryExpression() (Expression, error) {
+func (p *Parser) parsePrimaryExpression() (ast.Expression, error) {
 	// Handle unary minus for negative numbers
-	if p.curTokenIs(TOKEN_MINUS) {
+	if p.curTokenIs(token.TOKEN_MINUS) {
 		p.nextToken() // consume -
-		if p.curTokenIs(TOKEN_INT) {
+		if p.curTokenIs(token.TOKEN_INT) {
 			val, err := strconv.ParseInt(p.cur.Literal, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("invalid integer: %s", p.cur.Literal)
@@ -3045,9 +3048,9 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 			val = -val // negate
 			p.nextToken()
 			if val >= -2147483648 && val <= 2147483647 {
-				return &LiteralExpr{Value: catalog.NewInt32(int32(val))}, nil
+				return &ast.LiteralExpr{Value: catalog.NewInt32(int32(val))}, nil
 			}
-			return &LiteralExpr{Value: catalog.NewInt64(val)}, nil
+			return &ast.LiteralExpr{Value: catalog.NewInt64(val)}, nil
 		}
 		// For other expressions, create a unary minus expression
 		expr, err := p.parsePrimaryExpression()
@@ -3055,15 +3058,15 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 			return nil, err
 		}
 		// Convert to: 0 - expr
-		return &BinaryExpr{
-			Left:  &LiteralExpr{Value: catalog.NewInt32(0)},
-			Op:    TOKEN_MINUS,
+		return &ast.BinaryExpr{
+			Left:  &ast.LiteralExpr{Value: catalog.NewInt32(0)},
+			Op:    token.TOKEN_MINUS,
 			Right: expr,
 		}, nil
 	}
 
 	switch p.cur.Type {
-	case TOKEN_INT:
+	case token.TOKEN_INT:
 		val, err := strconv.ParseInt(p.cur.Literal, 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid integer: %s", p.cur.Literal)
@@ -3071,166 +3074,166 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 		p.nextToken()
 		// Use Int32 for smaller values, Int64 for larger
 		if val >= -2147483648 && val <= 2147483647 {
-			return &LiteralExpr{Value: catalog.NewInt32(int32(val))}, nil
+			return &ast.LiteralExpr{Value: catalog.NewInt32(int32(val))}, nil
 		}
-		return &LiteralExpr{Value: catalog.NewInt64(val)}, nil
+		return &ast.LiteralExpr{Value: catalog.NewInt64(val)}, nil
 
-	case TOKEN_STRING:
+	case token.TOKEN_STRING:
 		val := p.cur.Literal
 		p.nextToken()
-		return &LiteralExpr{Value: catalog.NewText(val)}, nil
+		return &ast.LiteralExpr{Value: catalog.NewText(val)}, nil
 
-	case TOKEN_TRUE:
+	case token.TOKEN_TRUE:
 		p.nextToken()
-		return &LiteralExpr{Value: catalog.NewBool(true)}, nil
+		return &ast.LiteralExpr{Value: catalog.NewBool(true)}, nil
 
-	case TOKEN_FALSE:
+	case token.TOKEN_FALSE:
 		p.nextToken()
-		return &LiteralExpr{Value: catalog.NewBool(false)}, nil
+		return &ast.LiteralExpr{Value: catalog.NewBool(false)}, nil
 
-	case TOKEN_NULL:
+	case token.TOKEN_NULL:
 		p.nextToken()
-		return &LiteralExpr{Value: catalog.Null(catalog.TypeUnknown)}, nil
+		return &ast.LiteralExpr{Value: catalog.Null(catalog.TypeUnknown)}, nil
 
-	case TOKEN_MAXVALUE:
+	case token.TOKEN_MAXVALUE:
 		p.nextToken()
 		// MAXVALUE is a special marker - we represent it as a special column reference
 		// that can be detected during partition evaluation
-		return &ColumnRef{Name: "MAXVALUE"}, nil
+		return &ast.ColumnRef{Name: "MAXVALUE"}, nil
 
-	case TOKEN_IDENT,
+	case token.TOKEN_IDENT,
 		// Contextual keywords that can be used as identifiers
-		TOKEN_TARGET, TOKEN_SOURCE, TOKEN_MATCHED, TOKEN_NOTHING, TOKEN_EXCLUDED:
+		token.TOKEN_TARGET, token.TOKEN_SOURCE, token.TOKEN_MATCHED, token.TOKEN_NOTHING, token.TOKEN_EXCLUDED:
 		name := p.cur.Literal
 		p.nextToken()
 
 		// Check for qualified name (table.column)
 		if p.cur.Literal == "." {
 			p.nextToken() // consume .
-			if !p.curTokenIs(TOKEN_IDENT) && !p.isIdentifierOrContextualKeyword() {
+			if !p.curTokenIs(token.TOKEN_IDENT) && !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name after '.', got %v", p.cur.Type)
 			}
 			name = name + "." + p.cur.Literal
 			p.nextToken()
 		}
 
-		return &ColumnRef{Name: name}, nil
+		return &ast.ColumnRef{Name: name}, nil
 
-	case TOKEN_COALESCE, TOKEN_NULLIF, TOKEN_UPPER, TOKEN_LOWER, TOKEN_LENGTH, TOKEN_CONCAT, TOKEN_SUBSTR, TOKEN_SUBSTRING:
+	case token.TOKEN_COALESCE, token.TOKEN_NULLIF, token.TOKEN_UPPER, token.TOKEN_LOWER, token.TOKEN_LENGTH, token.TOKEN_CONCAT, token.TOKEN_SUBSTR, token.TOKEN_SUBSTRING:
 		return p.parseFunctionCall()
 
 	// Math functions
-	case TOKEN_ABS, TOKEN_ROUND, TOKEN_FLOOR, TOKEN_CEIL, TOKEN_CEILING, TOKEN_MOD, TOKEN_POWER, TOKEN_SQRT:
+	case token.TOKEN_ABS, token.TOKEN_ROUND, token.TOKEN_FLOOR, token.TOKEN_CEIL, token.TOKEN_CEILING, token.TOKEN_MOD, token.TOKEN_POWER, token.TOKEN_SQRT:
 		return p.parseFunctionCall()
 
 	// Additional string functions
-	case TOKEN_TRIM, TOKEN_LTRIM, TOKEN_RTRIM, TOKEN_REPLACE, TOKEN_POSITION, TOKEN_REVERSE, TOKEN_REPEAT, TOKEN_LPAD, TOKEN_RPAD:
+	case token.TOKEN_TRIM, token.TOKEN_LTRIM, token.TOKEN_RTRIM, token.TOKEN_REPLACE, token.TOKEN_POSITION, token.TOKEN_REVERSE, token.TOKEN_REPEAT, token.TOKEN_LPAD, token.TOKEN_RPAD:
 		return p.parseFunctionCall()
 
 	// GROUPING() function for grouping sets
-	case TOKEN_GROUPING:
+	case token.TOKEN_GROUPING:
 		return p.parseFunctionCall()
 
 	// Full-Text Search functions
-	case TOKEN_TO_TSVECTOR:
+	case token.TOKEN_TO_TSVECTOR:
 		return p.parseTSVectorFunc()
-	case TOKEN_TO_TSQUERY, TOKEN_PLAINTO_TSQUERY, TOKEN_WEBSEARCH:
+	case token.TOKEN_TO_TSQUERY, token.TOKEN_PLAINTO_TSQUERY, token.TOKEN_WEBSEARCH:
 		return p.parseTSQueryFunc()
-	case TOKEN_TS_RANK:
+	case token.TOKEN_TS_RANK:
 		return p.parseTSRankFunc()
-	case TOKEN_TS_HEADLINE:
+	case token.TOKEN_TS_HEADLINE:
 		return p.parseTSHeadlineFunc()
-	case TOKEN_MATCH:
+	case token.TOKEN_MATCH:
 		return p.parseMatchAgainst()
 
-	case TOKEN_CAST:
+	case token.TOKEN_CAST:
 		return p.parseCastExpression()
 
-	case TOKEN_EXTRACT:
+	case token.TOKEN_EXTRACT:
 		return p.parseExtractExpression()
 
-	case TOKEN_PLACEHOLDER:
+	case token.TOKEN_PLACEHOLDER:
 		return p.parsePlaceholder()
 
-	case TOKEN_NOW, TOKEN_CURRENT_TIMESTAMP, TOKEN_CURRENT_DATE:
+	case token.TOKEN_NOW, token.TOKEN_CURRENT_TIMESTAMP, token.TOKEN_CURRENT_DATE:
 		return p.parseDateFunction()
 
-	case TOKEN_YEAR, TOKEN_MONTH, TOKEN_DAY, TOKEN_HOUR, TOKEN_MINUTE, TOKEN_SECOND:
+	case token.TOKEN_YEAR, token.TOKEN_MONTH, token.TOKEN_DAY, token.TOKEN_HOUR, token.TOKEN_MINUTE, token.TOKEN_SECOND:
 		return p.parseDatePartFunction()
 
-	case TOKEN_DATE_ADD, TOKEN_DATE_SUB:
+	case token.TOKEN_DATE_ADD, token.TOKEN_DATE_SUB:
 		return p.parseDateAddFunction()
 
-	case TOKEN_CASE:
+	case token.TOKEN_CASE:
 		return p.parseCaseExpression()
 
-	case TOKEN_LPAREN:
+	case token.TOKEN_LPAREN:
 		p.nextToken()
 		// Check if this is a subquery (SELECT inside parentheses)
-		if p.curTokenIs(TOKEN_SELECT) {
+		if p.curTokenIs(token.TOKEN_SELECT) {
 			subquery, err := p.parseSelect()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing subquery: %v", err)
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after subquery")
 			}
-			return &SubqueryExpr{Query: subquery}, nil
+			return &ast.SubqueryExpr{Query: subquery}, nil
 		}
 		expr, err := p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, err
 		}
 		return expr, nil
 
-	case TOKEN_EXISTS:
+	case token.TOKEN_EXISTS:
 		p.nextToken() // consume EXISTS
-		if err := p.expect(TOKEN_LPAREN); err != nil {
+		if err := p.expect(token.TOKEN_LPAREN); err != nil {
 			return nil, fmt.Errorf("expected '(' after EXISTS")
 		}
-		if !p.curTokenIs(TOKEN_SELECT) {
+		if !p.curTokenIs(token.TOKEN_SELECT) {
 			return nil, fmt.Errorf("expected SELECT after EXISTS (")
 		}
 		subquery, err := p.parseSelect()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing EXISTS subquery: %v", err)
 		}
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after EXISTS subquery")
 		}
-		return &ExistsExpr{Query: subquery, Not: false}, nil
+		return &ast.ExistsExpr{Query: subquery, Not: false}, nil
 
-	case TOKEN_NOT:
+	case token.TOKEN_NOT:
 		p.nextToken() // consume NOT
 		// Handle NOT EXISTS
-		if p.curTokenIs(TOKEN_EXISTS) {
+		if p.curTokenIs(token.TOKEN_EXISTS) {
 			p.nextToken() // consume EXISTS
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, fmt.Errorf("expected '(' after NOT EXISTS")
 			}
-			if !p.curTokenIs(TOKEN_SELECT) {
+			if !p.curTokenIs(token.TOKEN_SELECT) {
 				return nil, fmt.Errorf("expected SELECT after NOT EXISTS (")
 			}
 			subquery, err := p.parseSelect()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing NOT EXISTS subquery: %v", err)
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after NOT EXISTS subquery")
 			}
-			return &ExistsExpr{Query: subquery, Not: true}, nil
+			return &ast.ExistsExpr{Query: subquery, Not: true}, nil
 		}
 		// Handle other NOT expressions (NOT expr)
 		expr, err := p.parsePrimaryExpression()
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: TOKEN_NOT, Expr: expr}, nil
+		return &ast.UnaryExpr{Op: token.TOKEN_NOT, Expr: expr}, nil
 
-	case TOKEN_COUNT, TOKEN_SUM, TOKEN_AVG, TOKEN_MIN, TOKEN_MAX:
+	case token.TOKEN_COUNT, token.TOKEN_SUM, token.TOKEN_AVG, token.TOKEN_MIN, token.TOKEN_MAX:
 		// Aggregate functions in expressions (e.g., in HAVING clause)
 		return p.parseAggregateExpression()
 
@@ -3240,69 +3243,69 @@ func (p *Parser) parsePrimaryExpression() (Expression, error) {
 }
 
 // parseBegin parses: BEGIN
-func (p *Parser) parseBegin() (*BeginStmt, error) {
+func (p *Parser) parseBegin() (*ast.BeginStmt, error) {
 	p.nextToken() // consume BEGIN
-	return &BeginStmt{}, nil
+	return &ast.BeginStmt{}, nil
 }
 
 // parseCommit parses: COMMIT
-func (p *Parser) parseCommit() (*CommitStmt, error) {
+func (p *Parser) parseCommit() (*ast.CommitStmt, error) {
 	p.nextToken() // consume COMMIT
-	return &CommitStmt{}, nil
+	return &ast.CommitStmt{}, nil
 }
 
 // parseRollback parses: ROLLBACK
-func (p *Parser) parseRollback() (*RollbackStmt, error) {
+func (p *Parser) parseRollback() (*ast.RollbackStmt, error) {
 	p.nextToken() // consume ROLLBACK
-	return &RollbackStmt{}, nil
+	return &ast.RollbackStmt{}, nil
 }
 
 // parseFunctionCall parses function calls like COALESCE(a, b) or NULLIF(a, b).
-func (p *Parser) parseFunctionCall() (Expression, error) {
+func (p *Parser) parseFunctionCall() (ast.Expression, error) {
 	funcName := p.cur.Literal
 	p.nextToken() // consume function name
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after %s", funcName)
 	}
 
-	var args []Expression
-	for !p.curTokenIs(TOKEN_RPAREN) && !p.curTokenIs(TOKEN_EOF) {
+	var args []ast.Expression
+	for !p.curTokenIs(token.TOKEN_RPAREN) && !p.curTokenIs(token.TOKEN_EOF) {
 		arg, err := p.parseExpression()
 		if err != nil {
 			return nil, err
 		}
 		args = append(args, arg)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
-	return &FunctionExpr{Name: funcName, Args: args}, nil
+	return &ast.FunctionExpr{Name: funcName, Args: args}, nil
 }
 
 // parseAggregateExpression parses aggregate functions like COUNT(*), SUM(column), etc.
-func (p *Parser) parseAggregateExpression() (Expression, error) {
+func (p *Parser) parseAggregateExpression() (ast.Expression, error) {
 	funcName := p.aggregateName()
 	p.nextToken() // consume aggregate function name
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after %s", funcName)
 	}
 
-	var arg Expression
-	if p.curTokenIs(TOKEN_STAR) {
+	var arg ast.Expression
+	if p.curTokenIs(token.TOKEN_STAR) {
 		// COUNT(*)
-		arg = &LiteralExpr{Value: catalog.NewText("*")}
+		arg = &ast.LiteralExpr{Value: catalog.NewText("*")}
 		p.nextToken()
-	} else if p.curTokenIs(TOKEN_DISTINCT) {
+	} else if p.curTokenIs(token.TOKEN_DISTINCT) {
 		// COUNT(DISTINCT col)
 		p.nextToken()
 		expr, err := p.parseExpression()
@@ -3310,7 +3313,7 @@ func (p *Parser) parseAggregateExpression() (Expression, error) {
 			return nil, err
 		}
 		// Wrap in a special marker - for now, just use a function expr
-		arg = &FunctionExpr{Name: "DISTINCT", Args: []Expression{expr}}
+		arg = &ast.FunctionExpr{Name: "DISTINCT", Args: []ast.Expression{expr}}
 	} else {
 		// SUM(column), AVG(column), etc.
 		expr, err := p.parseExpression()
@@ -3320,35 +3323,35 @@ func (p *Parser) parseAggregateExpression() (Expression, error) {
 		arg = expr
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
-	return &FunctionExpr{Name: funcName, Args: []Expression{arg}}, nil
+	return &ast.FunctionExpr{Name: funcName, Args: []ast.Expression{arg}}, nil
 }
 
 // parseDateFunction parses NOW(), CURRENT_TIMESTAMP, CURRENT_DATE
-func (p *Parser) parseDateFunction() (Expression, error) {
+func (p *Parser) parseDateFunction() (ast.Expression, error) {
 	funcName := p.cur.Literal
 	p.nextToken() // consume function name
 
 	// Optional parentheses with no arguments
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ) after %s(", funcName)
 		}
 	}
 
-	return &FunctionExpr{Name: funcName, Args: nil}, nil
+	return &ast.FunctionExpr{Name: funcName, Args: nil}, nil
 }
 
 // parseDatePartFunction parses YEAR(date), MONTH(date), DAY(date), etc.
-func (p *Parser) parseDatePartFunction() (Expression, error) {
+func (p *Parser) parseDatePartFunction() (ast.Expression, error) {
 	funcName := p.cur.Literal
 	p.nextToken() // consume function name
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after %s", funcName)
 	}
 
@@ -3357,19 +3360,19 @@ func (p *Parser) parseDatePartFunction() (Expression, error) {
 		return nil, fmt.Errorf("error parsing argument to %s: %w", funcName, err)
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
-	return &FunctionExpr{Name: funcName, Args: []Expression{arg}}, nil
+	return &ast.FunctionExpr{Name: funcName, Args: []ast.Expression{arg}}, nil
 }
 
 // parseDateAddFunction parses DATE_ADD(date, INTERVAL n unit) and DATE_SUB(date, INTERVAL n unit)
-func (p *Parser) parseDateAddFunction() (Expression, error) {
+func (p *Parser) parseDateAddFunction() (ast.Expression, error) {
 	funcName := p.cur.Literal
 	p.nextToken() // consume DATE_ADD or DATE_SUB
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after %s", funcName)
 	}
 
@@ -3379,17 +3382,17 @@ func (p *Parser) parseDateAddFunction() (Expression, error) {
 		return nil, fmt.Errorf("error parsing date argument: %w", err)
 	}
 
-	if err := p.expect(TOKEN_COMMA); err != nil {
+	if err := p.expect(token.TOKEN_COMMA); err != nil {
 		return nil, fmt.Errorf("expected comma after date in %s", funcName)
 	}
 
 	// Expect INTERVAL keyword
-	if err := p.expect(TOKEN_INTERVAL); err != nil {
+	if err := p.expect(token.TOKEN_INTERVAL); err != nil {
 		return nil, fmt.Errorf("expected INTERVAL keyword in %s", funcName)
 	}
 
 	// Parse the interval value (should be an integer)
-	if !p.curTokenIs(TOKEN_INT) {
+	if !p.curTokenIs(token.TOKEN_INT) {
 		return nil, fmt.Errorf("expected integer interval value in %s", funcName)
 	}
 	intervalValue := p.cur.Literal
@@ -3398,44 +3401,44 @@ func (p *Parser) parseDateAddFunction() (Expression, error) {
 	// Parse the interval unit (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND)
 	var intervalUnit string
 	switch p.cur.Type {
-	case TOKEN_YEAR:
+	case token.TOKEN_YEAR:
 		intervalUnit = "YEAR"
-	case TOKEN_MONTH:
+	case token.TOKEN_MONTH:
 		intervalUnit = "MONTH"
-	case TOKEN_DAY:
+	case token.TOKEN_DAY:
 		intervalUnit = "DAY"
-	case TOKEN_HOUR:
+	case token.TOKEN_HOUR:
 		intervalUnit = "HOUR"
-	case TOKEN_MINUTE:
+	case token.TOKEN_MINUTE:
 		intervalUnit = "MINUTE"
-	case TOKEN_SECOND:
+	case token.TOKEN_SECOND:
 		intervalUnit = "SECOND"
 	default:
 		return nil, fmt.Errorf("expected interval unit (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND) in %s", funcName)
 	}
 	p.nextToken() // consume unit
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
 	// Create a FunctionExpr with special arguments for interval
 	// Args: [dateExpr, intervalValue (as literal), intervalUnit (as literal)]
-	return &FunctionExpr{
+	return &ast.FunctionExpr{
 		Name: funcName,
-		Args: []Expression{
+		Args: []ast.Expression{
 			dateExpr,
-			&LiteralExpr{Value: catalog.NewText(intervalValue)},
-			&LiteralExpr{Value: catalog.NewText(intervalUnit)},
+			&ast.LiteralExpr{Value: catalog.NewText(intervalValue)},
+			&ast.LiteralExpr{Value: catalog.NewText(intervalUnit)},
 		},
 	}, nil
 }
 
 // parseCastExpression parses CAST(expr AS type)
-func (p *Parser) parseCastExpression() (Expression, error) {
+func (p *Parser) parseCastExpression() (ast.Expression, error) {
 	p.nextToken() // consume CAST
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after CAST")
 	}
 
@@ -3446,57 +3449,57 @@ func (p *Parser) parseCastExpression() (Expression, error) {
 	}
 
 	// Expect AS keyword
-	if err := p.expect(TOKEN_AS); err != nil {
+	if err := p.expect(token.TOKEN_AS); err != nil {
 		return nil, fmt.Errorf("expected AS in CAST expression")
 	}
 
 	// Parse target type
 	var targetType catalog.DataType
 	switch p.cur.Type {
-	case TOKEN_INT_TYPE:
+	case token.TOKEN_INT_TYPE:
 		targetType = catalog.TypeInt32
-	case TOKEN_BIGINT:
+	case token.TOKEN_BIGINT:
 		targetType = catalog.TypeInt64
-	case TOKEN_TEXT:
+	case token.TOKEN_TEXT:
 		targetType = catalog.TypeText
-	case TOKEN_BOOL:
+	case token.TOKEN_BOOL:
 		targetType = catalog.TypeBool
-	case TOKEN_TIMESTAMP:
+	case token.TOKEN_TIMESTAMP:
 		targetType = catalog.TypeTimestamp
 	default:
 		return nil, fmt.Errorf("unsupported CAST target type: %v", p.cur.Literal)
 	}
 	p.nextToken()
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
-	return &CastExpr{Expr: expr, TargetType: targetType}, nil
+	return &ast.CastExpr{Expr: expr, TargetType: targetType}, nil
 }
 
 // parseExtractExpression parses EXTRACT(part FROM date)
-func (p *Parser) parseExtractExpression() (Expression, error) {
+func (p *Parser) parseExtractExpression() (ast.Expression, error) {
 	p.nextToken() // consume EXTRACT
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after EXTRACT")
 	}
 
 	// Parse the part (YEAR, MONTH, DAY, HOUR, MINUTE, SECOND)
 	var part string
 	switch p.cur.Type {
-	case TOKEN_YEAR:
+	case token.TOKEN_YEAR:
 		part = "YEAR"
-	case TOKEN_MONTH:
+	case token.TOKEN_MONTH:
 		part = "MONTH"
-	case TOKEN_DAY:
+	case token.TOKEN_DAY:
 		part = "DAY"
-	case TOKEN_HOUR:
+	case token.TOKEN_HOUR:
 		part = "HOUR"
-	case TOKEN_MINUTE:
+	case token.TOKEN_MINUTE:
 		part = "MINUTE"
-	case TOKEN_SECOND:
+	case token.TOKEN_SECOND:
 		part = "SECOND"
 	default:
 		return nil, fmt.Errorf("expected YEAR, MONTH, DAY, HOUR, MINUTE, or SECOND in EXTRACT, got %v", p.cur.Literal)
@@ -3504,7 +3507,7 @@ func (p *Parser) parseExtractExpression() (Expression, error) {
 	p.nextToken()
 
 	// Expect FROM keyword
-	if err := p.expect(TOKEN_FROM); err != nil {
+	if err := p.expect(token.TOKEN_FROM); err != nil {
 		return nil, fmt.Errorf("expected FROM in EXTRACT expression")
 	}
 
@@ -3514,15 +3517,15 @@ func (p *Parser) parseExtractExpression() (Expression, error) {
 		return nil, fmt.Errorf("error parsing EXTRACT date: %w", err)
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, err
 	}
 
 	// Return as a function call with the part name and date
-	return &FunctionExpr{
+	return &ast.FunctionExpr{
 		Name: "EXTRACT",
-		Args: []Expression{
-			&LiteralExpr{Value: catalog.NewText(part)},
+		Args: []ast.Expression{
+			&ast.LiteralExpr{Value: catalog.NewText(part)},
 			dateExpr,
 		},
 	}, nil
@@ -3530,35 +3533,35 @@ func (p *Parser) parseExtractExpression() (Expression, error) {
 
 // parseAlter parses: ALTER TABLE table_name action or ALTER USER username ...
 // Actions: ADD [COLUMN] col_def, DROP COLUMN col_name, RENAME TO new_name, RENAME COLUMN old TO new, ADD CONSTRAINT ... UNIQUE
-func (p *Parser) parseAlter() (Statement, error) {
+func (p *Parser) parseAlter() (ast.Statement, error) {
 	p.nextToken() // consume ALTER
 
 	// Check for ALTER USER
-	if p.curTokenIs(TOKEN_USER) {
+	if p.curTokenIs(token.TOKEN_USER) {
 		return p.parseAlterUser()
 	}
 
 	// Expect TABLE
-	if err := p.expect(TOKEN_TABLE); err != nil {
+	if err := p.expect(token.TOKEN_TABLE); err != nil {
 		return nil, err
 	}
 
 	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
 	tableName := p.cur.Literal
 	p.nextToken()
 
-	stmt := &AlterTableStmt{TableName: tableName}
+	stmt := &ast.AlterTableStmt{TableName: tableName}
 
 	// Parse action
 	switch {
-	case p.curTokenIs(TOKEN_ADD):
+	case p.curTokenIs(token.TOKEN_ADD):
 		p.nextToken() // consume ADD
 
 		// Check for ADD CONSTRAINT
-		if p.curTokenIs(TOKEN_CONSTRAINT) {
+		if p.curTokenIs(token.TOKEN_CONSTRAINT) {
 			p.nextToken() // consume CONSTRAINT
 			// Constraint name (optional, but we'll require it)
 			if !p.isIdentifierOrContextualKeyword() {
@@ -3568,13 +3571,13 @@ func (p *Parser) parseAlter() (Statement, error) {
 			p.nextToken()
 
 			// Expect UNIQUE
-			if !p.curTokenIs(TOKEN_UNIQUE) {
+			if !p.curTokenIs(token.TOKEN_UNIQUE) {
 				return nil, fmt.Errorf("expected UNIQUE in ADD CONSTRAINT, got %v", p.cur.Type)
 			}
 			p.nextToken() // consume UNIQUE
 
 			// Parse column list: (col1, col2, ...)
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return nil, fmt.Errorf("expected ( after UNIQUE")
 			}
 			var cols []string
@@ -3584,12 +3587,12 @@ func (p *Parser) parseAlter() (Statement, error) {
 				}
 				cols = append(cols, p.cur.Literal)
 				p.nextToken()
-				if !p.curTokenIs(TOKEN_COMMA) {
+				if !p.curTokenIs(token.TOKEN_COMMA) {
 					break
 				}
 				p.nextToken() // consume comma
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ) after column list in UNIQUE constraint")
 			}
 
@@ -3600,7 +3603,7 @@ func (p *Parser) parseAlter() (Statement, error) {
 		} else {
 			// ADD COLUMN
 			// Optional COLUMN keyword
-			if p.curTokenIs(TOKEN_COLUMN) {
+			if p.curTokenIs(token.TOKEN_COLUMN) {
 				p.nextToken()
 			}
 			// Parse column definition
@@ -3612,43 +3615,43 @@ func (p *Parser) parseAlter() (Statement, error) {
 			stmt.ColumnDef = &colDef
 		}
 
-	case p.curTokenIs(TOKEN_DROP):
+	case p.curTokenIs(token.TOKEN_DROP):
 		p.nextToken() // consume DROP
 		// Expect COLUMN
-		if err := p.expect(TOKEN_COLUMN); err != nil {
+		if err := p.expect(token.TOKEN_COLUMN); err != nil {
 			return nil, fmt.Errorf("expected COLUMN after DROP in ALTER TABLE")
 		}
 		// Column name
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.curTokenIs(token.TOKEN_IDENT) {
 			return nil, fmt.Errorf("expected column name after DROP COLUMN")
 		}
 		stmt.Action = "DROP COLUMN"
 		stmt.ColumnName = p.cur.Literal
 		p.nextToken()
 
-	case p.curTokenIs(TOKEN_RENAME):
+	case p.curTokenIs(token.TOKEN_RENAME):
 		p.nextToken() // consume RENAME
-		if p.curTokenIs(TOKEN_TO) {
+		if p.curTokenIs(token.TOKEN_TO) {
 			// RENAME TO new_table_name
 			p.nextToken() // consume TO
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(token.TOKEN_IDENT) {
 				return nil, fmt.Errorf("expected new table name after RENAME TO")
 			}
 			stmt.Action = "RENAME TO"
 			stmt.NewName = p.cur.Literal
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_COLUMN) {
+		} else if p.curTokenIs(token.TOKEN_COLUMN) {
 			// RENAME COLUMN old_name TO new_name
 			p.nextToken() // consume COLUMN
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(token.TOKEN_IDENT) {
 				return nil, fmt.Errorf("expected column name after RENAME COLUMN")
 			}
 			stmt.ColumnName = p.cur.Literal
 			p.nextToken()
-			if err := p.expect(TOKEN_TO); err != nil {
+			if err := p.expect(token.TOKEN_TO); err != nil {
 				return nil, fmt.Errorf("expected TO after column name in RENAME COLUMN")
 			}
-			if !p.curTokenIs(TOKEN_IDENT) {
+			if !p.curTokenIs(token.TOKEN_IDENT) {
 				return nil, fmt.Errorf("expected new column name after TO")
 			}
 			stmt.Action = "RENAME COLUMN"
@@ -3666,49 +3669,49 @@ func (p *Parser) parseAlter() (Statement, error) {
 }
 
 // parseTruncate parses: TRUNCATE [TABLE] table_name
-func (p *Parser) parseTruncate() (*TruncateTableStmt, error) {
+func (p *Parser) parseTruncate() (*ast.TruncateTableStmt, error) {
 	p.nextToken() // consume TRUNCATE
 
 	// Optional TABLE keyword
-	if p.curTokenIs(TOKEN_TABLE) {
+	if p.curTokenIs(token.TOKEN_TABLE) {
 		p.nextToken()
 	}
 
 	// Table name
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected table name, got %v", p.cur.Type)
 	}
 	tableName := p.cur.Literal
 	p.nextToken()
 
-	return &TruncateTableStmt{TableName: tableName}, nil
+	return &ast.TruncateTableStmt{TableName: tableName}, nil
 }
 
 // parseShow parses: SHOW TABLES or SHOW CREATE TABLE table_name
-func (p *Parser) parseShow() (Statement, error) {
+func (p *Parser) parseShow() (ast.Statement, error) {
 	p.nextToken() // consume SHOW
 
-	if p.curTokenIs(TOKEN_TABLES) {
+	if p.curTokenIs(token.TOKEN_TABLES) {
 		p.nextToken() // consume TABLES
-		return &ShowStmt{ShowType: "TABLES"}, nil
+		return &ast.ShowStmt{ShowType: "TABLES"}, nil
 	}
 
-	if p.curTokenIs(TOKEN_DATABASE) {
+	if p.curTokenIs(token.TOKEN_DATABASE) {
 		p.nextToken() // consume DATABASE (or DATABASES)
-		return &ShowStmt{ShowType: "DATABASES"}, nil
+		return &ast.ShowStmt{ShowType: "DATABASES"}, nil
 	}
 
 	// Also accept plural DATABASES as identifier
-	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "DATABASES" {
+	if p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "DATABASES" {
 		p.nextToken()
-		return &ShowStmt{ShowType: "DATABASES"}, nil
+		return &ast.ShowStmt{ShowType: "DATABASES"}, nil
 	}
 
 	// SHOW TRIGGERS [ON table]
-	if p.curTokenIs(TOKEN_TRIGGER) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "TRIGGERS") {
+	if p.curTokenIs(token.TOKEN_TRIGGER) || (p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "TRIGGERS") {
 		p.nextToken() // consume TRIGGER(S)
 		tableName := ""
-		if p.curTokenIs(TOKEN_ON) {
+		if p.curTokenIs(token.TOKEN_ON) {
 			p.nextToken() // consume ON
 			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected table name after ON")
@@ -3719,51 +3722,51 @@ func (p *Parser) parseShow() (Statement, error) {
 				return nil, err
 			}
 		}
-		return &ShowStmt{ShowType: "TRIGGERS", TableName: tableName}, nil
+		return &ast.ShowStmt{ShowType: "TRIGGERS", TableName: tableName}, nil
 	}
 
 	// SHOW PROCEDURES
-	if p.curTokenIs(TOKEN_PROCEDURES) || p.curTokenIs(TOKEN_PROCEDURE) ||
-		(p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PROCEDURES") {
+	if p.curTokenIs(token.TOKEN_PROCEDURES) || p.curTokenIs(token.TOKEN_PROCEDURE) ||
+		(p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PROCEDURES") {
 		p.nextToken()
-		return &ShowProceduresStmt{}, nil
+		return &ast.ShowProceduresStmt{}, nil
 	}
 
 	// SHOW FUNCTIONS
-	if p.curTokenIs(TOKEN_FUNCTION) ||
-		(p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "FUNCTIONS") {
+	if p.curTokenIs(token.TOKEN_FUNCTION) ||
+		(p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "FUNCTIONS") {
 		p.nextToken()
-		return &ShowFunctionsStmt{}, nil
+		return &ast.ShowFunctionsStmt{}, nil
 	}
 
-	if p.curTokenIs(TOKEN_CREATE) {
+	if p.curTokenIs(token.TOKEN_CREATE) {
 		p.nextToken() // consume CREATE
-		if err := p.expect(TOKEN_TABLE); err != nil {
+		if err := p.expect(token.TOKEN_TABLE); err != nil {
 			return nil, fmt.Errorf("expected TABLE after SHOW CREATE")
 		}
-		if !p.curTokenIs(TOKEN_IDENT) {
+		if !p.curTokenIs(token.TOKEN_IDENT) {
 			return nil, fmt.Errorf("expected table name after SHOW CREATE TABLE")
 		}
 		tableName := p.cur.Literal
 		p.nextToken()
-		return &ShowStmt{ShowType: "CREATE TABLE", TableName: tableName}, nil
+		return &ast.ShowStmt{ShowType: "CREATE TABLE", TableName: tableName}, nil
 	}
 
 	return nil, fmt.Errorf("expected TABLES or CREATE after SHOW, got %v", p.cur.Type)
 }
 
 // parseExplain parses EXPLAIN [ANALYZE] SELECT ...
-func (p *Parser) parseExplain() (Statement, error) {
+func (p *Parser) parseExplain() (ast.Statement, error) {
 	p.nextToken() // consume EXPLAIN
 
 	analyze := false
-	if p.curTokenIs(TOKEN_ANALYZE) {
+	if p.curTokenIs(token.TOKEN_ANALYZE) {
 		analyze = true
 		p.nextToken() // consume ANALYZE
 	}
 
 	// Only SELECT statements can be explained
-	if !p.curTokenIs(TOKEN_SELECT) {
+	if !p.curTokenIs(token.TOKEN_SELECT) {
 		return nil, fmt.Errorf("expected SELECT after EXPLAIN, got %v", p.cur.Type)
 	}
 
@@ -3772,7 +3775,7 @@ func (p *Parser) parseExplain() (Statement, error) {
 		return nil, fmt.Errorf("error parsing EXPLAIN SELECT: %w", err)
 	}
 
-	return &ExplainStmt{
+	return &ast.ExplainStmt{
 		Statement: stmt,
 		Analyze:   analyze,
 	}, nil
@@ -3782,13 +3785,13 @@ func (p *Parser) parseExplain() (Statement, error) {
 // ANALYZE - analyzes all tables
 // ANALYZE tablename - analyzes specific table
 // ANALYZE tablename (col1, col2) - analyzes specific columns
-func (p *Parser) parseAnalyze() (Statement, error) {
+func (p *Parser) parseAnalyze() (ast.Statement, error) {
 	p.nextToken() // consume ANALYZE
 
-	stmt := &AnalyzeStmt{}
+	stmt := &ast.AnalyzeStmt{}
 
 	// Check if a table name is provided
-	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SEMICOLON) && !p.curTokenIs(TOKEN_EOF) {
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_SEMICOLON) && !p.curTokenIs(token.TOKEN_EOF) {
 		tableName, err := p.parseIdentifier()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing table name: %w", err)
@@ -3796,7 +3799,7 @@ func (p *Parser) parseAnalyze() (Statement, error) {
 		stmt.TableName = tableName
 
 		// Check for column list: ANALYZE table (col1, col2)
-		if p.curTokenIs(TOKEN_LPAREN) {
+		if p.curTokenIs(token.TOKEN_LPAREN) {
 			p.nextToken() // consume '('
 			for {
 				if !p.isIdentifierOrContextualKeyword() {
@@ -3808,13 +3811,13 @@ func (p *Parser) parseAnalyze() (Statement, error) {
 				}
 				stmt.Columns = append(stmt.Columns, col)
 
-				if p.curTokenIs(TOKEN_COMMA) {
+				if p.curTokenIs(token.TOKEN_COMMA) {
 					p.nextToken() // consume comma
 					continue
 				}
 				break
 			}
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after column list: %w", err)
 			}
 		}
@@ -3827,13 +3830,13 @@ func (p *Parser) parseAnalyze() (Statement, error) {
 // Supports both:
 //   - Simple CASE: CASE expr WHEN val1 THEN res1 [WHEN val2 THEN res2...] [ELSE default] END
 //   - Searched CASE: CASE WHEN cond1 THEN res1 [WHEN cond2 THEN res2...] [ELSE default] END
-func (p *Parser) parseCaseExpression() (Expression, error) {
+func (p *Parser) parseCaseExpression() (ast.Expression, error) {
 	p.nextToken() // consume CASE
 
-	caseExpr := &CaseExpr{}
+	caseExpr := &ast.CaseExpr{}
 
 	// Check if this is a simple CASE (has an operand) or searched CASE (starts with WHEN)
-	if !p.curTokenIs(TOKEN_WHEN) {
+	if !p.curTokenIs(token.TOKEN_WHEN) {
 		// Simple CASE - parse the operand expression
 		operand, err := p.parseExpression()
 		if err != nil {
@@ -3843,7 +3846,7 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 	}
 
 	// Parse WHEN clauses
-	for p.curTokenIs(TOKEN_WHEN) {
+	for p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
 
 		// Parse the condition
@@ -3853,7 +3856,7 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 		}
 
 		// Expect THEN
-		if !p.curTokenIs(TOKEN_THEN) {
+		if !p.curTokenIs(token.TOKEN_THEN) {
 			return nil, fmt.Errorf("expected THEN after WHEN condition, got %v", p.cur.Type)
 		}
 		p.nextToken() // consume THEN
@@ -3864,7 +3867,7 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 			return nil, fmt.Errorf("error parsing THEN result: %w", err)
 		}
 
-		caseExpr.Whens = append(caseExpr.Whens, WhenClause{
+		caseExpr.Whens = append(caseExpr.Whens, ast.WhenClause{
 			Condition: condition,
 			Result:    result,
 		})
@@ -3876,7 +3879,7 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 	}
 
 	// Parse optional ELSE clause
-	if p.curTokenIs(TOKEN_ELSE) {
+	if p.curTokenIs(token.TOKEN_ELSE) {
 		p.nextToken() // consume ELSE
 		elseExpr, err := p.parseExpression()
 		if err != nil {
@@ -3886,7 +3889,7 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 	}
 
 	// Expect END
-	if !p.curTokenIs(TOKEN_END) {
+	if !p.curTokenIs(token.TOKEN_END) {
 		return nil, fmt.Errorf("expected END to close CASE expression, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume END
@@ -3895,22 +3898,22 @@ func (p *Parser) parseCaseExpression() (Expression, error) {
 }
 
 // parseOverClause parses OVER (PARTITION BY ... ORDER BY ...) for window functions.
-func (p *Parser) parseOverClause() (*WindowSpec, error) {
-	if !p.curTokenIs(TOKEN_OVER) {
+func (p *Parser) parseOverClause() (*ast.WindowSpec, error) {
+	if !p.curTokenIs(token.TOKEN_OVER) {
 		return nil, fmt.Errorf("expected OVER, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume OVER
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected ( after OVER")
 	}
 
-	spec := &WindowSpec{}
+	spec := &ast.WindowSpec{}
 
 	// Parse PARTITION BY clause (optional)
-	if p.curTokenIs(TOKEN_PARTITION) {
+	if p.curTokenIs(token.TOKEN_PARTITION) {
 		p.nextToken() // consume PARTITION
-		if !p.curTokenIs(TOKEN_BY) {
+		if !p.curTokenIs(token.TOKEN_BY) {
 			return nil, fmt.Errorf("expected BY after PARTITION")
 		}
 		p.nextToken() // consume BY
@@ -3923,7 +3926,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 			spec.PartitionBy = append(spec.PartitionBy, p.cur.Literal)
 			p.nextToken()
 
-			if !p.curTokenIs(TOKEN_COMMA) {
+			if !p.curTokenIs(token.TOKEN_COMMA) {
 				break
 			}
 			p.nextToken() // consume comma
@@ -3931,9 +3934,9 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 	}
 
 	// Parse ORDER BY clause (optional)
-	if p.curTokenIs(TOKEN_ORDER) {
+	if p.curTokenIs(token.TOKEN_ORDER) {
 		p.nextToken() // consume ORDER
-		if !p.curTokenIs(TOKEN_BY) {
+		if !p.curTokenIs(token.TOKEN_BY) {
 			return nil, fmt.Errorf("expected BY after ORDER")
 		}
 		p.nextToken() // consume BY
@@ -3943,27 +3946,27 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 			if !p.isIdentifierOrContextualKeyword() {
 				return nil, fmt.Errorf("expected column name in ORDER BY, got %v", p.cur.Type)
 			}
-			orderCol := OrderByClause{Column: p.cur.Literal}
+			orderCol := ast.OrderByClause{Column: p.cur.Literal}
 			p.nextToken()
 
 			// Check for ASC/DESC
-			if p.curTokenIs(TOKEN_ASC) {
+			if p.curTokenIs(token.TOKEN_ASC) {
 				orderCol.Desc = false
 				p.nextToken()
-			} else if p.curTokenIs(TOKEN_DESC) {
+			} else if p.curTokenIs(token.TOKEN_DESC) {
 				orderCol.Desc = true
 				p.nextToken()
 			}
 
 			// Check for NULLS FIRST/LAST
-			if p.curTokenIs(TOKEN_NULL) && p.peek.Literal == "S" {
+			if p.curTokenIs(token.TOKEN_NULL) && p.peek.Literal == "S" {
 				// This would be NULLS FIRST/LAST - not yet implemented, skip
 				_ = true // placeholder to avoid empty branch
 			}
 
 			spec.OrderBy = append(spec.OrderBy, orderCol)
 
-			if !p.curTokenIs(TOKEN_COMMA) {
+			if !p.curTokenIs(token.TOKEN_COMMA) {
 				break
 			}
 			p.nextToken() // consume comma
@@ -3971,8 +3974,8 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 	}
 
 	// Parse frame specification (optional): ROWS/RANGE BETWEEN ... AND ...
-	if p.curTokenIs(TOKEN_ROWS) || p.curTokenIs(TOKEN_RANGE) {
-		if p.curTokenIs(TOKEN_ROWS) {
+	if p.curTokenIs(token.TOKEN_ROWS) || p.curTokenIs(token.TOKEN_RANGE) {
+		if p.curTokenIs(token.TOKEN_ROWS) {
 			spec.FrameType = "ROWS"
 		} else {
 			spec.FrameType = "RANGE"
@@ -3980,7 +3983,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 		p.nextToken() // consume ROWS/RANGE
 
 		// Check for BETWEEN keyword (optional, for full syntax: ROWS BETWEEN ... AND ...)
-		if p.curTokenIs(TOKEN_BETWEEN) {
+		if p.curTokenIs(token.TOKEN_BETWEEN) {
 			p.nextToken() // consume BETWEEN
 		}
 
@@ -3992,7 +3995,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 		spec.FrameStart = frameBound
 
 		// Check for AND ... (end bound)
-		if p.curTokenIs(TOKEN_AND) {
+		if p.curTokenIs(token.TOKEN_AND) {
 			p.nextToken() // consume AND
 			endBound, err := p.parseFrameBound()
 			if err != nil {
@@ -4002,7 +4005,7 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ) to close OVER clause")
 	}
 
@@ -4011,34 +4014,34 @@ func (p *Parser) parseOverClause() (*WindowSpec, error) {
 
 // parseFrameBound parses a frame bound like UNBOUNDED PRECEDING, CURRENT ROW, 5 PRECEDING, etc.
 func (p *Parser) parseFrameBound() (string, error) {
-	if p.curTokenIs(TOKEN_UNBOUNDED) {
+	if p.curTokenIs(token.TOKEN_UNBOUNDED) {
 		p.nextToken() // consume UNBOUNDED
-		if p.curTokenIs(TOKEN_PRECEDING) {
+		if p.curTokenIs(token.TOKEN_PRECEDING) {
 			p.nextToken()
 			return "UNBOUNDED PRECEDING", nil
-		} else if p.curTokenIs(TOKEN_FOLLOWING) {
+		} else if p.curTokenIs(token.TOKEN_FOLLOWING) {
 			p.nextToken()
 			return "UNBOUNDED FOLLOWING", nil
 		}
 		return "", fmt.Errorf("expected PRECEDING or FOLLOWING after UNBOUNDED")
 	}
 
-	if p.curTokenIs(TOKEN_CURRENT) {
+	if p.curTokenIs(token.TOKEN_CURRENT) {
 		p.nextToken() // consume CURRENT
-		if p.curTokenIs(TOKEN_ROW) {
+		if p.curTokenIs(token.TOKEN_ROW) {
 			p.nextToken()
 			return "CURRENT ROW", nil
 		}
 		return "", fmt.Errorf("expected ROW after CURRENT")
 	}
 
-	if p.curTokenIs(TOKEN_INT) {
+	if p.curTokenIs(token.TOKEN_INT) {
 		n := p.cur.Literal
 		p.nextToken()
-		if p.curTokenIs(TOKEN_PRECEDING) {
+		if p.curTokenIs(token.TOKEN_PRECEDING) {
 			p.nextToken()
 			return n + " PRECEDING", nil
-		} else if p.curTokenIs(TOKEN_FOLLOWING) {
+		} else if p.curTokenIs(token.TOKEN_FOLLOWING) {
 			p.nextToken()
 			return n + " FOLLOWING", nil
 		}
@@ -4048,17 +4051,17 @@ func (p *Parser) parseFrameBound() (string, error) {
 	return "", fmt.Errorf("invalid frame bound: %v", p.cur.Type)
 }
 
-func (p *Parser) parsePrepare() (*PrepareStmt, error) {
+func (p *Parser) parsePrepare() (*ast.PrepareStmt, error) {
 	p.nextToken() // consume PREPARE
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected identifier for prepared statement name")
 	}
 	name := p.cur.Literal
 	p.nextToken()
 
 	// Optional AS
-	if p.curTokenIs(TOKEN_AS) {
+	if p.curTokenIs(token.TOKEN_AS) {
 		p.nextToken()
 	}
 
@@ -4068,30 +4071,30 @@ func (p *Parser) parsePrepare() (*PrepareStmt, error) {
 		return nil, err
 	}
 
-	return &PrepareStmt{Name: name, Statement: stmt}, nil
+	return &ast.PrepareStmt{Name: name, Statement: stmt}, nil
 }
 
-func (p *Parser) parseExecute() (*ExecuteStmt, error) {
+func (p *Parser) parseExecute() (*ast.ExecuteStmt, error) {
 	p.nextToken() // consume EXECUTE
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected identifier for prepared statement name")
 	}
 	name := p.cur.Literal
 	p.nextToken()
 
-	var params []Expression
-	if p.curTokenIs(TOKEN_LPAREN) {
+	var params []ast.Expression
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
 
-		if !p.curTokenIs(TOKEN_RPAREN) {
+		if !p.curTokenIs(token.TOKEN_RPAREN) {
 			expr, err := p.parseExpression()
 			if err != nil {
 				return nil, err
 			}
 			params = append(params, expr)
 
-			for p.curTokenIs(TOKEN_COMMA) {
+			for p.curTokenIs(token.TOKEN_COMMA) {
 				p.nextToken()
 				expr, err := p.parseExpression()
 				if err != nil {
@@ -4101,32 +4104,32 @@ func (p *Parser) parseExecute() (*ExecuteStmt, error) {
 			}
 		}
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, err
 		}
 	}
 
-	return &ExecuteStmt{Name: name, Params: params}, nil
+	return &ast.ExecuteStmt{Name: name, Params: params}, nil
 }
 
-func (p *Parser) parseDeallocate() (*DeallocateStmt, error) {
+func (p *Parser) parseDeallocate() (*ast.DeallocateStmt, error) {
 	p.nextToken() // consume DEALLOCATE
 
 	// Optional PREPARE keyword
-	if p.curTokenIs(TOKEN_PREPARE) {
+	if p.curTokenIs(token.TOKEN_PREPARE) {
 		p.nextToken()
 	}
 
-	if !p.curTokenIs(TOKEN_IDENT) {
+	if !p.curTokenIs(token.TOKEN_IDENT) {
 		return nil, fmt.Errorf("expected identifier for prepared statement name")
 	}
 	name := p.cur.Literal
 	p.nextToken()
 
-	return &DeallocateStmt{Name: name}, nil
+	return &ast.DeallocateStmt{Name: name}, nil
 }
 
-func (p *Parser) parsePlaceholder() (Expression, error) {
+func (p *Parser) parsePlaceholder() (ast.Expression, error) {
 	idxStr := p.cur.Literal
 	// Strip the leading $
 	if len(idxStr) > 0 && idxStr[0] == '$' {
@@ -4140,14 +4143,14 @@ func (p *Parser) parsePlaceholder() (Expression, error) {
 		return nil, fmt.Errorf("placeholder index must be >= 1")
 	}
 	p.nextToken()
-	return &PlaceholderExpr{Index: idx}, nil
+	return &ast.PlaceholderExpr{Index: idx}, nil
 }
 
 // parseCreateUser parses: CREATE USER username WITH PASSWORD 'password' [SUPERUSER]
-func (p *Parser) parseCreateUser() (*CreateUserStmt, error) {
+func (p *Parser) parseCreateUser() (*ast.CreateUserStmt, error) {
 	p.nextToken() // consume USER
 
-	stmt := &CreateUserStmt{}
+	stmt := &ast.CreateUserStmt{}
 
 	// Username
 	if !p.isIdentifierOrContextualKeyword() {
@@ -4160,26 +4163,26 @@ func (p *Parser) parseCreateUser() (*CreateUserStmt, error) {
 	stmt.Username = username
 
 	// Expect WITH
-	if !p.curTokenIs(TOKEN_WITH) {
+	if !p.curTokenIs(token.TOKEN_WITH) {
 		return nil, fmt.Errorf("expected WITH after username")
 	}
 	p.nextToken() // consume WITH
 
 	// Expect PASSWORD
-	if !p.curTokenIs(TOKEN_PASSWORD) {
+	if !p.curTokenIs(token.TOKEN_PASSWORD) {
 		return nil, fmt.Errorf("expected PASSWORD after WITH")
 	}
 	p.nextToken() // consume PASSWORD
 
 	// Password string
-	if !p.curTokenIs(TOKEN_STRING) {
+	if !p.curTokenIs(token.TOKEN_STRING) {
 		return nil, fmt.Errorf("expected password string")
 	}
 	stmt.Password = p.cur.Literal
 	p.nextToken()
 
 	// Optional SUPERUSER
-	if p.curTokenIs(TOKEN_SUPERUSER) {
+	if p.curTokenIs(token.TOKEN_SUPERUSER) {
 		stmt.Superuser = true
 		p.nextToken()
 	}
@@ -4188,15 +4191,15 @@ func (p *Parser) parseCreateUser() (*CreateUserStmt, error) {
 }
 
 // parseDropUser parses: DROP USER [IF EXISTS] username
-func (p *Parser) parseDropUser() (*DropUserStmt, error) {
+func (p *Parser) parseDropUser() (*ast.DropUserStmt, error) {
 	p.nextToken() // consume USER
 
-	stmt := &DropUserStmt{}
+	stmt := &ast.DropUserStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
@@ -4216,10 +4219,10 @@ func (p *Parser) parseDropUser() (*DropUserStmt, error) {
 }
 
 // parseAlterUser parses: ALTER USER username WITH PASSWORD 'newpassword' | SUPERUSER | NOSUPERUSER
-func (p *Parser) parseAlterUser() (*AlterUserStmt, error) {
+func (p *Parser) parseAlterUser() (*ast.AlterUserStmt, error) {
 	p.nextToken() // consume USER
 
-	stmt := &AlterUserStmt{}
+	stmt := &ast.AlterUserStmt{}
 
 	// Username
 	if !p.isIdentifierOrContextualKeyword() {
@@ -4232,20 +4235,20 @@ func (p *Parser) parseAlterUser() (*AlterUserStmt, error) {
 	stmt.Username = username
 
 	// Expect WITH
-	if !p.curTokenIs(TOKEN_WITH) {
+	if !p.curTokenIs(token.TOKEN_WITH) {
 		return nil, fmt.Errorf("expected WITH after username")
 	}
 	p.nextToken() // consume WITH
 
 	// PASSWORD or SUPERUSER/NOSUPERUSER
-	if p.curTokenIs(TOKEN_PASSWORD) {
+	if p.curTokenIs(token.TOKEN_PASSWORD) {
 		p.nextToken() // consume PASSWORD
-		if !p.curTokenIs(TOKEN_STRING) {
+		if !p.curTokenIs(token.TOKEN_STRING) {
 			return nil, fmt.Errorf("expected password string")
 		}
 		stmt.NewPassword = p.cur.Literal
 		p.nextToken()
-	} else if p.curTokenIs(TOKEN_SUPERUSER) {
+	} else if p.curTokenIs(token.TOKEN_SUPERUSER) {
 		stmt.SetSuperuser = true
 		p.nextToken()
 	} else if p.cur.Literal == "NOSUPERUSER" {
@@ -4259,21 +4262,21 @@ func (p *Parser) parseAlterUser() (*AlterUserStmt, error) {
 }
 
 // parseGrant parses: GRANT privilege ON table TO user
-func (p *Parser) parseGrant() (*GrantStmt, error) {
+func (p *Parser) parseGrant() (*ast.GrantStmt, error) {
 	p.nextToken() // consume GRANT
 
-	stmt := &GrantStmt{}
+	stmt := &ast.GrantStmt{}
 
 	// Privilege (SELECT, INSERT, UPDATE, DELETE, ALL)
-	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SELECT) && !p.curTokenIs(TOKEN_INSERT) &&
-		!p.curTokenIs(TOKEN_UPDATE) && !p.curTokenIs(TOKEN_DELETE) && !p.curTokenIs(TOKEN_ALL) {
+	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_SELECT) && !p.curTokenIs(token.TOKEN_INSERT) &&
+		!p.curTokenIs(token.TOKEN_UPDATE) && !p.curTokenIs(token.TOKEN_DELETE) && !p.curTokenIs(token.TOKEN_ALL) {
 		return nil, fmt.Errorf("expected privilege (SELECT, INSERT, UPDATE, DELETE, ALL)")
 	}
 	stmt.Privilege = strings.ToUpper(p.cur.Literal)
 	p.nextToken()
 
 	// Expect ON
-	if err := p.expect(TOKEN_ON); err != nil {
+	if err := p.expect(token.TOKEN_ON); err != nil {
 		return nil, fmt.Errorf("expected ON after privilege")
 	}
 
@@ -4288,7 +4291,7 @@ func (p *Parser) parseGrant() (*GrantStmt, error) {
 	stmt.TableName = tableName
 
 	// Expect TO
-	if err := p.expect(TOKEN_TO); err != nil {
+	if err := p.expect(token.TOKEN_TO); err != nil {
 		return nil, fmt.Errorf("expected TO after table name")
 	}
 
@@ -4306,21 +4309,21 @@ func (p *Parser) parseGrant() (*GrantStmt, error) {
 }
 
 // parseRevoke parses: REVOKE privilege ON table FROM user
-func (p *Parser) parseRevoke() (*RevokeStmt, error) {
+func (p *Parser) parseRevoke() (*ast.RevokeStmt, error) {
 	p.nextToken() // consume REVOKE
 
-	stmt := &RevokeStmt{}
+	stmt := &ast.RevokeStmt{}
 
 	// Privilege
-	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_SELECT) && !p.curTokenIs(TOKEN_INSERT) &&
-		!p.curTokenIs(TOKEN_UPDATE) && !p.curTokenIs(TOKEN_DELETE) && !p.curTokenIs(TOKEN_ALL) {
+	if !p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_SELECT) && !p.curTokenIs(token.TOKEN_INSERT) &&
+		!p.curTokenIs(token.TOKEN_UPDATE) && !p.curTokenIs(token.TOKEN_DELETE) && !p.curTokenIs(token.TOKEN_ALL) {
 		return nil, fmt.Errorf("expected privilege (SELECT, INSERT, UPDATE, DELETE, ALL)")
 	}
 	stmt.Privilege = strings.ToUpper(p.cur.Literal)
 	p.nextToken()
 
 	// Expect ON
-	if err := p.expect(TOKEN_ON); err != nil {
+	if err := p.expect(token.TOKEN_ON); err != nil {
 		return nil, fmt.Errorf("expected ON after privilege")
 	}
 
@@ -4335,7 +4338,7 @@ func (p *Parser) parseRevoke() (*RevokeStmt, error) {
 	stmt.TableName = tableName
 
 	// Expect FROM
-	if !p.curTokenIs(TOKEN_FROM) {
+	if !p.curTokenIs(token.TOKEN_FROM) {
 		return nil, fmt.Errorf("expected FROM after table name")
 	}
 	p.nextToken() // consume FROM
@@ -4354,19 +4357,19 @@ func (p *Parser) parseRevoke() (*RevokeStmt, error) {
 }
 
 // parseCreateDatabase parses: CREATE DATABASE [IF NOT EXISTS] name [WITH OWNER = 'owner']
-func (p *Parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
+func (p *Parser) parseCreateDatabase() (*ast.CreateDatabaseStmt, error) {
 	p.nextToken() // consume DATABASE
 
-	stmt := &CreateDatabaseStmt{}
+	stmt := &ast.CreateDatabaseStmt{}
 
 	// Optional IF NOT EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if !p.curTokenIs(TOKEN_NOT) {
+		if !p.curTokenIs(token.TOKEN_NOT) {
 			return nil, fmt.Errorf("expected NOT after IF")
 		}
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF NOT")
 		}
 		stmt.IfNotExists = true
@@ -4383,20 +4386,20 @@ func (p *Parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
 	stmt.Name = name
 
 	// Optional WITH OWNER = 'owner'
-	if p.curTokenIs(TOKEN_WITH) {
+	if p.curTokenIs(token.TOKEN_WITH) {
 		p.nextToken() // consume WITH
-		if !p.curTokenIs(TOKEN_OWNER) {
+		if !p.curTokenIs(token.TOKEN_OWNER) {
 			return nil, fmt.Errorf("expected OWNER after WITH")
 		}
 		p.nextToken() // consume OWNER
-		if !p.curTokenIs(TOKEN_EQ) {
+		if !p.curTokenIs(token.TOKEN_EQ) {
 			return nil, fmt.Errorf("expected = after OWNER")
 		}
 		p.nextToken() // consume =
-		if !p.curTokenIs(TOKEN_STRING) && !p.isIdentifierOrContextualKeyword() {
+		if !p.curTokenIs(token.TOKEN_STRING) && !p.isIdentifierOrContextualKeyword() {
 			return nil, fmt.Errorf("expected owner name, got %v", p.cur.Type)
 		}
-		if p.curTokenIs(TOKEN_STRING) {
+		if p.curTokenIs(token.TOKEN_STRING) {
 			stmt.Owner = p.cur.Literal
 		} else {
 			stmt.Owner, err = p.parseIdentifier()
@@ -4411,15 +4414,15 @@ func (p *Parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
 }
 
 // parseDropDatabase parses: DROP DATABASE [IF EXISTS] name
-func (p *Parser) parseDropDatabase() (*DropDatabaseStmt, error) {
+func (p *Parser) parseDropDatabase() (*ast.DropDatabaseStmt, error) {
 	p.nextToken() // consume DATABASE
 
-	stmt := &DropDatabaseStmt{}
+	stmt := &ast.DropDatabaseStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
@@ -4439,10 +4442,10 @@ func (p *Parser) parseDropDatabase() (*DropDatabaseStmt, error) {
 }
 
 // parseUseDatabase parses: USE database_name
-func (p *Parser) parseUseDatabase() (*UseDatabaseStmt, error) {
+func (p *Parser) parseUseDatabase() (*ast.UseDatabaseStmt, error) {
 	p.nextToken() // consume USE
 
-	stmt := &UseDatabaseStmt{}
+	stmt := &ast.UseDatabaseStmt{}
 
 	// Database name
 	if !p.isIdentifierOrContextualKeyword() {
@@ -4459,19 +4462,19 @@ func (p *Parser) parseUseDatabase() (*UseDatabaseStmt, error) {
 
 // parseCreateTrigger parses: CREATE TRIGGER name {BEFORE|AFTER|INSTEAD OF} {INSERT|UPDATE|DELETE}
 // ON table [FOR EACH {ROW|STATEMENT}] EXECUTE FUNCTION func_name(args)
-func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
+func (p *Parser) parseCreateTrigger() (*ast.CreateTriggerStmt, error) {
 	p.nextToken() // consume TRIGGER
 
-	stmt := &CreateTriggerStmt{}
+	stmt := &ast.CreateTriggerStmt{}
 
 	// Optional IF NOT EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if !p.curTokenIs(TOKEN_NOT) {
+		if !p.curTokenIs(token.TOKEN_NOT) {
 			return nil, fmt.Errorf("expected NOT after IF")
 		}
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF NOT")
 		}
 		stmt.IfNotExists = true
@@ -4489,40 +4492,40 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 
 	// Timing: BEFORE, AFTER, or INSTEAD OF
 	switch {
-	case p.curTokenIs(TOKEN_BEFORE):
-		stmt.Timing = TriggerBefore
+	case p.curTokenIs(token.TOKEN_BEFORE):
+		stmt.Timing = ast.TriggerBefore
 		p.nextToken()
-	case p.curTokenIs(TOKEN_AFTER):
-		stmt.Timing = TriggerAfter
+	case p.curTokenIs(token.TOKEN_AFTER):
+		stmt.Timing = ast.TriggerAfter
 		p.nextToken()
-	case p.curTokenIs(TOKEN_INSTEAD):
+	case p.curTokenIs(token.TOKEN_INSTEAD):
 		p.nextToken() // consume INSTEAD
-		if !p.curTokenIs(TOKEN_OF) {
+		if !p.curTokenIs(token.TOKEN_OF) {
 			return nil, fmt.Errorf("expected OF after INSTEAD")
 		}
 		p.nextToken() // consume OF
-		stmt.Timing = TriggerInsteadOf
+		stmt.Timing = ast.TriggerInsteadOf
 	default:
 		return nil, fmt.Errorf("expected BEFORE, AFTER, or INSTEAD OF, got %v", p.cur.Type)
 	}
 
 	// Event: INSERT, UPDATE, or DELETE
 	switch {
-	case p.curTokenIs(TOKEN_INSERT):
-		stmt.Event = TriggerInsert
+	case p.curTokenIs(token.TOKEN_INSERT):
+		stmt.Event = ast.TriggerInsert
 		p.nextToken()
-	case p.curTokenIs(TOKEN_UPDATE):
-		stmt.Event = TriggerUpdate
+	case p.curTokenIs(token.TOKEN_UPDATE):
+		stmt.Event = ast.TriggerUpdate
 		p.nextToken()
-	case p.curTokenIs(TOKEN_DELETE):
-		stmt.Event = TriggerDelete
+	case p.curTokenIs(token.TOKEN_DELETE):
+		stmt.Event = ast.TriggerDelete
 		p.nextToken()
 	default:
 		return nil, fmt.Errorf("expected INSERT, UPDATE, or DELETE, got %v", p.cur.Type)
 	}
 
 	// ON table_name
-	if !p.curTokenIs(TOKEN_ON) {
+	if !p.curTokenIs(token.TOKEN_ON) {
 		return nil, fmt.Errorf("expected ON after event, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume ON
@@ -4539,16 +4542,16 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 	// Optional: FOR EACH {ROW|STATEMENT}
 	// Default to FOR EACH STATEMENT if not specified
 	stmt.ForEachRow = false
-	if p.curTokenIs(TOKEN_FOR) {
+	if p.curTokenIs(token.TOKEN_FOR) {
 		p.nextToken() // consume FOR
-		if !p.curTokenIs(TOKEN_EACH) {
+		if !p.curTokenIs(token.TOKEN_EACH) {
 			return nil, fmt.Errorf("expected EACH after FOR")
 		}
 		p.nextToken() // consume EACH
-		if p.curTokenIs(TOKEN_ROW) {
+		if p.curTokenIs(token.TOKEN_ROW) {
 			stmt.ForEachRow = true
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_STATEMENT) {
+		} else if p.curTokenIs(token.TOKEN_STATEMENT) {
 			stmt.ForEachRow = false
 			p.nextToken()
 		} else {
@@ -4557,14 +4560,14 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 	}
 
 	// EXECUTE FUNCTION func_name(args) or EXECUTE PROCEDURE func_name(args)
-	if !p.curTokenIs(TOKEN_EXECUTE) {
+	if !p.curTokenIs(token.TOKEN_EXECUTE) {
 		return nil, fmt.Errorf("expected EXECUTE, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume EXECUTE
 
 	// Accept either FUNCTION or PROCEDURE (they're synonyms in PostgreSQL)
 	// These are now keywords, not identifiers
-	if p.curTokenIs(TOKEN_FUNCTION) || p.curTokenIs(TOKEN_PROCEDURE) {
+	if p.curTokenIs(token.TOKEN_FUNCTION) || p.curTokenIs(token.TOKEN_PROCEDURE) {
 		p.nextToken()
 	} else {
 		return nil, fmt.Errorf("expected FUNCTION or PROCEDURE after EXECUTE")
@@ -4581,13 +4584,13 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 	stmt.FunctionName = funcName
 
 	// Optional parentheses for function args ()
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
 		// For now, skip any arguments until we reach )
-		for !p.curTokenIs(TOKEN_RPAREN) && !p.curTokenIs(TOKEN_EOF) {
+		for !p.curTokenIs(token.TOKEN_RPAREN) && !p.curTokenIs(token.TOKEN_EOF) {
 			p.nextToken()
 		}
-		if p.curTokenIs(TOKEN_RPAREN) {
+		if p.curTokenIs(token.TOKEN_RPAREN) {
 			p.nextToken() // consume )
 		}
 	}
@@ -4596,15 +4599,15 @@ func (p *Parser) parseCreateTrigger() (*CreateTriggerStmt, error) {
 }
 
 // parseDropTrigger parses: DROP TRIGGER [IF EXISTS] name ON table_name
-func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
+func (p *Parser) parseDropTrigger() (*ast.DropTriggerStmt, error) {
 	p.nextToken() // consume TRIGGER
 
-	stmt := &DropTriggerStmt{}
+	stmt := &ast.DropTriggerStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
@@ -4621,7 +4624,7 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 	stmt.Name = name
 
 	// ON table_name
-	if !p.curTokenIs(TOKEN_ON) {
+	if !p.curTokenIs(token.TOKEN_ON) {
 		return nil, fmt.Errorf("expected ON after trigger name")
 	}
 	p.nextToken() // consume ON
@@ -4641,10 +4644,10 @@ func (p *Parser) parseDropTrigger() (*DropTriggerStmt, error) {
 // ==================== Full-Text Search Parser Functions ====================
 
 // parseTSVectorFunc parses to_tsvector([config,] text).
-func (p *Parser) parseTSVectorFunc() (Expression, error) {
+func (p *Parser) parseTSVectorFunc() (ast.Expression, error) {
 	p.nextToken() // consume TO_TSVECTOR
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after to_tsvector")
 	}
 
@@ -4654,13 +4657,13 @@ func (p *Parser) parseTSVectorFunc() (Expression, error) {
 		return nil, err
 	}
 
-	result := &TSVectorExpr{}
+	result := &ast.TSVectorExpr{}
 
-	if p.curTokenIs(TOKEN_COMMA) {
+	if p.curTokenIs(token.TOKEN_COMMA) {
 		// Two arguments: config and text
 		p.nextToken() // consume comma
 		// First arg is config (must be a string literal)
-		if lit, ok := arg1.(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+		if lit, ok := arg1.(*ast.LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
 			result.Config = lit.Value.Text
 		} else {
 			return nil, fmt.Errorf("to_tsvector config must be a string literal")
@@ -4675,7 +4678,7 @@ func (p *Parser) parseTSVectorFunc() (Expression, error) {
 		result.Text = arg1
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after to_tsvector arguments")
 	}
 
@@ -4683,11 +4686,11 @@ func (p *Parser) parseTSVectorFunc() (Expression, error) {
 }
 
 // parseTSQueryFunc parses to_tsquery, plainto_tsquery, or websearch_to_tsquery.
-func (p *Parser) parseTSQueryFunc() (Expression, error) {
+func (p *Parser) parseTSQueryFunc() (ast.Expression, error) {
 	funcType := p.cur.Type
 	p.nextToken() // consume function name
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after ts query function")
 	}
 
@@ -4697,15 +4700,15 @@ func (p *Parser) parseTSQueryFunc() (Expression, error) {
 		return nil, err
 	}
 
-	result := &TSQueryExpr{
-		PlainText: funcType == TOKEN_PLAINTO_TSQUERY,
-		WebSearch: funcType == TOKEN_WEBSEARCH,
+	result := &ast.TSQueryExpr{
+		PlainText: funcType == token.TOKEN_PLAINTO_TSQUERY,
+		WebSearch: funcType == token.TOKEN_WEBSEARCH,
 	}
 
-	if p.curTokenIs(TOKEN_COMMA) {
+	if p.curTokenIs(token.TOKEN_COMMA) {
 		// Two arguments: config and query
 		p.nextToken() // consume comma
-		if lit, ok := arg1.(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+		if lit, ok := arg1.(*ast.LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
 			result.Config = lit.Value.Text
 		} else {
 			return nil, fmt.Errorf("ts query config must be a string literal")
@@ -4719,7 +4722,7 @@ func (p *Parser) parseTSQueryFunc() (Expression, error) {
 		result.Query = arg1
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after ts query function arguments")
 	}
 
@@ -4727,14 +4730,14 @@ func (p *Parser) parseTSQueryFunc() (Expression, error) {
 }
 
 // parseTSRankFunc parses ts_rank(vector, query [, normalization]).
-func (p *Parser) parseTSRankFunc() (Expression, error) {
+func (p *Parser) parseTSRankFunc() (ast.Expression, error) {
 	p.nextToken() // consume TS_RANK
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after ts_rank")
 	}
 
-	result := &TSRankExpr{}
+	result := &ast.TSRankExpr{}
 	var err error
 
 	// Parse vector argument
@@ -4743,7 +4746,7 @@ func (p *Parser) parseTSRankFunc() (Expression, error) {
 		return nil, err
 	}
 
-	if !p.curTokenIs(TOKEN_COMMA) {
+	if !p.curTokenIs(token.TOKEN_COMMA) {
 		return nil, fmt.Errorf("expected ',' after ts_rank vector argument")
 	}
 	p.nextToken() // consume comma
@@ -4755,7 +4758,7 @@ func (p *Parser) parseTSRankFunc() (Expression, error) {
 	}
 
 	// Optional normalization argument
-	if p.curTokenIs(TOKEN_COMMA) {
+	if p.curTokenIs(token.TOKEN_COMMA) {
 		p.nextToken() // consume comma
 		result.Normalization, err = p.parseExpression()
 		if err != nil {
@@ -4763,7 +4766,7 @@ func (p *Parser) parseTSRankFunc() (Expression, error) {
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after ts_rank arguments")
 	}
 
@@ -4771,15 +4774,15 @@ func (p *Parser) parseTSRankFunc() (Expression, error) {
 }
 
 // parseTSHeadlineFunc parses ts_headline([config,] text, query [, options]).
-func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
+func (p *Parser) parseTSHeadlineFunc() (ast.Expression, error) {
 	p.nextToken() // consume TS_HEADLINE
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after ts_headline")
 	}
 
-	result := &TSHeadlineExpr{}
-	args := make([]Expression, 0, 4)
+	result := &ast.TSHeadlineExpr{}
+	args := make([]ast.Expression, 0, 4)
 
 	// Parse all arguments
 	for {
@@ -4789,14 +4792,14 @@ func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
 		}
 		args = append(args, arg)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after ts_headline arguments")
 	}
 
@@ -4808,7 +4811,7 @@ func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
 		result.Query = args[1]
 	case 3:
 		// ts_headline(config, text, query) or ts_headline(text, query, options)
-		if lit, ok := args[0].(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+		if lit, ok := args[0].(*ast.LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
 			// First arg looks like a config
 			result.Config = lit.Value.Text
 			result.Text = args[1]
@@ -4821,7 +4824,7 @@ func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
 		}
 	case 4:
 		// ts_headline(config, text, query, options)
-		if lit, ok := args[0].(*LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
+		if lit, ok := args[0].(*ast.LiteralExpr); ok && lit.Value.Type == catalog.TypeText {
 			result.Config = lit.Value.Text
 		}
 		result.Text = args[1]
@@ -4835,14 +4838,14 @@ func (p *Parser) parseTSHeadlineFunc() (Expression, error) {
 }
 
 // parseMatchAgainst parses MySQL-style MATCH(cols) AGAINST(query).
-func (p *Parser) parseMatchAgainst() (Expression, error) {
+func (p *Parser) parseMatchAgainst() (ast.Expression, error) {
 	p.nextToken() // consume MATCH
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after MATCH")
 	}
 
-	result := &MatchAgainstExpr{}
+	result := &ast.MatchAgainstExpr{}
 	var err error
 
 	// Parse column list
@@ -4856,24 +4859,24 @@ func (p *Parser) parseMatchAgainst() (Expression, error) {
 		}
 		result.Columns = append(result.Columns, col)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after MATCH columns")
 	}
 
 	// Parse AGAINST
-	if !p.curTokenIs(TOKEN_AGAINST) {
+	if !p.curTokenIs(token.TOKEN_AGAINST) {
 		return nil, fmt.Errorf("expected AGAINST after MATCH()")
 	}
 	p.nextToken() // consume AGAINST
 
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after AGAINST")
 	}
 
@@ -4884,7 +4887,7 @@ func (p *Parser) parseMatchAgainst() (Expression, error) {
 	}
 
 	// Check for optional modifiers: IN BOOLEAN MODE, WITH QUERY EXPANSION
-	if p.curTokenIs(TOKEN_IN) {
+	if p.curTokenIs(token.TOKEN_IN) {
 		p.nextToken() // consume IN
 		// Expect BOOLEAN
 		if p.cur.Literal == "BOOLEAN" || strings.ToUpper(p.cur.Literal) == "BOOLEAN" {
@@ -4906,7 +4909,7 @@ func (p *Parser) parseMatchAgainst() (Expression, error) {
 		}
 	}
 
-	if p.curTokenIs(TOKEN_WITH) {
+	if p.curTokenIs(token.TOKEN_WITH) {
 		p.nextToken() // consume WITH
 		// Expect QUERY EXPANSION
 		if strings.ToUpper(p.cur.Literal) == "QUERY" {
@@ -4918,7 +4921,7 @@ func (p *Parser) parseMatchAgainst() (Expression, error) {
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after AGAINST query")
 	}
 
@@ -4926,19 +4929,19 @@ func (p *Parser) parseMatchAgainst() (Expression, error) {
 }
 
 // parseCreateFTSIndex parses: CREATE FULLTEXT INDEX [IF NOT EXISTS] name ON table(columns)
-func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
+func (p *Parser) parseCreateFTSIndex() (*ast.CreateFTSIndexStmt, error) {
 	p.nextToken() // consume INDEX
 
-	stmt := &CreateFTSIndexStmt{}
+	stmt := &ast.CreateFTSIndexStmt{}
 
 	// Optional IF NOT EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if !p.curTokenIs(TOKEN_NOT) {
+		if !p.curTokenIs(token.TOKEN_NOT) {
 			return nil, fmt.Errorf("expected NOT after IF")
 		}
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF NOT")
 		}
 		stmt.IfNotExists = true
@@ -4955,7 +4958,7 @@ func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
 	stmt.IndexName = name
 
 	// ON
-	if !p.curTokenIs(TOKEN_ON) {
+	if !p.curTokenIs(token.TOKEN_ON) {
 		return nil, fmt.Errorf("expected ON after index name")
 	}
 	p.nextToken() // consume ON
@@ -4971,7 +4974,7 @@ func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
 	stmt.TableName = tableName
 
 	// Column list
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after table name")
 	}
 
@@ -4985,14 +4988,14 @@ func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
 		}
 		stmt.Columns = append(stmt.Columns, col)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken() // consume comma
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after column list")
 	}
 
@@ -5005,33 +5008,33 @@ func (p *Parser) parseCreateFTSIndex() (*CreateFTSIndexStmt, error) {
 //	PARTITION BY RANGE (column) (partition_defs)
 //	PARTITION BY LIST (column) (partition_defs)
 //	PARTITION BY HASH (column) PARTITIONS n
-func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
-	if err := p.expect(TOKEN_PARTITION); err != nil {
+func (p *Parser) parsePartitionBy() (*ast.PartitionSpec, error) {
+	if err := p.expect(token.TOKEN_PARTITION); err != nil {
 		return nil, err
 	}
-	if err := p.expect(TOKEN_BY); err != nil {
+	if err := p.expect(token.TOKEN_BY); err != nil {
 		return nil, fmt.Errorf("expected BY after PARTITION")
 	}
 
-	spec := &PartitionSpec{}
+	spec := &ast.PartitionSpec{}
 
 	// Parse partition type: RANGE, LIST, or HASH
 	switch {
-	case p.curTokenIs(TOKEN_RANGE):
-		spec.Type = PartitionRange
+	case p.curTokenIs(token.TOKEN_RANGE):
+		spec.Type = ast.PartitionRange
 		p.nextToken()
-	case p.curTokenIs(TOKEN_LIST):
-		spec.Type = PartitionList
+	case p.curTokenIs(token.TOKEN_LIST):
+		spec.Type = ast.PartitionList
 		p.nextToken()
-	case p.curTokenIs(TOKEN_HASH):
-		spec.Type = PartitionHash
+	case p.curTokenIs(token.TOKEN_HASH):
+		spec.Type = ast.PartitionHash
 		p.nextToken()
 	default:
 		return nil, fmt.Errorf("expected RANGE, LIST, or HASH after PARTITION BY, got %v", p.cur.Literal)
 	}
 
 	// Parse partition columns
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after partition type")
 	}
 
@@ -5045,22 +5048,22 @@ func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
 		}
 		spec.Columns = append(spec.Columns, col)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after partition columns")
 	}
 
 	// For HASH partitioning, parse PARTITIONS n
-	if spec.Type == PartitionHash {
-		if p.curTokenIs(TOKEN_PARTITIONS) {
+	if spec.Type == ast.PartitionHash {
+		if p.curTokenIs(token.TOKEN_PARTITIONS) {
 			p.nextToken()
-			if !p.curTokenIs(TOKEN_INT) {
+			if !p.curTokenIs(token.TOKEN_INT) {
 				return nil, fmt.Errorf("expected number after PARTITIONS")
 			}
 			n, err := strconv.Atoi(p.cur.Literal)
@@ -5072,7 +5075,7 @@ func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
 
 			// Auto-generate partition names for HASH
 			for i := 0; i < n; i++ {
-				spec.Partitions = append(spec.Partitions, PartitionDef{
+				spec.Partitions = append(spec.Partitions, ast.PartitionDef{
 					Name: fmt.Sprintf("p%d", i),
 				})
 			}
@@ -5083,7 +5086,7 @@ func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
 	}
 
 	// For RANGE and LIST, parse partition definitions
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' before partition definitions")
 	}
 
@@ -5094,14 +5097,14 @@ func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
 		}
 		spec.Partitions = append(spec.Partitions, partDef)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
 		}
 	}
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after partition definitions")
 	}
 
@@ -5111,10 +5114,10 @@ func (p *Parser) parsePartitionBy() (*PartitionSpec, error) {
 // parsePartitionDef parses a single partition definition.
 // RANGE: PARTITION name VALUES LESS THAN (value) or PARTITION name VALUES LESS THAN MAXVALUE
 // LIST:  PARTITION name VALUES IN (value1, value2, ...)
-func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error) {
-	def := PartitionDef{}
+func (p *Parser) parsePartitionDef(partType ast.PartitionType) (ast.PartitionDef, error) {
+	def := ast.PartitionDef{}
 
-	if err := p.expect(TOKEN_PARTITION); err != nil {
+	if err := p.expect(token.TOKEN_PARTITION); err != nil {
 		return def, fmt.Errorf("expected PARTITION keyword")
 	}
 
@@ -5128,25 +5131,25 @@ func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error)
 	}
 	def.Name = name
 
-	if err := p.expect(TOKEN_VALUES); err != nil {
+	if err := p.expect(token.TOKEN_VALUES); err != nil {
 		return def, fmt.Errorf("expected VALUES after partition name")
 	}
 
 	switch partType {
-	case PartitionRange:
+	case ast.PartitionRange:
 		// VALUES LESS THAN (value) or VALUES LESS THAN MAXVALUE
-		if err := p.expect(TOKEN_LESS); err != nil {
+		if err := p.expect(token.TOKEN_LESS); err != nil {
 			return def, fmt.Errorf("expected LESS after VALUES for RANGE partition")
 		}
-		if err := p.expect(TOKEN_THAN); err != nil {
+		if err := p.expect(token.TOKEN_THAN); err != nil {
 			return def, fmt.Errorf("expected THAN after LESS")
 		}
 
-		if p.curTokenIs(TOKEN_MAXVALUE) {
+		if p.curTokenIs(token.TOKEN_MAXVALUE) {
 			def.Bound.IsMaxValue = true
 			p.nextToken()
 		} else {
-			if err := p.expect(TOKEN_LPAREN); err != nil {
+			if err := p.expect(token.TOKEN_LPAREN); err != nil {
 				return def, fmt.Errorf("expected '(' or MAXVALUE after LESS THAN")
 			}
 			expr, err := p.parseExpression()
@@ -5154,19 +5157,19 @@ func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error)
 				return def, fmt.Errorf("error parsing partition bound: %v", err)
 			}
 			def.Bound.LessThan = expr
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return def, fmt.Errorf("expected ')' after partition bound value")
 			}
 		}
 
-	case PartitionList:
+	case ast.PartitionList:
 		// VALUES IN (value1, value2, ...)
-		if !p.curTokenIs(TOKEN_IN) {
+		if !p.curTokenIs(token.TOKEN_IN) {
 			return def, fmt.Errorf("expected IN after VALUES for LIST partition")
 		}
 		p.nextToken() // consume IN
 
-		if err := p.expect(TOKEN_LPAREN); err != nil {
+		if err := p.expect(token.TOKEN_LPAREN); err != nil {
 			return def, fmt.Errorf("expected '(' after IN")
 		}
 
@@ -5177,14 +5180,14 @@ func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error)
 			}
 			def.Bound.Values = append(def.Bound.Values, expr)
 
-			if p.curTokenIs(TOKEN_COMMA) {
+			if p.curTokenIs(token.TOKEN_COMMA) {
 				p.nextToken()
 			} else {
 				break
 			}
 		}
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return def, fmt.Errorf("expected ')' after list values")
 		}
 
@@ -5200,30 +5203,30 @@ func (p *Parser) parsePartitionDef(partType PartitionType) (PartitionDef, error)
 // parsePLDataType parses a data type for PL/pgSQL (INT, BIGINT, TEXT, BOOL, TIMESTAMP, etc.)
 func (p *Parser) parsePLDataType() (catalog.DataType, error) {
 	switch p.cur.Type {
-	case TOKEN_INT_TYPE:
+	case token.TOKEN_INT_TYPE:
 		p.nextToken()
 		return catalog.TypeInt32, nil
-	case TOKEN_BIGINT:
+	case token.TOKEN_BIGINT:
 		p.nextToken()
 		return catalog.TypeInt64, nil
-	case TOKEN_TEXT:
+	case token.TOKEN_TEXT:
 		p.nextToken()
 		return catalog.TypeText, nil
-	case TOKEN_BOOL:
+	case token.TOKEN_BOOL:
 		p.nextToken()
 		return catalog.TypeBool, nil
-	case TOKEN_TIMESTAMP:
+	case token.TOKEN_TIMESTAMP:
 		p.nextToken()
 		return catalog.TypeTimestamp, nil
-	case TOKEN_JSON_TYPE:
+	case token.TOKEN_JSON_TYPE:
 		p.nextToken()
 		return catalog.TypeJSON, nil
-	case TOKEN_TRIGGER:
+	case token.TOKEN_TRIGGER:
 		p.nextToken()
 		return catalog.TypeTrigger, nil
 	default:
 		// Also check for identifier-style types
-		if p.curTokenIs(TOKEN_IDENT) {
+		if p.curTokenIs(token.TOKEN_IDENT) {
 			typeName := strings.ToUpper(p.cur.Literal)
 			p.nextToken()
 			switch typeName {
@@ -5250,19 +5253,19 @@ func (p *Parser) parsePLDataType() (catalog.DataType, error) {
 }
 
 // parseCreateProcedure parses CREATE [OR REPLACE] PROCEDURE name(params) AS $$ body $$ LANGUAGE plpgsql
-func (p *Parser) parseCreateProcedure(_ bool) (*CreateProcedureStmt, error) {
+func (p *Parser) parseCreateProcedure(_ bool) (*ast.CreateProcedureStmt, error) {
 	p.nextToken() // consume PROCEDURE
 
-	stmt := &CreateProcedureStmt{}
+	stmt := &ast.CreateProcedureStmt{}
 
 	// Check for IF NOT EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if !p.curTokenIs(TOKEN_NOT) {
+		if !p.curTokenIs(token.TOKEN_NOT) {
 			return nil, fmt.Errorf("expected NOT after IF")
 		}
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after NOT")
 		}
 		stmt.IfNotExists = true
@@ -5279,7 +5282,7 @@ func (p *Parser) parseCreateProcedure(_ bool) (*CreateProcedureStmt, error) {
 	stmt.Name = name
 
 	// Parameters
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after procedure name")
 	}
 
@@ -5289,32 +5292,32 @@ func (p *Parser) parseCreateProcedure(_ bool) (*CreateProcedureStmt, error) {
 	}
 	stmt.Params = params
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after parameters")
 	}
 
 	// AS keyword
-	if !p.curTokenIs(TOKEN_AS) {
+	if !p.curTokenIs(token.TOKEN_AS) {
 		return nil, fmt.Errorf("expected AS after parameters, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume AS
 
 	// Dollar-quoted body $$...$$
-	if !p.curTokenIs(TOKEN_DOLLAR_QUOTE) {
+	if !p.curTokenIs(token.TOKEN_DOLLAR_QUOTE) {
 		return nil, fmt.Errorf("expected $$ body $$, got %v", p.cur.Type)
 	}
 	stmt.BodyText = p.cur.Literal
 	p.nextToken() // consume dollar-quoted body
 
 	// LANGUAGE plpgsql
-	if !p.curTokenIs(TOKEN_LANGUAGE) {
+	if !p.curTokenIs(token.TOKEN_LANGUAGE) {
 		return nil, fmt.Errorf("expected LANGUAGE after body, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume LANGUAGE
 
-	if p.curTokenIs(TOKEN_PLPGSQL) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
+	if p.curTokenIs(token.TOKEN_PLPGSQL) || (p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
 		stmt.Language = "plpgsql"
-	} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
+	} else if p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
 		stmt.Language = "sql"
 	} else {
 		return nil, fmt.Errorf("expected PLPGSQL or SQL after LANGUAGE, got %v", p.cur.Literal)
@@ -5334,19 +5337,19 @@ func (p *Parser) parseCreateProcedure(_ bool) (*CreateProcedureStmt, error) {
 }
 
 // parseCreateFunction parses CREATE [OR REPLACE] FUNCTION name(params) RETURNS type AS $$ body $$ LANGUAGE plpgsql
-func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
+func (p *Parser) parseCreateFunction(_ bool) (*ast.CreateFunctionStmt, error) {
 	p.nextToken() // consume FUNCTION
 
-	stmt := &CreateFunctionStmt{}
+	stmt := &ast.CreateFunctionStmt{}
 
 	// Check for IF NOT EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if !p.curTokenIs(TOKEN_NOT) {
+		if !p.curTokenIs(token.TOKEN_NOT) {
 			return nil, fmt.Errorf("expected NOT after IF")
 		}
 		p.nextToken() // consume NOT
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after NOT")
 		}
 		stmt.IfNotExists = true
@@ -5363,7 +5366,7 @@ func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
 	stmt.Name = name
 
 	// Parameters
-	if err := p.expect(TOKEN_LPAREN); err != nil {
+	if err := p.expect(token.TOKEN_LPAREN); err != nil {
 		return nil, fmt.Errorf("expected '(' after function name")
 	}
 
@@ -5373,18 +5376,18 @@ func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
 	}
 	stmt.Params = params
 
-	if err := p.expect(TOKEN_RPAREN); err != nil {
+	if err := p.expect(token.TOKEN_RPAREN); err != nil {
 		return nil, fmt.Errorf("expected ')' after parameters")
 	}
 
 	// RETURNS type
-	if !p.curTokenIs(TOKEN_RETURNS) {
+	if !p.curTokenIs(token.TOKEN_RETURNS) {
 		return nil, fmt.Errorf("expected RETURNS after parameters, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume RETURNS
 
 	// Return type
-	if p.curTokenIs(TOKEN_VOID) {
+	if p.curTokenIs(token.TOKEN_VOID) {
 		stmt.ReturnType = catalog.TypeInt32 // VOID represented as int with special handling
 		p.nextToken()
 	} else {
@@ -5396,27 +5399,27 @@ func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
 	}
 
 	// AS keyword
-	if !p.curTokenIs(TOKEN_AS) {
+	if !p.curTokenIs(token.TOKEN_AS) {
 		return nil, fmt.Errorf("expected AS after return type, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume AS
 
 	// Dollar-quoted body $$...$$
-	if !p.curTokenIs(TOKEN_DOLLAR_QUOTE) {
+	if !p.curTokenIs(token.TOKEN_DOLLAR_QUOTE) {
 		return nil, fmt.Errorf("expected $$ body $$, got %v", p.cur.Type)
 	}
 	stmt.BodyText = p.cur.Literal
 	p.nextToken() // consume dollar-quoted body
 
 	// LANGUAGE plpgsql
-	if !p.curTokenIs(TOKEN_LANGUAGE) {
+	if !p.curTokenIs(token.TOKEN_LANGUAGE) {
 		return nil, fmt.Errorf("expected LANGUAGE after body, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume LANGUAGE
 
-	if p.curTokenIs(TOKEN_PLPGSQL) || (p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
+	if p.curTokenIs(token.TOKEN_PLPGSQL) || (p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "PLPGSQL") {
 		stmt.Language = "plpgsql"
-	} else if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
+	} else if p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "SQL" {
 		stmt.Language = "sql"
 	} else {
 		return nil, fmt.Errorf("expected PLPGSQL or SQL after LANGUAGE, got %v", p.cur.Literal)
@@ -5436,28 +5439,28 @@ func (p *Parser) parseCreateFunction(_ bool) (*CreateFunctionStmt, error) {
 }
 
 // parseProcParams parses procedure/function parameters: (name TYPE [DEFAULT expr], ...)
-func (p *Parser) parseProcParams() ([]ProcParam, error) {
-	var params []ProcParam
+func (p *Parser) parseProcParams() ([]ast.ProcParam, error) {
+	var params []ast.ProcParam
 
-	if p.curTokenIs(TOKEN_RPAREN) {
+	if p.curTokenIs(token.TOKEN_RPAREN) {
 		return params, nil // empty parameter list
 	}
 
 	for {
-		param := ProcParam{Mode: ParamModeIn} // default mode is IN
+		param := ast.ProcParam{Mode: ast.ParamModeIn} // default mode is IN
 
 		// Check for mode: IN, OUT, INOUT
-		if p.curTokenIs(TOKEN_IN) {
+		if p.curTokenIs(token.TOKEN_IN) {
 			p.nextToken()
-			if p.curTokenIs(TOKEN_OUT) {
-				param.Mode = ParamModeInOut
+			if p.curTokenIs(token.TOKEN_OUT) {
+				param.Mode = ast.ParamModeInOut
 				p.nextToken()
 			}
-		} else if p.curTokenIs(TOKEN_OUT) {
-			param.Mode = ParamModeOut
+		} else if p.curTokenIs(token.TOKEN_OUT) {
+			param.Mode = ast.ParamModeOut
 			p.nextToken()
-		} else if p.curTokenIs(TOKEN_INOUT) {
-			param.Mode = ParamModeInOut
+		} else if p.curTokenIs(token.TOKEN_INOUT) {
+			param.Mode = ast.ParamModeInOut
 			p.nextToken()
 		}
 
@@ -5479,7 +5482,7 @@ func (p *Parser) parseProcParams() ([]ProcParam, error) {
 		param.Type = dataType
 
 		// Optional DEFAULT
-		if p.curTokenIs(TOKEN_DEFAULT) || p.curTokenIs(TOKEN_COLON_EQ) {
+		if p.curTokenIs(token.TOKEN_DEFAULT) || p.curTokenIs(token.TOKEN_COLON_EQ) {
 			p.nextToken() // consume DEFAULT or :=
 			defVal, err := p.parseExpression()
 			if err != nil {
@@ -5490,7 +5493,7 @@ func (p *Parser) parseProcParams() ([]ProcParam, error) {
 
 		params = append(params, param)
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
@@ -5501,18 +5504,18 @@ func (p *Parser) parseProcParams() ([]ProcParam, error) {
 }
 
 // parsePLBody parses the PL/pgSQL body text into a PLBlock AST.
-func (p *Parser) parsePLBody(bodyText string) (*PLBlock, error) {
+func (p *Parser) parsePLBody(bodyText string) (*ast.PLBlock, error) {
 	// Create a new parser for the body text
 	plParser := NewParser(bodyText)
 	return plParser.parsePLBlock()
 }
 
 // parsePLBlock parses a PL/pgSQL BEGIN...END block with optional DECLARE section.
-func (p *Parser) parsePLBlock() (*PLBlock, error) {
-	block := &PLBlock{}
+func (p *Parser) parsePLBlock() (*ast.PLBlock, error) {
+	block := &ast.PLBlock{}
 
 	// Optional DECLARE section
-	if p.curTokenIs(TOKEN_DECLARE) {
+	if p.curTokenIs(token.TOKEN_DECLARE) {
 		p.nextToken() // consume DECLARE
 		decls, err := p.parsePLDeclarations()
 		if err != nil {
@@ -5522,7 +5525,7 @@ func (p *Parser) parsePLBlock() (*PLBlock, error) {
 	}
 
 	// BEGIN
-	if !p.curTokenIs(TOKEN_BEGIN) {
+	if !p.curTokenIs(token.TOKEN_BEGIN) {
 		return nil, fmt.Errorf("expected BEGIN, got %v (%q)", p.cur.Type, p.cur.Literal)
 	}
 	p.nextToken() // consume BEGIN
@@ -5535,7 +5538,7 @@ func (p *Parser) parsePLBlock() (*PLBlock, error) {
 	block.Statements = stmts
 
 	// Optional EXCEPTION section
-	if p.curTokenIs(TOKEN_EXCEPTION) {
+	if p.curTokenIs(token.TOKEN_EXCEPTION) {
 		p.nextToken() // consume EXCEPTION
 		handlers, err := p.parsePLExceptionHandlers()
 		if err != nil {
@@ -5545,13 +5548,13 @@ func (p *Parser) parsePLBlock() (*PLBlock, error) {
 	}
 
 	// END
-	if !p.curTokenIs(TOKEN_END) {
+	if !p.curTokenIs(token.TOKEN_END) {
 		return nil, fmt.Errorf("expected END, got %v (%q)", p.cur.Type, p.cur.Literal)
 	}
 	p.nextToken() // consume END
 
 	// Optional semicolon after END
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -5559,11 +5562,11 @@ func (p *Parser) parsePLBlock() (*PLBlock, error) {
 }
 
 // parsePLDeclarations parses variable declarations in DECLARE section.
-func (p *Parser) parsePLDeclarations() ([]PLVarDecl, error) {
-	var decls []PLVarDecl
+func (p *Parser) parsePLDeclarations() ([]ast.PLVarDecl, error) {
+	var decls []ast.PLVarDecl
 
-	for !p.curTokenIs(TOKEN_BEGIN) && !p.curTokenIs(TOKEN_EOF) {
-		decl := PLVarDecl{}
+	for !p.curTokenIs(token.TOKEN_BEGIN) && !p.curTokenIs(token.TOKEN_EOF) {
+		decl := ast.PLVarDecl{}
 
 		// Variable name
 		if !p.isIdentifierOrContextualKeyword() {
@@ -5583,16 +5586,16 @@ func (p *Parser) parsePLDeclarations() ([]PLVarDecl, error) {
 		decl.Type = dataType
 
 		// Optional NOT NULL
-		if p.curTokenIs(TOKEN_NOT) {
+		if p.curTokenIs(token.TOKEN_NOT) {
 			p.nextToken()
-			if err := p.expect(TOKEN_NULL); err != nil {
+			if err := p.expect(token.TOKEN_NULL); err != nil {
 				return nil, fmt.Errorf("expected NULL after NOT")
 			}
 			decl.NotNull = true
 		}
 
 		// Optional DEFAULT or :=
-		if p.curTokenIs(TOKEN_DEFAULT) || p.curTokenIs(TOKEN_COLON_EQ) {
+		if p.curTokenIs(token.TOKEN_DEFAULT) || p.curTokenIs(token.TOKEN_COLON_EQ) {
 			p.nextToken()
 			defVal, err := p.parseExpression()
 			if err != nil {
@@ -5602,7 +5605,7 @@ func (p *Parser) parsePLDeclarations() ([]PLVarDecl, error) {
 		}
 
 		// Semicolon
-		if p.curTokenIs(TOKEN_SEMICOLON) {
+		if p.curTokenIs(token.TOKEN_SEMICOLON) {
 			p.nextToken()
 		}
 
@@ -5613,12 +5616,12 @@ func (p *Parser) parsePLDeclarations() ([]PLVarDecl, error) {
 }
 
 // parsePLStatements parses PL/pgSQL statements until END, EXCEPTION, ELSIF, ELSE, or LOOP terminator.
-func (p *Parser) parsePLStatements() ([]PLStatement, error) {
-	var stmts []PLStatement
+func (p *Parser) parsePLStatements() ([]ast.PLStatement, error) {
+	var stmts []ast.PLStatement
 
-	for !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EXCEPTION) &&
-		!p.curTokenIs(TOKEN_ELSIF) && !p.curTokenIs(TOKEN_ELSE) &&
-		!p.curTokenIs(TOKEN_EOF) {
+	for !p.curTokenIs(token.TOKEN_END) && !p.curTokenIs(token.TOKEN_EXCEPTION) &&
+		!p.curTokenIs(token.TOKEN_ELSIF) && !p.curTokenIs(token.TOKEN_ELSE) &&
+		!p.curTokenIs(token.TOKEN_EOF) {
 
 		stmt, err := p.parsePLStatement()
 		if err != nil {
@@ -5633,43 +5636,43 @@ func (p *Parser) parsePLStatements() ([]PLStatement, error) {
 }
 
 // parsePLStatement parses a single PL/pgSQL statement.
-func (p *Parser) parsePLStatement() (PLStatement, error) {
+func (p *Parser) parsePLStatement() (ast.PLStatement, error) {
 	switch {
-	case p.curTokenIs(TOKEN_IF):
+	case p.curTokenIs(token.TOKEN_IF):
 		return p.parsePLIf()
 
-	case p.curTokenIs(TOKEN_WHILE):
+	case p.curTokenIs(token.TOKEN_WHILE):
 		return p.parsePLWhile()
 
-	case p.curTokenIs(TOKEN_LOOP):
+	case p.curTokenIs(token.TOKEN_LOOP):
 		return p.parsePLLoop()
 
-	case p.curTokenIs(TOKEN_FOR):
+	case p.curTokenIs(token.TOKEN_FOR):
 		return p.parsePLFor()
 
-	case p.curTokenIs(TOKEN_EXIT):
+	case p.curTokenIs(token.TOKEN_EXIT):
 		return p.parsePLExit()
 
-	case p.curTokenIs(TOKEN_CONTINUE):
+	case p.curTokenIs(token.TOKEN_CONTINUE):
 		return p.parsePLContinue()
 
-	case p.curTokenIs(TOKEN_RETURN):
+	case p.curTokenIs(token.TOKEN_RETURN):
 		return p.parsePLReturn()
 
-	case p.curTokenIs(TOKEN_RAISE):
+	case p.curTokenIs(token.TOKEN_RAISE):
 		return p.parsePLRaise()
 
-	case p.curTokenIs(TOKEN_PERFORM):
+	case p.curTokenIs(token.TOKEN_PERFORM):
 		return p.parsePLPerform()
 
-	case p.curTokenIs(TOKEN_SELECT), p.curTokenIs(TOKEN_INSERT),
-		p.curTokenIs(TOKEN_UPDATE), p.curTokenIs(TOKEN_DELETE):
+	case p.curTokenIs(token.TOKEN_SELECT), p.curTokenIs(token.TOKEN_INSERT),
+		p.curTokenIs(token.TOKEN_UPDATE), p.curTokenIs(token.TOKEN_DELETE):
 		return p.parsePLSQL()
 
-	case p.curTokenIs(TOKEN_NULL):
+	case p.curTokenIs(token.TOKEN_NULL):
 		// NULL statement (do nothing)
 		p.nextToken()
-		if p.curTokenIs(TOKEN_SEMICOLON) {
+		if p.curTokenIs(token.TOKEN_SEMICOLON) {
 			p.nextToken()
 		}
 		return nil, nil
@@ -5684,10 +5687,10 @@ func (p *Parser) parsePLStatement() (PLStatement, error) {
 }
 
 // parsePLIf parses IF...ELSIF...ELSE...END IF statement.
-func (p *Parser) parsePLIf() (*PLIf, error) {
+func (p *Parser) parsePLIf() (*ast.PLIf, error) {
 	p.nextToken() // consume IF
 
-	stmt := &PLIf{}
+	stmt := &ast.PLIf{}
 
 	// Condition
 	cond, err := p.parseExpression()
@@ -5697,7 +5700,7 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 	stmt.Condition = cond
 
 	// THEN
-	if !p.curTokenIs(TOKEN_THEN) {
+	if !p.curTokenIs(token.TOKEN_THEN) {
 		return nil, fmt.Errorf("expected THEN after IF condition, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume THEN
@@ -5710,9 +5713,9 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 	stmt.Then = thenStmts
 
 	// ELSIF branches
-	for p.curTokenIs(TOKEN_ELSIF) {
+	for p.curTokenIs(token.TOKEN_ELSIF) {
 		p.nextToken() // consume ELSIF
-		elsif := PLElsIf{}
+		elsif := ast.PLElsIf{}
 
 		cond, err := p.parseExpression()
 		if err != nil {
@@ -5720,7 +5723,7 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 		}
 		elsif.Condition = cond
 
-		if !p.curTokenIs(TOKEN_THEN) {
+		if !p.curTokenIs(token.TOKEN_THEN) {
 			return nil, fmt.Errorf("expected THEN after ELSIF condition")
 		}
 		p.nextToken() // consume THEN
@@ -5735,7 +5738,7 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 	}
 
 	// ELSE branch
-	if p.curTokenIs(TOKEN_ELSE) {
+	if p.curTokenIs(token.TOKEN_ELSE) {
 		p.nextToken() // consume ELSE
 		elseStmts, err := p.parsePLStatements()
 		if err != nil {
@@ -5745,18 +5748,18 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 	}
 
 	// END IF
-	if !p.curTokenIs(TOKEN_END) {
+	if !p.curTokenIs(token.TOKEN_END) {
 		return nil, fmt.Errorf("expected END IF, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume END
 
-	if !p.curTokenIs(TOKEN_IF) {
+	if !p.curTokenIs(token.TOKEN_IF) {
 		return nil, fmt.Errorf("expected IF after END, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume IF
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -5764,10 +5767,10 @@ func (p *Parser) parsePLIf() (*PLIf, error) {
 }
 
 // parsePLWhile parses WHILE condition LOOP ... END LOOP statement.
-func (p *Parser) parsePLWhile() (*PLWhile, error) {
+func (p *Parser) parsePLWhile() (*ast.PLWhile, error) {
 	p.nextToken() // consume WHILE
 
-	stmt := &PLWhile{}
+	stmt := &ast.PLWhile{}
 
 	// Condition
 	cond, err := p.parseExpression()
@@ -5777,7 +5780,7 @@ func (p *Parser) parsePLWhile() (*PLWhile, error) {
 	stmt.Condition = cond
 
 	// LOOP
-	if !p.curTokenIs(TOKEN_LOOP) {
+	if !p.curTokenIs(token.TOKEN_LOOP) {
 		return nil, fmt.Errorf("expected LOOP after WHILE condition, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume LOOP
@@ -5793,10 +5796,10 @@ func (p *Parser) parsePLWhile() (*PLWhile, error) {
 }
 
 // parsePLLoop parses simple LOOP ... END LOOP statement.
-func (p *Parser) parsePLLoop() (*PLLoop, error) {
+func (p *Parser) parsePLLoop() (*ast.PLLoop, error) {
 	p.nextToken() // consume LOOP
 
-	stmt := &PLLoop{}
+	stmt := &ast.PLLoop{}
 
 	body, err := p.parsePLLoopBody()
 	if err != nil {
@@ -5808,18 +5811,18 @@ func (p *Parser) parsePLLoop() (*PLLoop, error) {
 }
 
 // parsePLLoopBody parses loop body until END LOOP.
-func (p *Parser) parsePLLoopBody() ([]PLStatement, error) {
-	var stmts []PLStatement
+func (p *Parser) parsePLLoopBody() ([]ast.PLStatement, error) {
+	var stmts []ast.PLStatement
 
-	for !p.curTokenIs(TOKEN_EOF) {
+	for !p.curTokenIs(token.TOKEN_EOF) {
 		// Check for END LOOP
-		if p.curTokenIs(TOKEN_END) {
+		if p.curTokenIs(token.TOKEN_END) {
 			p.nextToken() // consume END
-			if !p.curTokenIs(TOKEN_LOOP) {
+			if !p.curTokenIs(token.TOKEN_LOOP) {
 				return nil, fmt.Errorf("expected LOOP after END in loop body")
 			}
 			p.nextToken() // consume LOOP
-			if p.curTokenIs(TOKEN_SEMICOLON) {
+			if p.curTokenIs(token.TOKEN_SEMICOLON) {
 				p.nextToken()
 			}
 			return stmts, nil
@@ -5838,10 +5841,10 @@ func (p *Parser) parsePLLoopBody() ([]PLStatement, error) {
 }
 
 // parsePLFor parses FOR loop (numeric or query).
-func (p *Parser) parsePLFor() (*PLFor, error) {
+func (p *Parser) parsePLFor() (*ast.PLFor, error) {
 	p.nextToken() // consume FOR
 
-	stmt := &PLFor{}
+	stmt := &ast.PLFor{}
 
 	// Loop variable
 	if !p.isIdentifierOrContextualKeyword() {
@@ -5854,27 +5857,27 @@ func (p *Parser) parsePLFor() (*PLFor, error) {
 	stmt.Variable = name
 
 	// IN keyword
-	if !p.curTokenIs(TOKEN_IN) {
+	if !p.curTokenIs(token.TOKEN_IN) {
 		return nil, fmt.Errorf("expected IN after loop variable, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume IN
 
 	// Check for REVERSE
-	if p.curTokenIs(TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "REVERSE" {
+	if p.curTokenIs(token.TOKEN_IDENT) && strings.ToUpper(p.cur.Literal) == "REVERSE" {
 		stmt.Reverse = true
 		p.nextToken()
 	}
 
 	// Check if it's a query loop: FOR rec IN (SELECT ...) or FOR rec IN query
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
-		if p.curTokenIs(TOKEN_SELECT) {
+		if p.curTokenIs(token.TOKEN_SELECT) {
 			query, err := p.parseSelect()
 			if err != nil {
 				return nil, fmt.Errorf("error parsing FOR query: %v", err)
 			}
 			stmt.Query = query
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after FOR query")
 			}
 		} else {
@@ -5896,7 +5899,7 @@ func (p *Parser) parsePLFor() (*PLFor, error) {
 			}
 			stmt.UpperBound = upper
 
-			if err := p.expect(TOKEN_RPAREN); err != nil {
+			if err := p.expect(token.TOKEN_RPAREN); err != nil {
 				return nil, fmt.Errorf("expected ')' after numeric range")
 			}
 		}
@@ -5921,7 +5924,7 @@ func (p *Parser) parsePLFor() (*PLFor, error) {
 	}
 
 	// LOOP
-	if !p.curTokenIs(TOKEN_LOOP) {
+	if !p.curTokenIs(token.TOKEN_LOOP) {
 		return nil, fmt.Errorf("expected LOOP, got %v", p.cur.Type)
 	}
 	p.nextToken() // consume LOOP
@@ -5937,19 +5940,19 @@ func (p *Parser) parsePLFor() (*PLFor, error) {
 }
 
 // parsePLExit parses EXIT [label] [WHEN condition] statement.
-func (p *Parser) parsePLExit() (*PLExit, error) {
+func (p *Parser) parsePLExit() (*ast.PLExit, error) {
 	p.nextToken() // consume EXIT
 
-	stmt := &PLExit{}
+	stmt := &ast.PLExit{}
 
 	// Optional label
-	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHEN) {
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_WHEN) {
 		label, _ := p.parseIdentifier()
 		stmt.Label = label
 	}
 
 	// Optional WHEN condition
-	if p.curTokenIs(TOKEN_WHEN) {
+	if p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
 		cond, err := p.parseExpression()
 		if err != nil {
@@ -5959,7 +5962,7 @@ func (p *Parser) parsePLExit() (*PLExit, error) {
 	}
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -5967,19 +5970,19 @@ func (p *Parser) parsePLExit() (*PLExit, error) {
 }
 
 // parsePLContinue parses CONTINUE [label] [WHEN condition] statement.
-func (p *Parser) parsePLContinue() (*PLContinue, error) {
+func (p *Parser) parsePLContinue() (*ast.PLContinue, error) {
 	p.nextToken() // consume CONTINUE
 
-	stmt := &PLContinue{}
+	stmt := &ast.PLContinue{}
 
 	// Optional label
-	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(TOKEN_WHEN) {
+	if p.isIdentifierOrContextualKeyword() && !p.curTokenIs(token.TOKEN_WHEN) {
 		label, _ := p.parseIdentifier()
 		stmt.Label = label
 	}
 
 	// Optional WHEN condition
-	if p.curTokenIs(TOKEN_WHEN) {
+	if p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
 		cond, err := p.parseExpression()
 		if err != nil {
@@ -5989,7 +5992,7 @@ func (p *Parser) parsePLContinue() (*PLContinue, error) {
 	}
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -5997,13 +6000,13 @@ func (p *Parser) parsePLContinue() (*PLContinue, error) {
 }
 
 // parsePLReturn parses RETURN [expression] statement.
-func (p *Parser) parsePLReturn() (*PLReturn, error) {
+func (p *Parser) parsePLReturn() (*ast.PLReturn, error) {
 	p.nextToken() // consume RETURN
 
-	stmt := &PLReturn{}
+	stmt := &ast.PLReturn{}
 
 	// Optional return value (not followed immediately by semicolon or END)
-	if !p.curTokenIs(TOKEN_SEMICOLON) && !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EOF) {
+	if !p.curTokenIs(token.TOKEN_SEMICOLON) && !p.curTokenIs(token.TOKEN_END) && !p.curTokenIs(token.TOKEN_EOF) {
 		val, err := p.parseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing RETURN expression: %v", err)
@@ -6012,7 +6015,7 @@ func (p *Parser) parsePLReturn() (*PLReturn, error) {
 	}
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -6020,14 +6023,14 @@ func (p *Parser) parsePLReturn() (*PLReturn, error) {
 }
 
 // parsePLRaise parses RAISE [level] 'message' [, args] statement.
-func (p *Parser) parsePLRaise() (*PLRaise, error) {
+func (p *Parser) parsePLRaise() (*ast.PLRaise, error) {
 	p.nextToken() // consume RAISE
 
-	stmt := &PLRaise{Level: "EXCEPTION"} // default level
+	stmt := &ast.PLRaise{Level: "EXCEPTION"} // default level
 
 	// Optional level: NOTICE, WARNING, EXCEPTION, etc.
-	if p.curTokenIs(TOKEN_NOTICE) || p.curTokenIs(TOKEN_EXCEPTION) ||
-		(p.curTokenIs(TOKEN_IDENT) && (strings.ToUpper(p.cur.Literal) == "WARNING" ||
+	if p.curTokenIs(token.TOKEN_NOTICE) || p.curTokenIs(token.TOKEN_EXCEPTION) ||
+		(p.curTokenIs(token.TOKEN_IDENT) && (strings.ToUpper(p.cur.Literal) == "WARNING" ||
 			strings.ToUpper(p.cur.Literal) == "INFO" ||
 			strings.ToUpper(p.cur.Literal) == "DEBUG")) {
 		stmt.Level = strings.ToUpper(p.cur.Literal)
@@ -6035,13 +6038,13 @@ func (p *Parser) parsePLRaise() (*PLRaise, error) {
 	}
 
 	// Message string
-	if p.curTokenIs(TOKEN_STRING) {
+	if p.curTokenIs(token.TOKEN_STRING) {
 		stmt.Message = p.cur.Literal
 		p.nextToken()
 	}
 
 	// Optional format arguments
-	for p.curTokenIs(TOKEN_COMMA) {
+	for p.curTokenIs(token.TOKEN_COMMA) {
 		p.nextToken() // consume comma
 		arg, err := p.parseExpression()
 		if err != nil {
@@ -6051,7 +6054,7 @@ func (p *Parser) parsePLRaise() (*PLRaise, error) {
 	}
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -6059,10 +6062,10 @@ func (p *Parser) parsePLRaise() (*PLRaise, error) {
 }
 
 // parsePLPerform parses PERFORM query statement.
-func (p *Parser) parsePLPerform() (*PLPerform, error) {
+func (p *Parser) parsePLPerform() (*ast.PLPerform, error) {
 	p.nextToken() // consume PERFORM
 
-	stmt := &PLPerform{}
+	stmt := &ast.PLPerform{}
 
 	// The rest is a SELECT query (without SELECT keyword)
 	// PERFORM expr is equivalent to SELECT expr with results discarded
@@ -6070,8 +6073,8 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 	// We need to construct a pseudo-SELECT
 
 	// Save position and manually construct SELECT
-	query := &SelectStmt{
-		Columns: []SelectColumn{},
+	query := &ast.SelectStmt{
+		Columns: []ast.SelectColumn{},
 	}
 
 	// Parse expression list as columns
@@ -6080,9 +6083,9 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error parsing PERFORM expression: %v", err)
 		}
-		query.Columns = append(query.Columns, SelectColumn{Expression: expr})
+		query.Columns = append(query.Columns, ast.SelectColumn{Expression: expr})
 
-		if p.curTokenIs(TOKEN_COMMA) {
+		if p.curTokenIs(token.TOKEN_COMMA) {
 			p.nextToken()
 		} else {
 			break
@@ -6090,7 +6093,7 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 	}
 
 	// Optional FROM
-	if p.curTokenIs(TOKEN_FROM) {
+	if p.curTokenIs(token.TOKEN_FROM) {
 		p.nextToken()
 		if p.isIdentifierOrContextualKeyword() {
 			name, _ := p.parseIdentifier()
@@ -6099,7 +6102,7 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 	}
 
 	// Optional WHERE
-	if p.curTokenIs(TOKEN_WHERE) {
+	if p.curTokenIs(token.TOKEN_WHERE) {
 		p.nextToken()
 		where, err := p.parseExpression()
 		if err != nil {
@@ -6111,7 +6114,7 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 	stmt.Query = query
 
 	// Semicolon
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -6119,8 +6122,8 @@ func (p *Parser) parsePLPerform() (*PLPerform, error) {
 }
 
 // parsePLSQL parses embedded SQL (SELECT INTO, INSERT, UPDATE, DELETE).
-func (p *Parser) parsePLSQL() (*PLSQL, error) {
-	stmt := &PLSQL{}
+func (p *Parser) parsePLSQL() (*ast.PLSQL, error) {
+	stmt := &ast.PLSQL{}
 
 	// Parse the SQL statement
 	sqlStmt, err := p.Parse()
@@ -6130,7 +6133,7 @@ func (p *Parser) parsePLSQL() (*PLSQL, error) {
 	stmt.Statement = sqlStmt
 
 	// Consume trailing semicolon if present
-	if p.curTokenIs(TOKEN_SEMICOLON) {
+	if p.curTokenIs(token.TOKEN_SEMICOLON) {
 		p.nextToken()
 	}
 
@@ -6138,7 +6141,7 @@ func (p *Parser) parsePLSQL() (*PLSQL, error) {
 }
 
 // parsePLAssignOrSQL parses variable assignment or SQL statement starting with identifier.
-func (p *Parser) parsePLAssignOrSQL() (PLStatement, error) {
+func (p *Parser) parsePLAssignOrSQL() (ast.PLStatement, error) {
 	// Save the identifier
 	name, err := p.parseIdentifier()
 	if err != nil {
@@ -6146,18 +6149,18 @@ func (p *Parser) parsePLAssignOrSQL() (PLStatement, error) {
 	}
 
 	// Check for := assignment
-	if p.curTokenIs(TOKEN_COLON_EQ) {
+	if p.curTokenIs(token.TOKEN_COLON_EQ) {
 		p.nextToken() // consume :=
 		expr, err := p.parseExpression()
 		if err != nil {
 			return nil, fmt.Errorf("error parsing assignment value: %v", err)
 		}
 
-		if p.curTokenIs(TOKEN_SEMICOLON) {
+		if p.curTokenIs(token.TOKEN_SEMICOLON) {
 			p.nextToken()
 		}
 
-		return &PLAssign{Variable: name, Value: expr}, nil
+		return &ast.PLAssign{Variable: name, Value: expr}, nil
 	}
 
 	// Could be a procedure/function call or other statement
@@ -6166,13 +6169,13 @@ func (p *Parser) parsePLAssignOrSQL() (PLStatement, error) {
 }
 
 // parsePLExceptionHandlers parses EXCEPTION WHEN handlers.
-func (p *Parser) parsePLExceptionHandlers() ([]PLExceptionHandler, error) {
-	var handlers []PLExceptionHandler
+func (p *Parser) parsePLExceptionHandlers() ([]ast.PLExceptionHandler, error) {
+	var handlers []ast.PLExceptionHandler
 
-	for p.curTokenIs(TOKEN_WHEN) {
+	for p.curTokenIs(token.TOKEN_WHEN) {
 		p.nextToken() // consume WHEN
 
-		handler := PLExceptionHandler{}
+		handler := ast.PLExceptionHandler{}
 
 		// Exception names (e.g., OTHERS, NO_DATA_FOUND)
 		for {
@@ -6182,7 +6185,7 @@ func (p *Parser) parsePLExceptionHandlers() ([]PLExceptionHandler, error) {
 			name, _ := p.parseIdentifier()
 			handler.Exceptions = append(handler.Exceptions, name)
 
-			if p.curTokenIs(TOKEN_OR) {
+			if p.curTokenIs(token.TOKEN_OR) {
 				p.nextToken() // consume OR
 			} else {
 				break
@@ -6190,14 +6193,14 @@ func (p *Parser) parsePLExceptionHandlers() ([]PLExceptionHandler, error) {
 		}
 
 		// THEN
-		if !p.curTokenIs(TOKEN_THEN) {
+		if !p.curTokenIs(token.TOKEN_THEN) {
 			return nil, fmt.Errorf("expected THEN after exception names")
 		}
 		p.nextToken() // consume THEN
 
 		// Handler statements until next WHEN or END
-		var stmts []PLStatement
-		for !p.curTokenIs(TOKEN_WHEN) && !p.curTokenIs(TOKEN_END) && !p.curTokenIs(TOKEN_EOF) {
+		var stmts []ast.PLStatement
+		for !p.curTokenIs(token.TOKEN_WHEN) && !p.curTokenIs(token.TOKEN_END) && !p.curTokenIs(token.TOKEN_EOF) {
 			stmt, err := p.parsePLStatement()
 			if err != nil {
 				return nil, err
@@ -6215,15 +6218,15 @@ func (p *Parser) parsePLExceptionHandlers() ([]PLExceptionHandler, error) {
 }
 
 // parseDropProcedure parses DROP PROCEDURE [IF EXISTS] name
-func (p *Parser) parseDropProcedure() (*DropProcedureStmt, error) {
+func (p *Parser) parseDropProcedure() (*ast.DropProcedureStmt, error) {
 	p.nextToken() // consume PROCEDURE
 
-	stmt := &DropProcedureStmt{}
+	stmt := &ast.DropProcedureStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
@@ -6243,15 +6246,15 @@ func (p *Parser) parseDropProcedure() (*DropProcedureStmt, error) {
 }
 
 // parseDropFunction parses DROP FUNCTION [IF EXISTS] name
-func (p *Parser) parseDropFunction() (*DropFunctionStmt, error) {
+func (p *Parser) parseDropFunction() (*ast.DropFunctionStmt, error) {
 	p.nextToken() // consume FUNCTION
 
-	stmt := &DropFunctionStmt{}
+	stmt := &ast.DropFunctionStmt{}
 
 	// Optional IF EXISTS
-	if p.curTokenIs(TOKEN_IF) {
+	if p.curTokenIs(token.TOKEN_IF) {
 		p.nextToken() // consume IF
-		if err := p.expect(TOKEN_EXISTS); err != nil {
+		if err := p.expect(token.TOKEN_EXISTS); err != nil {
 			return nil, fmt.Errorf("expected EXISTS after IF")
 		}
 		stmt.IfExists = true
@@ -6271,10 +6274,10 @@ func (p *Parser) parseDropFunction() (*DropFunctionStmt, error) {
 }
 
 // parseCall parses CALL procedure_name(args...)
-func (p *Parser) parseCall() (*CallStmt, error) {
+func (p *Parser) parseCall() (*ast.CallStmt, error) {
 	p.nextToken() // consume CALL
 
-	stmt := &CallStmt{}
+	stmt := &ast.CallStmt{}
 
 	// Procedure name
 	if !p.isIdentifierOrContextualKeyword() {
@@ -6287,10 +6290,10 @@ func (p *Parser) parseCall() (*CallStmt, error) {
 	stmt.Name = name
 
 	// Arguments (optional parentheses)
-	if p.curTokenIs(TOKEN_LPAREN) {
+	if p.curTokenIs(token.TOKEN_LPAREN) {
 		p.nextToken() // consume (
 
-		if !p.curTokenIs(TOKEN_RPAREN) {
+		if !p.curTokenIs(token.TOKEN_RPAREN) {
 			for {
 				arg, err := p.parseExpression()
 				if err != nil {
@@ -6298,7 +6301,7 @@ func (p *Parser) parseCall() (*CallStmt, error) {
 				}
 				stmt.Args = append(stmt.Args, arg)
 
-				if p.curTokenIs(TOKEN_COMMA) {
+				if p.curTokenIs(token.TOKEN_COMMA) {
 					p.nextToken()
 				} else {
 					break
@@ -6306,7 +6309,7 @@ func (p *Parser) parseCall() (*CallStmt, error) {
 			}
 		}
 
-		if err := p.expect(TOKEN_RPAREN); err != nil {
+		if err := p.expect(token.TOKEN_RPAREN); err != nil {
 			return nil, fmt.Errorf("expected ')' after CALL arguments")
 		}
 	}

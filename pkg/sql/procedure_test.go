@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 func TestParseProcedure_Create(t *testing.T) {
@@ -37,7 +38,7 @@ func TestParseProcedure_Create(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			createProc, ok := stmt.(*CreateProcedureStmt)
+			createProc, ok := stmt.(*ast.CreateProcedureStmt)
 			if !ok {
 				t.Fatalf("expected *CreateProcedureStmt, got %T", stmt)
 			}
@@ -61,7 +62,7 @@ func TestParseProcedure_CreateIfNotExists(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	createProc, ok := stmt.(*CreateProcedureStmt)
+	createProc, ok := stmt.(*ast.CreateProcedureStmt)
 	if !ok {
 		t.Fatalf("expected *CreateProcedureStmt, got %T", stmt)
 	}
@@ -110,7 +111,7 @@ func TestParseFunction_Create(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			createFunc, ok := stmt.(*CreateFunctionStmt)
+			createFunc, ok := stmt.(*ast.CreateFunctionStmt)
 			if !ok {
 				t.Fatalf("expected *CreateFunctionStmt, got %T", stmt)
 			}
@@ -157,7 +158,7 @@ func TestParseProcedure_Drop(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			dropProc, ok := stmt.(*DropProcedureStmt)
+			dropProc, ok := stmt.(*ast.DropProcedureStmt)
 			if !ok {
 				t.Fatalf("expected *DropProcedureStmt, got %T", stmt)
 			}
@@ -201,7 +202,7 @@ func TestParseFunction_Drop(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			dropFunc, ok := stmt.(*DropFunctionStmt)
+			dropFunc, ok := stmt.(*ast.DropFunctionStmt)
 			if !ok {
 				t.Fatalf("expected *DropFunctionStmt, got %T", stmt)
 			}
@@ -251,7 +252,7 @@ func TestParseCall(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			call, ok := stmt.(*CallStmt)
+			call, ok := stmt.(*ast.CallStmt)
 			if !ok {
 				t.Fatalf("expected *CallStmt, got %T", stmt)
 			}
@@ -275,7 +276,7 @@ func TestParseShowProcedures(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	_, ok := stmt.(*ShowProceduresStmt)
+	_, ok := stmt.(*ast.ShowProceduresStmt)
 	if !ok {
 		t.Fatalf("expected *ShowProceduresStmt, got %T", stmt)
 	}
@@ -290,7 +291,7 @@ func TestParseShowFunctions(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	_, ok := stmt.(*ShowFunctionsStmt)
+	_, ok := stmt.(*ast.ShowFunctionsStmt)
 	if !ok {
 		t.Fatalf("expected *ShowFunctionsStmt, got %T", stmt)
 	}
@@ -483,7 +484,7 @@ func TestParsePLBlock(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			createProc, ok := stmt.(*CreateProcedureStmt)
+			createProc, ok := stmt.(*ast.CreateProcedureStmt)
 			if !ok {
 				t.Fatalf("expected *CreateProcedureStmt, got %T", stmt)
 			}

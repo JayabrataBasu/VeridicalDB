@@ -7,6 +7,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -18,7 +19,7 @@ import (
 // This is the P2 consolidation harness: once every historical *Executor test
 // runs green against a *Session, executor.go can be deleted.
 type sqlExec interface {
-	Execute(stmt Statement) (*Result, error)
+	Execute(stmt ast.Statement) (*Result, error)
 	ExecuteSQL(input string) (*Result, error)
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -464,7 +465,7 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("parse failed: %v", perr)
 	}
-	sel, ok := parsed.(*SelectStmt)
+	sel, ok := parsed.(*ast.SelectStmt)
 	if !ok {
 		t.Fatalf("unexpected parsed type: %T", parsed)
 	}
@@ -473,12 +474,12 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 	if sub.Where == nil {
 		t.Fatalf("expected substituted WHERE, got nil")
 	}
-	be, ok := sub.Where.(*BinaryExpr)
+	be, ok := sub.Where.(*ast.BinaryExpr)
 	if !ok {
 		t.Fatalf("expected WHERE to be BinaryExpr after substitution, got %T", sub.Where)
 	}
 	// right side should be a LiteralExpr with text 'A' (or Value.Text)
-	lit, ok := be.Right.(*LiteralExpr)
+	lit, ok := be.Right.(*ast.LiteralExpr)
 	if !ok {
 		t.Fatalf("expected RHS to be LiteralExpr after substitution, got %T", be.Right)
 	}
@@ -501,7 +502,7 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 	if perr != nil {
 		t.Fatalf("parse failed: %v", perr)
 	}
-	sel2, ok := parsed2.(*SelectStmt)
+	sel2, ok := parsed2.(*ast.SelectStmt)
 	if !ok {
 		t.Fatalf("unexpected parsed type: %T", parsed2)
 	}
@@ -509,11 +510,11 @@ func TestMVCCCorrelatedSubqueries(t *testing.T) {
 	if sub2.Where == nil {
 		t.Fatalf("expected substituted WHERE in IN subquery, got nil")
 	}
-	be2, ok := sub2.Where.(*BinaryExpr)
+	be2, ok := sub2.Where.(*ast.BinaryExpr)
 	if !ok {
 		t.Fatalf("expected BinaryExpr for substituted WHERE, got %T", sub2.Where)
 	}
-	if _, ok := be2.Right.(*LiteralExpr); !ok {
+	if _, ok := be2.Right.(*ast.LiteralExpr); !ok {
 		t.Fatalf("expected RHS to be LiteralExpr after substitution, got %T", be2.Right)
 	}
 

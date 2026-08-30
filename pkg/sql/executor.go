@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 )
@@ -28,8 +30,8 @@ type Executor struct {
 // ViewDef stores a view definition.
 type ViewDef struct {
 	Name    string
-	Columns []string    // optional column aliases
-	Query   *SelectStmt // the SELECT that defines the view
+	Columns []string        // optional column aliases
+	Query   *ast.SelectStmt // the SELECT that defines the view
 }
 
 // NewExecutor creates a new Executor.
@@ -52,72 +54,72 @@ type Result struct {
 }
 
 // Execute executes a SQL statement and returns a result.
-func (e *Executor) Execute(stmt Statement) (*Result, error) {
+func (e *Executor) Execute(stmt ast.Statement) (*Result, error) {
 	switch s := stmt.(type) {
-	case *CreateTableStmt:
+	case *ast.CreateTableStmt:
 		// Invalidate cache for this table on CREATE
 		result, err := e.executeCreate(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *CreateViewStmt:
+	case *ast.CreateViewStmt:
 		return e.executeCreateView(s)
-	case *DropTableStmt:
+	case *ast.DropTableStmt:
 		// Invalidate cache for this table on DROP
 		result, err := e.executeDrop(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *DropViewStmt:
+	case *ast.DropViewStmt:
 		return e.executeDropView(s)
-	case *InsertStmt:
+	case *ast.InsertStmt:
 		// Invalidate cache for this table on INSERT
 		result, err := e.executeInsert(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *SelectStmt:
+	case *ast.SelectStmt:
 		return e.executeSelect(s)
-	case *UnionStmt:
+	case *ast.UnionStmt:
 		return e.executeUnion(s)
-	case *UpdateStmt:
+	case *ast.UpdateStmt:
 		// Invalidate cache for this table on UPDATE
 		result, err := e.executeUpdate(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *DeleteStmt:
+	case *ast.DeleteStmt:
 		// Invalidate cache for this table on DELETE
 		result, err := e.executeDelete(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *AlterTableStmt:
+	case *ast.AlterTableStmt:
 		// Invalidate cache for this table on ALTER
 		result, err := e.executeAlter(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *TruncateTableStmt:
+	case *ast.TruncateTableStmt:
 		// Invalidate cache for this table on TRUNCATE
 		result, err := e.executeTruncate(s)
 		if err == nil && e.queryCache != nil {
 			e.queryCache.InvalidateTable(s.TableName)
 		}
 		return result, err
-	case *ShowStmt:
+	case *ast.ShowStmt:
 		return e.executeShow(s)
-	case *ExplainStmt:
+	case *ast.ExplainStmt:
 		return e.executeExplain(s)
-	case *AnalyzeStmt:
+	case *ast.AnalyzeStmt:
 		return e.executeAnalyze(s)
-	case *MergeStmt:
+	case *ast.MergeStmt:
 		return e.executeMerge(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
@@ -134,11 +136,11 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 	}
 
 	// Check if it's a SELECT statement and try cache
-	if _, ok := stmt.(*SelectStmt); ok && e.queryCache != nil {
+	if _, ok := stmt.(*ast.SelectStmt); ok && e.queryCache != nil {
 		// Try to get from cache
 		if cached, found := e.queryCache.Get(sql); found {
 			// Execute the cached statement
-			if selectStmt, ok := cached.ParsedAST.(*SelectStmt); ok {
+			if selectStmt, ok := cached.ParsedAST.(*ast.SelectStmt); ok {
 				return e.executeSelect(selectStmt)
 			}
 		}
@@ -155,7 +157,7 @@ func (e *Executor) ExecuteSQL(sql string) (*Result, error) {
 	return e.Execute(stmt)
 }
 
-func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
+func (e *Executor) executeCreate(stmt *ast.CreateTableStmt) (*Result, error) {
 	cols := make([]catalog.Column, len(stmt.Columns))
 	for i, c := range stmt.Columns {
 		col := catalog.Column{
@@ -264,7 +266,7 @@ func (e *Executor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 	return &Result{Message: msg + "."}, nil
 }
 
-func (e *Executor) executeDrop(stmt *DropTableStmt) (*Result, error) {
+func (e *Executor) executeDrop(stmt *ast.DropTableStmt) (*Result, error) {
 	if err := e.tm.Catalog().DropTable(stmt.TableName); err != nil {
 		return nil, err
 	}
@@ -384,7 +386,7 @@ func (e *Executor) checkReferencingForeignKeys(meta *catalog.TableMeta, oldRow [
 	return nil
 }
 
-func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
+func (e *Executor) executeInsert(stmt *ast.InsertStmt) (*Result, error) {
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
@@ -577,7 +579,7 @@ func (e *Executor) executeInsert(stmt *InsertStmt) (*Result, error) {
 
 // findConflictingRow checks if the values conflict with an existing row.
 // It returns the RID, row data, and whether a conflict exists.
-func (e *Executor) findConflictingRow(stmt *InsertStmt, schema *catalog.Schema, values []catalog.Value) (storage.RID, []catalog.Value, bool) {
+func (e *Executor) findConflictingRow(stmt *ast.InsertStmt, schema *catalog.Schema, values []catalog.Value) (storage.RID, []catalog.Value, bool) {
 	var conflictRID storage.RID
 	var conflictRow []catalog.Value
 	hasConflict := false
@@ -630,9 +632,9 @@ func (e *Executor) findConflictingRow(stmt *InsertStmt, schema *catalog.Schema, 
 
 // evalExprWithExcluded evaluates an expression with EXCLUDED context for ON CONFLICT.
 // EXCLUDED refers to the values that would have been inserted.
-func (e *Executor) evalExprWithExcluded(expr Expression, schema *catalog.Schema, currentRow, excludedRow []catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalExprWithExcluded(expr ast.Expression, schema *catalog.Schema, currentRow, excludedRow []catalog.Value) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Check for EXCLUDED.column reference (stored as "EXCLUDED.colname" or "excluded.colname")
 		colName := ex.Name
 		if strings.HasPrefix(strings.ToUpper(colName), "EXCLUDED.") {
@@ -651,10 +653,10 @@ func (e *Executor) evalExprWithExcluded(expr Expression, schema *catalog.Schema,
 		}
 		return currentRow[idx], nil
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left, err := e.evalExprWithExcluded(ex.Left, schema, currentRow, excludedRow)
 		if err != nil {
 			return catalog.Value{}, err
@@ -733,7 +735,7 @@ func (e *Executor) getNextAutoIncrement(tableName, colName string, schema *catal
 	return next
 }
 
-func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
+func (e *Executor) executeSelect(stmt *ast.SelectStmt) (*Result, error) {
 	// Handle CTEs (WITH clause)
 	if stmt.With != nil {
 		return e.executeSelectWithCTEs(stmt)
@@ -773,7 +775,7 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 	hasWindowFunctions := false
 	for _, col := range stmt.Columns {
 		if col.Expression != nil {
-			if _, ok := col.Expression.(*WindowFuncExpr); ok {
+			if _, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 				hasWindowFunctions = true
 				break
 			}
@@ -806,7 +808,7 @@ func (e *Executor) executeSelect(stmt *SelectStmt) (*Result, error) {
 }
 
 // executeSelectWithCTEs handles SELECT with WITH clause (Common Table Expressions).
-func (e *Executor) executeSelectWithCTEs(stmt *SelectStmt) (*Result, error) {
+func (e *Executor) executeSelectWithCTEs(stmt *ast.SelectStmt) (*Result, error) {
 	// Save any existing CTE data (for nested CTEs)
 	oldCTEData := e.cteData
 
@@ -864,7 +866,7 @@ func (e *Executor) executeSelectWithCTEs(stmt *SelectStmt) (*Result, error) {
 // The CTE must have a UNION (or UNION ALL) structure:
 //   - Left side: base case (anchor query)
 //   - Right side: recursive case (references the CTE name)
-func (e *Executor) executeRecursiveCTE(cte *CTE) (*Result, error) {
+func (e *Executor) executeRecursiveCTE(cte *ast.CTE) (*Result, error) {
 	const maxIterations = 1000 // Safety limit to prevent infinite loops
 
 	// Execute the base case (anchor query - left side of UNION)
@@ -971,7 +973,7 @@ func (e *Executor) rowsEqual(row1, row2 []catalog.Value) bool {
 }
 
 // executeSelectFromCTE executes a SELECT against a CTE result set.
-func (e *Executor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*Result, error) {
+func (e *Executor) executeSelectFromCTE(stmt *ast.SelectStmt, cteResult *Result) (*Result, error) {
 	// Build a schema from the CTE result
 	cteSchema := &catalog.Schema{
 		Columns: make([]catalog.Column, len(cteResult.Columns)),
@@ -1001,7 +1003,7 @@ func (e *Executor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*R
 	// Determine output columns
 	var outputCols []string
 	var colIndices []int
-	var colExpressions []Expression
+	var colExpressions []ast.Expression
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
@@ -1126,7 +1128,7 @@ func (e *Executor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*R
 }
 
 // sortRowsForCTE sorts rows based on ORDER BY clause for CTE results.
-func (e *Executor) sortRowsForCTE(rows [][]catalog.Value, orderBy []OrderByClause, cols []string) {
+func (e *Executor) sortRowsForCTE(rows [][]catalog.Value, orderBy []ast.OrderByClause, cols []string) {
 	colIndexMap := make(map[string]int)
 	for i, col := range cols {
 		colIndexMap[col] = i
@@ -1152,7 +1154,7 @@ func (e *Executor) sortRowsForCTE(rows [][]catalog.Value, orderBy []OrderByClaus
 }
 
 // executeSelectFromCTEWithAggregates handles aggregates when selecting from a CTE.
-func (e *Executor) executeSelectFromCTEWithAggregates(stmt *SelectStmt, cteResult *Result, cteSchema *catalog.Schema, rows [][]catalog.Value, colIndexMap map[string]int, outputCols []string) (*Result, error) {
+func (e *Executor) executeSelectFromCTEWithAggregates(stmt *ast.SelectStmt, cteResult *Result, cteSchema *catalog.Schema, rows [][]catalog.Value, colIndexMap map[string]int, outputCols []string) (*Result, error) {
 	// Group rows by GROUP BY columns
 	groups := make(map[string][][]catalog.Value)
 	var groupOrder []string
@@ -1266,7 +1268,7 @@ func (e *Executor) executeSelectFromCTEWithAggregates(stmt *SelectStmt, cteResul
 }
 
 // computeAggregateForCTE computes an aggregate function over CTE rows.
-func (e *Executor) computeAggregateForCTE(agg *AggregateFunc, rows [][]catalog.Value, _ []string, colIndexMap map[string]int) (catalog.Value, error) {
+func (e *Executor) computeAggregateForCTE(agg *ast.AggregateFunc, rows [][]catalog.Value, _ []string, colIndexMap map[string]int) (catalog.Value, error) {
 	switch strings.ToUpper(agg.Function) {
 	case "COUNT":
 		if agg.Arg == "*" {
@@ -1380,11 +1382,11 @@ func (e *Executor) computeAggregateForCTE(agg *AggregateFunc, rows [][]catalog.V
 }
 
 // executeSelectNormal handles regular SELECT without aggregates.
-func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeSelectNormal(stmt *ast.SelectStmt, meta *catalog.TableMeta) (*Result, error) {
 	// Determine which columns to return
 	var outputCols []string
 	var colIndices []int
-	var colExpressions []Expression // For expressions like CASE
+	var colExpressions []ast.Expression // For expressions like CASE
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
@@ -1525,7 +1527,7 @@ func (e *Executor) executeSelectNormal(stmt *SelectStmt, meta *catalog.TableMeta
 }
 
 // executeSelectWithJoins handles SELECT with JOIN clauses.
-func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeSelectWithJoins(stmt *ast.SelectStmt, leftMeta *catalog.TableMeta) (*Result, error) {
 	// Currently only supporting single JOIN
 	if len(stmt.Joins) != 1 {
 		return nil, fmt.Errorf("only single JOIN is currently supported")
@@ -1885,7 +1887,7 @@ func (e *Executor) executeSelectWithJoins(stmt *SelectStmt, leftMeta *catalog.Ta
 }
 
 // executeSelectWithJoinCTE handles JOIN where the right side is a CTE.
-func (e *Executor) executeSelectWithJoinCTE(stmt *SelectStmt, leftMeta *catalog.TableMeta, join JoinClause, cteResult *Result) (*Result, error) {
+func (e *Executor) executeSelectWithJoinCTE(stmt *ast.SelectStmt, leftMeta *catalog.TableMeta, join ast.JoinClause, cteResult *Result) (*Result, error) {
 	// Build CTE schema from result
 	cteSchema := &catalog.Schema{
 		Columns: make([]catalog.Column, len(cteResult.Columns)),
@@ -1993,7 +1995,7 @@ func (e *Executor) executeSelectWithJoinCTE(stmt *SelectStmt, leftMeta *catalog.
 
 // executeSelectWithLateralJoin handles SELECT with a LATERAL join.
 // LATERAL allows the subquery to reference columns from the left side.
-func (e *Executor) executeSelectWithLateralJoin(stmt *SelectStmt, leftMeta *catalog.TableMeta, join JoinClause) (*Result, error) {
+func (e *Executor) executeSelectWithLateralJoin(stmt *ast.SelectStmt, leftMeta *catalog.TableMeta, join ast.JoinClause) (*Result, error) {
 	var joinedRows [][]catalog.Value
 	var combinedSchema *catalog.Schema
 	var colTableMap map[string]int
@@ -2218,9 +2220,9 @@ func (e *Executor) executeSelectWithLateralJoin(stmt *SelectStmt, leftMeta *cata
 
 // substituteCorrelatedColumns replaces column references in the subquery with
 // the actual values from the current left row (for LATERAL).
-func (e *Executor) substituteCorrelatedColumns(subquery *SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *SelectStmt {
+func (e *Executor) substituteCorrelatedColumns(subquery *ast.SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *ast.SelectStmt {
 	// Create a deep copy of the subquery to avoid modifying the original
-	newQuery := &SelectStmt{
+	newQuery := &ast.SelectStmt{
 		Distinct:   subquery.Distinct,
 		DistinctOn: append([]string{}, subquery.DistinctOn...),
 		TableName:  subquery.TableName,
@@ -2231,11 +2233,11 @@ func (e *Executor) substituteCorrelatedColumns(subquery *SelectStmt, leftMeta *c
 	}
 
 	// Copy columns
-	newQuery.Columns = make([]SelectColumn, len(subquery.Columns))
+	newQuery.Columns = make([]ast.SelectColumn, len(subquery.Columns))
 	copy(newQuery.Columns, subquery.Columns)
 
 	// Copy OrderBy
-	newQuery.OrderBy = make([]OrderByClause, len(subquery.OrderBy))
+	newQuery.OrderBy = make([]ast.OrderByClause, len(subquery.OrderBy))
 	copy(newQuery.OrderBy, subquery.OrderBy)
 
 	// Copy and substitute WHERE clause
@@ -2252,9 +2254,9 @@ func (e *Executor) substituteCorrelatedColumns(subquery *SelectStmt, leftMeta *c
 }
 
 // substituteExpressionValues substitutes column references from the left table with actual values.
-func (e *Executor) substituteExpressionValues(expr Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) Expression {
+func (e *Executor) substituteExpressionValues(expr ast.Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) ast.Expression {
 	switch ex := expr.(type) {
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Check if this column reference is from the left table
 		colName := ex.Name
 		// Handle qualified names like "t.col" or "table.col"
@@ -2274,76 +2276,76 @@ func (e *Executor) substituteExpressionValues(expr Expression, leftMeta *catalog
 		for i, col := range leftMeta.Schema.Columns {
 			if col.Name == lookupName {
 				// Found a matching column from left table, substitute with literal value
-				return &LiteralExpr{Value: leftRow[i]}
+				return &ast.LiteralExpr{Value: leftRow[i]}
 			}
 		}
 		return ex
 
-	case *BinaryExpr:
-		return &BinaryExpr{
+	case *ast.BinaryExpr:
+		return &ast.BinaryExpr{
 			Left:  e.substituteExpressionValues(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Op:    ex.Op,
 			Right: e.substituteExpressionValues(ex.Right, leftMeta, leftRow, leftTableName, leftTableAlias),
 		}
 
-	case *UnaryExpr:
-		return &UnaryExpr{
+	case *ast.UnaryExpr:
+		return &ast.UnaryExpr{
 			Op:   ex.Op,
 			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
 		}
 
-	case *InExpr:
-		newValues := make([]Expression, len(ex.Values))
+	case *ast.InExpr:
+		newValues := make([]ast.Expression, len(ex.Values))
 		for i, v := range ex.Values {
 			newValues[i] = e.substituteExpressionValues(v, leftMeta, leftRow, leftTableName, leftTableAlias)
 		}
-		return &InExpr{
+		return &ast.InExpr{
 			Left:   e.substituteExpressionValues(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Values: newValues,
 			Not:    ex.Not,
 		}
 
-	case *BetweenExpr:
-		return &BetweenExpr{
+	case *ast.BetweenExpr:
+		return &ast.BetweenExpr{
 			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Low:  e.substituteExpressionValues(ex.Low, leftMeta, leftRow, leftTableName, leftTableAlias),
 			High: e.substituteExpressionValues(ex.High, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Not:  ex.Not,
 		}
 
-	case *FunctionExpr:
-		newArgs := make([]Expression, len(ex.Args))
+	case *ast.FunctionExpr:
+		newArgs := make([]ast.Expression, len(ex.Args))
 		for i, arg := range ex.Args {
 			newArgs[i] = e.substituteExpressionValues(arg, leftMeta, leftRow, leftTableName, leftTableAlias)
 		}
-		return &FunctionExpr{
+		return &ast.FunctionExpr{
 			Name: ex.Name,
 			Args: newArgs,
 		}
 
-	case *IsNullExpr:
-		return &IsNullExpr{
+	case *ast.IsNullExpr:
+		return &ast.IsNullExpr{
 			Expr: e.substituteExpressionValues(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Not:  ex.Not,
 		}
 
-	case *CaseExpr:
-		var newOperand Expression
+	case *ast.CaseExpr:
+		var newOperand ast.Expression
 		if ex.Operand != nil {
 			newOperand = e.substituteExpressionValues(ex.Operand, leftMeta, leftRow, leftTableName, leftTableAlias)
 		}
-		newWhens := make([]WhenClause, len(ex.Whens))
+		newWhens := make([]ast.WhenClause, len(ex.Whens))
 		for i, w := range ex.Whens {
-			newWhens[i] = WhenClause{
+			newWhens[i] = ast.WhenClause{
 				Condition: e.substituteExpressionValues(w.Condition, leftMeta, leftRow, leftTableName, leftTableAlias),
 				Result:    e.substituteExpressionValues(w.Result, leftMeta, leftRow, leftTableName, leftTableAlias),
 			}
 		}
-		var newElse Expression
+		var newElse ast.Expression
 		if ex.Else != nil {
 			newElse = e.substituteExpressionValues(ex.Else, leftMeta, leftRow, leftTableName, leftTableAlias)
 		}
-		return &CaseExpr{
+		return &ast.CaseExpr{
 			Operand: newOperand,
 			Whens:   newWhens,
 			Else:    newElse,
@@ -2365,9 +2367,9 @@ func splitQualifiedName(name string) []string {
 }
 
 // evalJoinCondition evaluates a join condition against a combined row.
-func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
+func (e *Executor) evalJoinCondition(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		// Handle literal boolean values like TRUE or FALSE
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
@@ -2375,9 +2377,9 @@ func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, ro
 		// For other literals, treat non-null/non-zero as true
 		return !ex.Value.IsNull, nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalJoinCondition(ex.Left, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2387,7 +2389,7 @@ func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, ro
 			}
 			return e.evalJoinCondition(ex.Right, schema, row, colMap)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalJoinCondition(ex.Left, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2397,7 +2399,7 @@ func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, ro
 			}
 			return e.evalJoinCondition(ex.Right, schema, row, colMap)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			leftVal, err := e.evalJoinExpr(ex.Left, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2418,12 +2420,12 @@ func (e *Executor) evalJoinCondition(expr Expression, schema *catalog.Schema, ro
 }
 
 // evalJoinExpr evaluates an expression in the context of a joined row.
-func (e *Executor) evalJoinExpr(expr Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *Executor) evalJoinExpr(expr ast.Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		idx, ok := colMap[ex.Name]
 		if !ok {
 			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
@@ -2436,7 +2438,7 @@ func (e *Executor) evalJoinExpr(expr Expression, _ *catalog.Schema, row []catalo
 }
 
 // sortJoinedRows sorts joined rows by ORDER BY columns.
-func sortJoinedRows(rows [][]catalog.Value, orderByIndices []int, orderBy []OrderByClause) {
+func sortJoinedRows(rows [][]catalog.Value, orderByIndices []int, orderBy []ast.OrderByClause) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		for k, idx := range orderByIndices {
 			cmp := compareValuesForSort(rows[i][idx], rows[j][idx])
@@ -2469,7 +2471,7 @@ type groupState struct {
 }
 
 // executeSelectWithAggregates handles SELECT with aggregate functions and/or GROUP BY.
-func (e *Executor) executeSelectWithAggregates(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeSelectWithAggregates(stmt *ast.SelectStmt, meta *catalog.TableMeta) (*Result, error) {
 	// Resolve GROUP BY column indices
 	groupByIndices := make([]int, len(stmt.GroupBy))
 	for i, colName := range stmt.GroupBy {
@@ -2483,7 +2485,7 @@ func (e *Executor) executeSelectWithAggregates(stmt *SelectStmt, meta *catalog.T
 	// Validate that non-aggregate columns appear in GROUP BY
 	type columnInfo struct {
 		isAggregate bool
-		aggregate   *AggregateFunc
+		aggregate   *ast.AggregateFunc
 		colName     string
 		colIdx      int // schema column index for regular columns
 	}
@@ -2764,7 +2766,7 @@ func groupKeyString(values []catalog.Value) string {
 }
 
 // executeSelectWithGroupingSets handles SELECT with GROUPING SETS, CUBE, or ROLLUP.
-func (e *Executor) executeSelectWithGroupingSets(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeSelectWithGroupingSets(stmt *ast.SelectStmt, meta *catalog.TableMeta) (*Result, error) {
 	// Collect all columns that appear in any grouping set
 	groupingCols := make(map[string]int) // column name -> schema index
 	for _, gs := range stmt.GroupingSets {
@@ -2793,7 +2795,7 @@ func (e *Executor) executeSelectWithGroupingSets(stmt *SelectStmt, meta *catalog
 	// Determine output columns and aggregate info
 	type columnInfo struct {
 		isAggregate bool
-		aggregate   *AggregateFunc
+		aggregate   *ast.AggregateFunc
 		colName     string
 		isGrouping  bool   // GROUPING() function
 		groupingArg string // column name for GROUPING()
@@ -2813,10 +2815,10 @@ func (e *Executor) executeSelectWithGroupingSets(stmt *SelectStmt, meta *catalog
 			}
 		} else if col.Expression != nil {
 			// Check if it's a GROUPING() function call
-			if funcExpr, ok := col.Expression.(*FunctionExpr); ok && strings.ToUpper(funcExpr.Name) == "GROUPING" {
+			if funcExpr, ok := col.Expression.(*ast.FunctionExpr); ok && strings.ToUpper(funcExpr.Name) == "GROUPING" {
 				columnInfos[i].isGrouping = true
 				if len(funcExpr.Args) == 1 {
-					if colRef, ok := funcExpr.Args[0].(*ColumnRef); ok {
+					if colRef, ok := funcExpr.Args[0].(*ast.ColumnRef); ok {
 						columnInfos[i].groupingArg = colRef.Name
 					}
 				}
@@ -3282,9 +3284,9 @@ func deduplicateRowsOn(rows [][]catalog.Value, distinctCols []string, outputCols
 }
 
 // evalLimitExpr evaluates a LIMIT expression and returns an integer value.
-func (e *Executor) evalLimitExpr(expr Expression) (int, error) {
+func (e *Executor) evalLimitExpr(expr ast.Expression) (int, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		// Literal integer
 		switch ex.Value.Type {
 		case catalog.TypeInt32:
@@ -3295,7 +3297,7 @@ func (e *Executor) evalLimitExpr(expr Expression) (int, error) {
 			return 0, fmt.Errorf("LIMIT must be an integer, got %v", ex.Value.Type)
 		}
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		// Execute the subquery
 		result, err := e.executeSelect(ex.Query)
 		if err != nil {
@@ -3321,11 +3323,11 @@ func (e *Executor) evalLimitExpr(expr Expression) (int, error) {
 }
 
 // evalHavingCondition evaluates a HAVING condition against group aggregates.
-func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns []SelectColumn, schema *catalog.Schema) (bool, error) {
+func (e *Executor) evalHavingCondition(expr ast.Expression, grp *groupState, columns []ast.SelectColumn, schema *catalog.Schema) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalHavingCondition(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -3335,7 +3337,7 @@ func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns
 			}
 			return e.evalHavingCondition(ex.Right, grp, columns, schema)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalHavingCondition(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -3345,7 +3347,7 @@ func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns
 			}
 			return e.evalHavingCondition(ex.Right, grp, columns, schema)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			left, err := e.evalHavingExpr(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -3357,7 +3359,7 @@ func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns
 			return compareValues(left, right, ex.Op)
 		}
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
 		}
@@ -3367,12 +3369,12 @@ func (e *Executor) evalHavingCondition(expr Expression, grp *groupState, columns
 }
 
 // evalHavingExpr evaluates an expression in HAVING context (can reference aggregates).
-func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
+func (e *Executor) evalHavingExpr(expr ast.Expression, grp *groupState, columns []ast.SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Look for this column in GROUP BY columns (grp.groupKey)
 		for i, gbVal := range grp.groupKey {
 			// We need to match column names. Look in columns for GROUP BY entries.
@@ -3390,7 +3392,7 @@ func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []Se
 		}
 		return catalog.Value{}, fmt.Errorf("column %s not found in GROUP BY", ex.Name)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		// Handle aggregate functions in HAVING clause
 		funcName := strings.ToUpper(ex.Name)
 
@@ -3435,7 +3437,7 @@ func (e *Executor) evalHavingExpr(expr Expression, grp *groupState, columns []Se
 	return catalog.Value{}, fmt.Errorf("unsupported HAVING expression: %T", expr)
 }
 
-func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
+func (e *Executor) executeUpdate(stmt *ast.UpdateStmt) (*Result, error) {
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
@@ -3529,7 +3531,7 @@ func (e *Executor) executeUpdate(stmt *UpdateStmt) (*Result, error) {
 }
 
 // executeUpdateWithFrom handles UPDATE ... FROM ... WHERE syntax (PostgreSQL style).
-func (e *Executor) executeUpdateWithFrom(stmt *UpdateStmt, targetMeta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeUpdateWithFrom(stmt *ast.UpdateStmt, targetMeta *catalog.TableMeta) (*Result, error) {
 	// Get the FROM table metadata
 	fromMeta, err := e.tm.Catalog().GetTable(stmt.FromTable)
 	if err != nil {
@@ -3705,12 +3707,12 @@ func (cs *combinedSchema) ColumnByName(name string) (*catalog.Column, int) {
 }
 
 // evalExprCombined evaluates an expression using a combined schema.
-func (e *Executor) evalExprCombined(expr Expression, cs *combinedSchema, row []catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalExprCombined(expr ast.Expression, cs *combinedSchema, row []catalog.Value) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		if row == nil {
 			return catalog.Value{}, fmt.Errorf("cannot reference column %s without a row context", ex.Name)
 		}
@@ -3720,9 +3722,9 @@ func (e *Executor) evalExprCombined(expr Expression, cs *combinedSchema, row []c
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH:
+		case token.TOKEN_PLUS, token.TOKEN_MINUS, token.TOKEN_STAR, token.TOKEN_SLASH:
 			left, err := e.evalExprCombined(ex.Left, cs, row)
 			if err != nil {
 				return catalog.Value{}, err
@@ -3735,7 +3737,7 @@ func (e *Executor) evalExprCombined(expr Expression, cs *combinedSchema, row []c
 		}
 		return catalog.Value{}, fmt.Errorf("unsupported binary operator in expression: %v", ex.Op)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		args := make([]catalog.Value, len(ex.Args))
 		for i, arg := range ex.Args {
 			val, err := e.evalExprCombined(arg, cs, row)
@@ -3753,11 +3755,11 @@ func (e *Executor) evalExprCombined(expr Expression, cs *combinedSchema, row []c
 }
 
 // evalConditionCombined evaluates a boolean expression using a combined schema.
-func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, row []catalog.Value) (bool, error) {
+func (e *Executor) evalConditionCombined(expr ast.Expression, cs *combinedSchema, row []catalog.Value) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalConditionCombined(ex.Left, cs, row)
 			if err != nil {
 				return false, err
@@ -3767,7 +3769,7 @@ func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, ro
 			}
 			return e.evalConditionCombined(ex.Right, cs, row)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalConditionCombined(ex.Left, cs, row)
 			if err != nil {
 				return false, err
@@ -3777,7 +3779,7 @@ func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, ro
 			}
 			return e.evalConditionCombined(ex.Right, cs, row)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			left, err := e.evalExprCombined(ex.Left, cs, row)
 			if err != nil {
 				return false, err
@@ -3789,8 +3791,8 @@ func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, ro
 			return compareValues(left, right, ex.Op)
 		}
 
-	case *UnaryExpr:
-		if ex.Op == TOKEN_NOT {
+	case *ast.UnaryExpr:
+		if ex.Op == token.TOKEN_NOT {
 			val, err := e.evalConditionCombined(ex.Expr, cs, row)
 			if err != nil {
 				return false, err
@@ -3798,7 +3800,7 @@ func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, ro
 			return !val, nil
 		}
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		val, err := e.evalExprCombined(ex.Expr, cs, row)
 		if err != nil {
 			return false, err
@@ -3813,7 +3815,7 @@ func (e *Executor) evalConditionCombined(expr Expression, cs *combinedSchema, ro
 	return false, fmt.Errorf("unsupported condition type: %T", expr)
 }
 
-func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
+func (e *Executor) executeDelete(stmt *ast.DeleteStmt) (*Result, error) {
 	meta, err := e.tm.Catalog().GetTable(stmt.TableName)
 	if err != nil {
 		return nil, err
@@ -3869,7 +3871,7 @@ func (e *Executor) executeDelete(stmt *DeleteStmt) (*Result, error) {
 }
 
 // executeDeleteWithUsing handles DELETE ... USING ... WHERE syntax (PostgreSQL style).
-func (e *Executor) executeDeleteWithUsing(stmt *DeleteStmt, targetMeta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeDeleteWithUsing(stmt *ast.DeleteStmt, targetMeta *catalog.TableMeta) (*Result, error) {
 	// Get the USING table metadata
 	usingMeta, err := e.tm.Catalog().GetTable(stmt.UsingTable)
 	if err != nil {
@@ -3952,7 +3954,7 @@ func (e *Executor) executeDeleteWithUsing(stmt *DeleteStmt, targetMeta *catalog.
 // MERGE INTO target USING source ON condition
 // WHEN MATCHED THEN UPDATE/DELETE
 // WHEN NOT MATCHED THEN INSERT
-func (e *Executor) executeMerge(stmt *MergeStmt) (*Result, error) {
+func (e *Executor) executeMerge(stmt *ast.MergeStmt) (*Result, error) {
 	// Get target table metadata
 	targetMeta, err := e.tm.Catalog().GetTable(stmt.TargetTable)
 	if err != nil {
@@ -4256,19 +4258,19 @@ func (e *Executor) executeMerge(stmt *MergeStmt) (*Result, error) {
 }
 
 // evalMergeExpr evaluates an expression in the context of a MERGE statement.
-func (e *Executor) evalMergeExpr(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *Executor) evalMergeExpr(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		idx, ok := colMap[ex.Name]
 		if !ok {
 			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left, err := e.evalMergeExpr(ex.Left, schema, row, colMap)
 		if err != nil {
 			return catalog.Value{}, err
@@ -4279,7 +4281,7 @@ func (e *Executor) evalMergeExpr(expr Expression, schema *catalog.Schema, row []
 		}
 		return e.evalBinaryExprValue(left, ex.Op, right)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		// Evaluate function arguments
 		args := make([]catalog.Value, len(ex.Args))
 		for i, arg := range ex.Args {
@@ -4297,23 +4299,23 @@ func (e *Executor) evalMergeExpr(expr Expression, schema *catalog.Schema, row []
 }
 
 // evalBinaryExprValue evaluates a binary expression with values.
-func (e *Executor) evalBinaryExprValue(left catalog.Value, op TokenType, right catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalBinaryExprValue(left catalog.Value, op token.TokenType, right catalog.Value) (catalog.Value, error) {
 	// Get numeric values
 	leftNum := e.valueToInt64(left)
 	rightNum := e.valueToInt64(right)
 
 	var result int64
 	switch op {
-	case TOKEN_PLUS:
+	case token.TOKEN_PLUS:
 		result = leftNum + rightNum
 
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		result = leftNum - rightNum
 
-	case TOKEN_STAR:
+	case token.TOKEN_STAR:
 		result = leftNum * rightNum
 
-	case TOKEN_SLASH:
+	case token.TOKEN_SLASH:
 		if rightNum == 0 {
 			return catalog.Value{}, fmt.Errorf("division by zero")
 		}
@@ -4415,7 +4417,7 @@ func (e *Executor) evalFunctionCallValue(name string, args []catalog.Value) (cat
 }
 
 // executeAlter handles ALTER TABLE statements.
-func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
+func (e *Executor) executeAlter(stmt *ast.AlterTableStmt) (*Result, error) {
 	meta, err := e.tm.GetTableMeta(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table %q does not exist", stmt.TableName)
@@ -4440,7 +4442,7 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 		}
 		// Handle default value
 		if stmt.ColumnDef.HasDefault && stmt.ColumnDef.Default != nil {
-			if lit, ok := stmt.ColumnDef.Default.(*LiteralExpr); ok {
+			if lit, ok := stmt.ColumnDef.Default.(*ast.LiteralExpr); ok {
 				val := lit.Value
 				newCol.DefaultValue = &val
 			}
@@ -4531,7 +4533,7 @@ func (e *Executor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 }
 
 // executeTruncate handles TRUNCATE TABLE statements.
-func (e *Executor) executeTruncate(stmt *TruncateTableStmt) (*Result, error) {
+func (e *Executor) executeTruncate(stmt *ast.TruncateTableStmt) (*Result, error) {
 	// Verify table exists
 	_, err := e.tm.GetTableMeta(stmt.TableName)
 	if err != nil {
@@ -4551,7 +4553,7 @@ func (e *Executor) executeTruncate(stmt *TruncateTableStmt) (*Result, error) {
 }
 
 // executeShow handles SHOW statements.
-func (e *Executor) executeShow(stmt *ShowStmt) (*Result, error) {
+func (e *Executor) executeShow(stmt *ast.ShowStmt) (*Result, error) {
 	switch stmt.ShowType {
 	case "TABLES":
 		// List all tables
@@ -4695,12 +4697,12 @@ func (e *Executor) scanTable(tableName string, _ *catalog.Schema, fn func(rid st
 }
 
 // evalExpr evaluates an expression to a value.
-func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalExpr(expr ast.Expression, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		if row == nil {
 			return catalog.Value{}, fmt.Errorf("cannot reference column %s without a row context", ex.Name)
 		}
@@ -4710,10 +4712,10 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		// Handle arithmetic operations
 		switch ex.Op {
-		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH:
+		case token.TOKEN_PLUS, token.TOKEN_MINUS, token.TOKEN_STAR, token.TOKEN_SLASH:
 			left, err := e.evalExpr(ex.Left, schema, row)
 			if err != nil {
 				return catalog.Value{}, err
@@ -4726,7 +4728,7 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return catalog.Value{}, fmt.Errorf("unsupported binary operator in expression: %v", ex.Op)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		// Evaluate function arguments
 		args := make([]catalog.Value, len(ex.Args))
 		for i, arg := range ex.Args {
@@ -4738,13 +4740,13 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return evalFunction(ex.Name, args)
 
-	case *CaseExpr:
+	case *ast.CaseExpr:
 		return e.evalCaseExpr(ex, schema, row)
 
-	case *CastExpr:
+	case *ast.CastExpr:
 		return e.evalCastExpr(ex, schema, row)
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		// IS NULL in value context returns boolean
 		val, err := e.evalExpr(ex.Expr, schema, row)
 		if err != nil {
@@ -4756,7 +4758,7 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 		}
 		return catalog.NewBool(result), nil
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		// Scalar subquery - must return exactly one row with one column
 		result, err := e.executeSelect(ex.Query)
 		if err != nil {
@@ -4779,11 +4781,11 @@ func (e *Executor) evalExpr(expr Expression, schema *catalog.Schema, row []catal
 }
 
 // evalCondition evaluates a boolean expression.
-func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []catalog.Value) (bool, error) {
+func (e *Executor) evalCondition(expr ast.Expression, schema *catalog.Schema, row []catalog.Value) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalCondition(ex.Left, schema, row)
 			if err != nil {
 				return false, err
@@ -4793,7 +4795,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			}
 			return e.evalCondition(ex.Right, schema, row)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalCondition(ex.Left, schema, row)
 			if err != nil {
 				return false, err
@@ -4803,7 +4805,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			}
 			return e.evalCondition(ex.Right, schema, row)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			left, err := e.evalExpr(ex.Left, schema, row)
 			if err != nil {
 				return false, err
@@ -4815,8 +4817,8 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			return compareValues(left, right, ex.Op)
 		}
 
-	case *UnaryExpr:
-		if ex.Op == TOKEN_NOT {
+	case *ast.UnaryExpr:
+		if ex.Op == token.TOKEN_NOT {
 			val, err := e.evalCondition(ex.Expr, schema, row)
 			if err != nil {
 				return false, err
@@ -4824,7 +4826,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			return !val, nil
 		}
 
-	case *InExpr:
+	case *ast.InExpr:
 		// Evaluate IN expression
 		leftVal, err := e.evalExpr(ex.Left, schema, row)
 		if err != nil {
@@ -4850,7 +4852,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 			// Check if leftVal is in the subquery results
 			for _, subRow := range result.Rows {
 				if len(subRow) > 0 && !subRow[0].IsNull {
-					eq, err := compareValues(leftVal, subRow[0], TOKEN_EQ)
+					eq, err := compareValues(leftVal, subRow[0], token.TOKEN_EQ)
 					if err != nil {
 						return false, err
 					}
@@ -4870,7 +4872,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 				if rightVal.IsNull {
 					continue // Skip NULL values in the list
 				}
-				eq, err := compareValues(leftVal, rightVal, TOKEN_EQ)
+				eq, err := compareValues(leftVal, rightVal, token.TOKEN_EQ)
 				if err != nil {
 					return false, err
 				}
@@ -4886,7 +4888,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return found, nil
 
-	case *BetweenExpr:
+	case *ast.BetweenExpr:
 		// Evaluate BETWEEN expression
 		val, err := e.evalExpr(ex.Expr, schema, row)
 		if err != nil {
@@ -4906,11 +4908,11 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 
 		// val >= low AND val <= high
-		geLow, err := compareValues(val, lowVal, TOKEN_GE)
+		geLow, err := compareValues(val, lowVal, token.TOKEN_GE)
 		if err != nil {
 			return false, err
 		}
-		leHigh, err := compareValues(val, highVal, TOKEN_LE)
+		leHigh, err := compareValues(val, highVal, token.TOKEN_LE)
 		if err != nil {
 			return false, err
 		}
@@ -4921,7 +4923,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return result, nil
 
-	case *LikeExpr:
+	case *ast.LikeExpr:
 		// Evaluate LIKE expression
 		val, err := e.evalExpr(ex.Expr, schema, row)
 		if err != nil {
@@ -4950,7 +4952,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return result, nil
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		// Evaluate IS NULL / IS NOT NULL
 		val, err := e.evalExpr(ex.Expr, schema, row)
 		if err != nil {
@@ -4962,7 +4964,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return result, nil // IS NULL
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		// Execute the subquery and check if it returns exactly one scalar value
 		result, err := e.executeSelect(ex.Query)
 		if err != nil {
@@ -4982,7 +4984,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		// Non-empty result in boolean context is true
 		return true, nil
 
-	case *ExistsExpr:
+	case *ast.ExistsExpr:
 		// Execute the subquery and check if it returns any rows
 		result, err := e.executeSelect(ex.Query)
 		if err != nil {
@@ -4994,7 +4996,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 		}
 		return exists, nil
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
 		}
@@ -5004,7 +5006,7 @@ func (e *Executor) evalCondition(expr Expression, schema *catalog.Schema, row []
 }
 
 // compareValues compares two values with the given operator.
-func compareValues(left, right catalog.Value, op TokenType) (bool, error) {
+func compareValues(left, right catalog.Value, op token.TokenType) (bool, error) {
 	// Handle NULL comparisons
 	if left.IsNull || right.IsNull {
 		// NULL compared to anything is always false (use IS NULL for null checks)
@@ -5057,17 +5059,17 @@ func compareValues(left, right catalog.Value, op TokenType) (bool, error) {
 	}
 
 	switch op {
-	case TOKEN_EQ:
+	case token.TOKEN_EQ:
 		return cmp == 0, nil
-	case TOKEN_NE:
+	case token.TOKEN_NE:
 		return cmp != 0, nil
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		return cmp < 0, nil
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		return cmp <= 0, nil
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		return cmp > 0, nil
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		return cmp >= 0, nil
 	default:
 		return false, fmt.Errorf("unknown comparison operator: %v", op)
@@ -5124,7 +5126,7 @@ func coerceValue(val catalog.Value, targetType catalog.DataType) (catalog.Value,
 }
 
 // sortRows sorts rows in place based on ORDER BY clauses.
-func (e *Executor) sortRows(rows [][]catalog.Value, orderBy []OrderByClause, orderByIndices []int) {
+func (e *Executor) sortRows(rows [][]catalog.Value, orderBy []ast.OrderByClause, orderByIndices []int) {
 	if len(rows) <= 1 || len(orderBy) == 0 {
 		return
 	}
@@ -5277,7 +5279,7 @@ func matchLikeHelper(s, pattern string) bool {
 }
 
 // evalArithmetic evaluates an arithmetic operation on two values.
-func evalArithmetic(left, right catalog.Value, op TokenType) (catalog.Value, error) {
+func evalArithmetic(left, right catalog.Value, op token.TokenType) (catalog.Value, error) {
 	if left.IsNull || right.IsNull {
 		return catalog.Null(catalog.TypeInt64), nil // NULL arithmetic returns NULL
 	}
@@ -5312,13 +5314,13 @@ func evalArithmetic(left, right catalog.Value, op TokenType) (catalog.Value, err
 
 	var result int64
 	switch op {
-	case TOKEN_PLUS:
+	case token.TOKEN_PLUS:
 		result = leftInt + rightInt
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		result = leftInt - rightInt
-	case TOKEN_STAR:
+	case token.TOKEN_STAR:
 		result = leftInt * rightInt
-	case TOKEN_SLASH:
+	case token.TOKEN_SLASH:
 		if rightInt == 0 {
 			return catalog.Value{}, fmt.Errorf("division by zero")
 		}
@@ -5351,7 +5353,7 @@ func evalFunction(name string, args []catalog.Value) (catalog.Value, error) {
 			return args[0], nil
 		}
 		// Compare the values
-		eq, _ := compareValues(args[0], args[1], TOKEN_EQ)
+		eq, _ := compareValues(args[0], args[1], token.TOKEN_EQ)
 		if eq {
 			return catalog.Null(args[0].Type), nil
 		}
@@ -5986,7 +5988,7 @@ func evalFunction(name string, args []catalog.Value) (catalog.Value, error) {
 }
 
 // evalCastExpr evaluates a CAST expression.
-func (e *Executor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalCastExpr(cast *ast.CastExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
 	val, err := e.evalExpr(cast.Expr, schema, row)
 	if err != nil {
 		return catalog.Value{}, err
@@ -6099,8 +6101,8 @@ func (e *Executor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []ca
 }
 
 // executeExplain executes an EXPLAIN statement
-func (e *Executor) executeExplain(stmt *ExplainStmt) (*Result, error) {
-	selectStmt, ok := stmt.Statement.(*SelectStmt)
+func (e *Executor) executeExplain(stmt *ast.ExplainStmt) (*Result, error) {
+	selectStmt, ok := stmt.Statement.(*ast.SelectStmt)
 	if !ok {
 		return nil, fmt.Errorf("EXPLAIN only supports SELECT statements")
 	}
@@ -6163,7 +6165,7 @@ func (e *Executor) executeExplain(stmt *ExplainStmt) (*Result, error) {
 // ANALYZE - analyzes all tables
 // ANALYZE tablename - analyzes specific table
 // ANALYZE tablename (col1, col2) - analyzes specific columns
-func (e *Executor) executeAnalyze(stmt *AnalyzeStmt) (*Result, error) {
+func (e *Executor) executeAnalyze(stmt *ast.AnalyzeStmt) (*Result, error) {
 	if stmt.TableName == "" {
 		// Analyze all tables
 		tables := e.tm.ListTables()
@@ -6280,9 +6282,9 @@ func (e *Executor) analyzeTable(tableName string, columns []string) error {
 
 	// Scan table and collect statistics
 	// Use a simple SELECT * to scan all rows
-	selectStmt := &SelectStmt{
+	selectStmt := &ast.SelectStmt{
 		TableName: tableName,
-		Columns:   []SelectColumn{{Name: "*"}},
+		Columns:   []ast.SelectColumn{{Name: "*"}},
 	}
 	result, err := e.executeSelect(selectStmt)
 	if err != nil {
@@ -6389,7 +6391,7 @@ func (e *Executor) analyzeTable(tableName string, columns []string) error {
 }
 
 // evalCaseExpr evaluates a CASE WHEN expression.
-func (e *Executor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
+func (e *Executor) evalCaseExpr(caseExpr *ast.CaseExpr, schema *catalog.Schema, row []catalog.Value) (catalog.Value, error) {
 	// Simple CASE: CASE operand WHEN val1 THEN res1 ...
 	// Searched CASE: CASE WHEN cond1 THEN res1 ...
 
@@ -6407,7 +6409,7 @@ func (e *Executor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row 
 			}
 
 			// Compare operand with WHEN value
-			equal, err := compareValues(operandVal, whenVal, TOKEN_EQ)
+			equal, err := compareValues(operandVal, whenVal, token.TOKEN_EQ)
 			if err != nil {
 				return catalog.Value{}, err
 			}
@@ -6441,13 +6443,13 @@ func (e *Executor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row 
 
 // exprToString converts an Expression AST node to a SQL string representation.
 // This is used to serialize CHECK constraints for storage.
-func exprToString(expr Expression) string {
+func exprToString(expr ast.Expression) string {
 	if expr == nil {
 		return ""
 	}
 
 	switch e := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		switch e.Value.Type {
 		case catalog.TypeText:
 			return fmt.Sprintf("'%s'", e.Value.Text)
@@ -6467,23 +6469,23 @@ func exprToString(expr Expression) string {
 			return fmt.Sprintf("%v", e.Value)
 		}
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		return e.Name
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left := exprToString(e.Left)
 		right := exprToString(e.Right)
 		op := tokenToOperator(e.Op)
 		return fmt.Sprintf("(%s %s %s)", left, op, right)
 
-	case *UnaryExpr:
+	case *ast.UnaryExpr:
 		operand := exprToString(e.Expr)
-		if e.Op == TOKEN_NOT {
+		if e.Op == token.TOKEN_NOT {
 			return fmt.Sprintf("NOT %s", operand)
 		}
 		return fmt.Sprintf("-%s", operand)
 
-	case *InExpr:
+	case *ast.InExpr:
 		left := exprToString(e.Left)
 		values := make([]string, len(e.Values))
 		for i, v := range e.Values {
@@ -6495,7 +6497,7 @@ func exprToString(expr Expression) string {
 		}
 		return fmt.Sprintf("%s %sIN (%s)", left, not, strings.Join(values, ", "))
 
-	case *BetweenExpr:
+	case *ast.BetweenExpr:
 		val := exprToString(e.Expr)
 		low := exprToString(e.Low)
 		high := exprToString(e.High)
@@ -6505,7 +6507,7 @@ func exprToString(expr Expression) string {
 		}
 		return fmt.Sprintf("%s %sBETWEEN %s AND %s", val, not, low, high)
 
-	case *LikeExpr:
+	case *ast.LikeExpr:
 		left := exprToString(e.Expr)
 		pattern := exprToString(e.Pattern)
 		op := "LIKE"
@@ -6518,14 +6520,14 @@ func exprToString(expr Expression) string {
 		}
 		return fmt.Sprintf("%s %s%s %s", left, not, op, pattern)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		args := make([]string, len(e.Args))
 		for i, arg := range e.Args {
 			args[i] = exprToString(arg)
 		}
 		return fmt.Sprintf("%s(%s)", e.Name, strings.Join(args, ", "))
 
-	case *CaseExpr:
+	case *ast.CaseExpr:
 		var sb strings.Builder
 		sb.WriteString("CASE")
 		if e.Operand != nil {
@@ -6551,31 +6553,31 @@ func exprToString(expr Expression) string {
 }
 
 // tokenToOperator converts a token type to its SQL string representation.
-func tokenToOperator(op TokenType) string {
+func tokenToOperator(op token.TokenType) string {
 	switch op {
-	case TOKEN_EQ:
+	case token.TOKEN_EQ:
 		return "="
-	case TOKEN_NE:
+	case token.TOKEN_NE:
 		return "<>"
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		return "<"
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		return "<="
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		return ">"
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		return ">="
-	case TOKEN_AND:
+	case token.TOKEN_AND:
 		return "AND"
-	case TOKEN_OR:
+	case token.TOKEN_OR:
 		return "OR"
-	case TOKEN_PLUS:
+	case token.TOKEN_PLUS:
 		return "+"
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		return "-"
-	case TOKEN_STAR:
+	case token.TOKEN_STAR:
 		return "*"
-	case TOKEN_SLASH:
+	case token.TOKEN_SLASH:
 		return "/"
 	default:
 		return "?"
@@ -6658,7 +6660,7 @@ func (e *Executor) validateUniqueConstraints(tableName string, schema *catalog.S
 }
 
 // executeCreateView creates a new view.
-func (e *Executor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
+func (e *Executor) executeCreateView(stmt *ast.CreateViewStmt) (*Result, error) {
 	e.viewsMu.Lock()
 	defer e.viewsMu.Unlock()
 
@@ -6690,7 +6692,7 @@ func (e *Executor) executeCreateView(stmt *CreateViewStmt) (*Result, error) {
 }
 
 // executeDropView drops a view.
-func (e *Executor) executeDropView(stmt *DropViewStmt) (*Result, error) {
+func (e *Executor) executeDropView(stmt *ast.DropViewStmt) (*Result, error) {
 	e.viewsMu.Lock()
 	defer e.viewsMu.Unlock()
 
@@ -6706,7 +6708,7 @@ func (e *Executor) executeDropView(stmt *DropViewStmt) (*Result, error) {
 }
 
 // executeSelectFromView executes a SELECT from a view by expanding the view definition.
-func (e *Executor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef) (*Result, error) {
+func (e *Executor) executeSelectFromView(outerStmt *ast.SelectStmt, viewDef *ViewDef) (*Result, error) {
 	// First, execute the view's underlying query
 	viewResult, err := e.executeSelect(viewDef.Query)
 	if err != nil {
@@ -6846,19 +6848,19 @@ func (e *Executor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef
 }
 
 // evaluateExpressionWithRow evaluates an expression given a row and schema.
-func (e *Executor) evaluateExpressionWithRow(expr Expression, row []catalog.Value, schema *catalog.Schema) (catalog.Value, error) {
+func (e *Executor) evaluateExpressionWithRow(expr ast.Expression, row []catalog.Value, schema *catalog.Schema) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		_, idx := schema.ColumnByName(ex.Name)
 		if idx < 0 {
 			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left, err := e.evaluateExpressionWithRow(ex.Left, row, schema)
 		if err != nil {
 			return catalog.Value{}, err
@@ -6869,44 +6871,44 @@ func (e *Executor) evaluateExpressionWithRow(expr Expression, row []catalog.Valu
 		}
 
 		switch ex.Op {
-		case TOKEN_EQ:
+		case token.TOKEN_EQ:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) == 0}, nil
-		case TOKEN_NE:
+		case token.TOKEN_NE:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) != 0}, nil
-		case TOKEN_LT:
+		case token.TOKEN_LT:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) < 0}, nil
-		case TOKEN_GT:
+		case token.TOKEN_GT:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) > 0}, nil
-		case TOKEN_LE:
+		case token.TOKEN_LE:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) <= 0}, nil
-		case TOKEN_GE:
+		case token.TOKEN_GE:
 			return catalog.Value{Type: catalog.TypeBool, Bool: compareValuesForSort(left, right) >= 0}, nil
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			return catalog.Value{Type: catalog.TypeBool, Bool: left.Bool && right.Bool}, nil
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			return catalog.Value{Type: catalog.TypeBool, Bool: left.Bool || right.Bool}, nil
-		case TOKEN_PLUS:
+		case token.TOKEN_PLUS:
 			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
 				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 + right.Int64}, nil
 			}
 			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
 				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 + right.Int32}, nil
 			}
-		case TOKEN_MINUS:
+		case token.TOKEN_MINUS:
 			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
 				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 - right.Int64}, nil
 			}
 			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
 				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 - right.Int32}, nil
 			}
-		case TOKEN_STAR:
+		case token.TOKEN_STAR:
 			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 {
 				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 * right.Int64}, nil
 			}
 			if left.Type == catalog.TypeInt32 && right.Type == catalog.TypeInt32 {
 				return catalog.Value{Type: catalog.TypeInt32, Int32: left.Int32 * right.Int32}, nil
 			}
-		case TOKEN_SLASH:
+		case token.TOKEN_SLASH:
 			if left.Type == catalog.TypeInt64 && right.Type == catalog.TypeInt64 && right.Int64 != 0 {
 				return catalog.Value{Type: catalog.TypeInt64, Int64: left.Int64 / right.Int64}, nil
 			}
@@ -6916,12 +6918,12 @@ func (e *Executor) evaluateExpressionWithRow(expr Expression, row []catalog.Valu
 		}
 		return catalog.Value{}, fmt.Errorf("unsupported binary operation: %v", ex.Op)
 
-	case *UnaryExpr:
+	case *ast.UnaryExpr:
 		operand, err := e.evaluateExpressionWithRow(ex.Expr, row, schema)
 		if err != nil {
 			return catalog.Value{}, err
 		}
-		if ex.Op == TOKEN_NOT {
+		if ex.Op == token.TOKEN_NOT {
 			return catalog.Value{Type: catalog.TypeBool, Bool: !operand.Bool}, nil
 		}
 		return catalog.Value{}, fmt.Errorf("unsupported unary operation: %v", ex.Op)
@@ -6931,7 +6933,7 @@ func (e *Executor) evaluateExpressionWithRow(expr Expression, row []catalog.Valu
 }
 
 // executeUnion executes a UNION/INTERSECT/EXCEPT operation.
-func (e *Executor) executeUnion(stmt *UnionStmt) (*Result, error) {
+func (e *Executor) executeUnion(stmt *ast.UnionStmt) (*Result, error) {
 	// Handle CTEs (WITH clause)
 	if stmt.With != nil {
 		return e.executeUnionWithCTEs(stmt)
@@ -7051,7 +7053,7 @@ func (e *Executor) executeUnion(stmt *UnionStmt) (*Result, error) {
 }
 
 // executeUnionWithCTEs handles UNION with WITH clause.
-func (e *Executor) executeUnionWithCTEs(stmt *UnionStmt) (*Result, error) {
+func (e *Executor) executeUnionWithCTEs(stmt *ast.UnionStmt) (*Result, error) {
 	// Save any existing CTE data
 	oldCTEData := e.cteData
 
@@ -7115,7 +7117,7 @@ func rowKey(row []catalog.Value) string {
 }
 
 // executeSelectWithWindowFunctions handles SELECT with window functions.
-func (e *Executor) executeSelectWithWindowFunctions(stmt *SelectStmt, meta *catalog.TableMeta) (*Result, error) {
+func (e *Executor) executeSelectWithWindowFunctions(stmt *ast.SelectStmt, meta *catalog.TableMeta) (*Result, error) {
 	// First, scan all rows that match WHERE clause
 	var allRows [][]catalog.Value
 
@@ -7152,7 +7154,7 @@ func (e *Executor) executeSelectWithWindowFunctions(stmt *SelectStmt, meta *cata
 		} else if col.Name != "" {
 			outputCols = append(outputCols, col.Name)
 		} else if col.Expression != nil {
-			if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+			if wf, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 				outputCols = append(outputCols, wf.Function)
 			} else {
 				outputCols = append(outputCols, "expr")
@@ -7173,7 +7175,7 @@ func (e *Executor) executeSelectWithWindowFunctions(stmt *SelectStmt, meta *cata
 			continue
 		}
 
-		if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+		if wf, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 			// This is a window function - compute values for all rows
 			windowValues, err := e.computeWindowFunction(wf, allRows, meta.Schema)
 			if err != nil {
@@ -7281,7 +7283,7 @@ func (e *Executor) executeSelectWithWindowFunctions(stmt *SelectStmt, meta *cata
 }
 
 // computeWindowFunction computes window function values for all rows.
-func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
+func (e *Executor) computeWindowFunction(wf *ast.WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
 	result := make([]catalog.Value, len(rows))
 
 	// Get partition column indices
@@ -7401,7 +7403,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("SUM requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("SUM argument must be a column reference")
 			}
@@ -7425,7 +7427,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			// COUNT with frame support
 			colIdx := -1 // -1 means COUNT(*)
 			if len(wf.Args) == 1 {
-				if colRef, ok := wf.Args[0].(*ColumnRef); ok {
+				if colRef, ok := wf.Args[0].(*ast.ColumnRef); ok {
 					_, colIdx = schema.ColumnByName(colRef.Name)
 				}
 			}
@@ -7445,7 +7447,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("AVG requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("AVG argument must be a column reference")
 			}
@@ -7474,7 +7476,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("MIN requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("MIN argument must be a column reference")
 			}
@@ -7497,7 +7499,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("MAX requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("MAX argument must be a column reference")
 			}
@@ -7520,7 +7522,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) < 1 {
 				return nil, fmt.Errorf("LAG requires at least 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("LAG first argument must be a column reference")
 			}
@@ -7566,7 +7568,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) < 1 {
 				return nil, fmt.Errorf("LEAD requires at least 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("LEAD first argument must be a column reference")
 			}
@@ -7612,7 +7614,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("FIRST_VALUE requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("FIRST_VALUE argument must be a column reference")
 			}
@@ -7635,7 +7637,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("LAST_VALUE requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("LAST_VALUE argument must be a column reference")
 			}
@@ -7665,7 +7667,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			if len(wf.Args) != 2 {
 				return nil, fmt.Errorf("NTH_VALUE requires exactly 2 arguments")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("NTH_VALUE first argument must be a column reference")
 			}
@@ -7677,7 +7679,7 @@ func (e *Executor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Va
 			// Get the N value (1-based index)
 			var nVal int64
 			switch n := wf.Args[1].(type) {
-			case *LiteralExpr:
+			case *ast.LiteralExpr:
 				switch n.Value.Type {
 				case catalog.TypeInt64:
 					nVal = n.Value.Int64

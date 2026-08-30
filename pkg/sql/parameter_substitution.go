@@ -4,25 +4,26 @@ import (
 	"fmt"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 // SubstituteParams replaces PlaceholderExpr with LiteralExpr in the statement.
-func SubstituteParams(stmt Statement, params []catalog.Value) (Statement, error) {
+func SubstituteParams(stmt ast.Statement, params []catalog.Value) (ast.Statement, error) {
 	switch s := stmt.(type) {
-	case *SelectStmt:
+	case *ast.SelectStmt:
 		return substituteParamsSelect(s, params)
-	case *InsertStmt:
+	case *ast.InsertStmt:
 		return substituteParamsInsert(s, params)
-	case *UpdateStmt:
+	case *ast.UpdateStmt:
 		return substituteParamsUpdate(s, params)
-	case *DeleteStmt:
+	case *ast.DeleteStmt:
 		return substituteParamsDelete(s, params)
 	default:
 		return nil, fmt.Errorf("parameter substitution not supported for statement type: %T", stmt)
 	}
 }
 
-func substituteParamsSelect(stmt *SelectStmt, params []catalog.Value) (*SelectStmt, error) {
+func substituteParamsSelect(stmt *ast.SelectStmt, params []catalog.Value) (*ast.SelectStmt, error) {
 	newStmt := *stmt // Shallow copy
 
 	// Substitute in WHERE
@@ -44,7 +45,7 @@ func substituteParamsSelect(stmt *SelectStmt, params []catalog.Value) (*SelectSt
 	}
 
 	// Substitute in Columns (e.g. SELECT )
-	newCols := make([]SelectColumn, len(stmt.Columns))
+	newCols := make([]ast.SelectColumn, len(stmt.Columns))
 	for i, col := range stmt.Columns {
 		newCols[i] = col
 		if col.Expression != nil {
@@ -60,13 +61,13 @@ func substituteParamsSelect(stmt *SelectStmt, params []catalog.Value) (*SelectSt
 	return &newStmt, nil
 }
 
-func substituteParamsInsert(stmt *InsertStmt, params []catalog.Value) (*InsertStmt, error) {
+func substituteParamsInsert(stmt *ast.InsertStmt, params []catalog.Value) (*ast.InsertStmt, error) {
 	newStmt := *stmt // Shallow copy
 
 	// Substitute in Values
-	newValues := make([][]Expression, len(stmt.ValuesList))
+	newValues := make([][]ast.Expression, len(stmt.ValuesList))
 	for i, row := range stmt.ValuesList {
-		newRow := make([]Expression, len(row))
+		newRow := make([]ast.Expression, len(row))
 		for j, expr := range row {
 			var err error
 			newRow[j], err = substituteParamsExpr(expr, params)
@@ -81,11 +82,11 @@ func substituteParamsInsert(stmt *InsertStmt, params []catalog.Value) (*InsertSt
 	return &newStmt, nil
 }
 
-func substituteParamsUpdate(stmt *UpdateStmt, params []catalog.Value) (*UpdateStmt, error) {
+func substituteParamsUpdate(stmt *ast.UpdateStmt, params []catalog.Value) (*ast.UpdateStmt, error) {
 	newStmt := *stmt // Shallow copy
 
 	// Substitute in Assignments
-	newAssignments := make([]Assignment, len(stmt.Assignments))
+	newAssignments := make([]ast.Assignment, len(stmt.Assignments))
 	for i, assign := range stmt.Assignments {
 		newAssign := assign
 		var err error
@@ -109,7 +110,7 @@ func substituteParamsUpdate(stmt *UpdateStmt, params []catalog.Value) (*UpdateSt
 	return &newStmt, nil
 }
 
-func substituteParamsDelete(stmt *DeleteStmt, params []catalog.Value) (*DeleteStmt, error) {
+func substituteParamsDelete(stmt *ast.DeleteStmt, params []catalog.Value) (*ast.DeleteStmt, error) {
 	newStmt := *stmt // Shallow copy
 
 	// Substitute in WHERE
@@ -124,19 +125,19 @@ func substituteParamsDelete(stmt *DeleteStmt, params []catalog.Value) (*DeleteSt
 	return &newStmt, nil
 }
 
-func substituteParamsExpr(expr Expression, params []catalog.Value) (Expression, error) {
+func substituteParamsExpr(expr ast.Expression, params []catalog.Value) (ast.Expression, error) {
 	if expr == nil {
 		return nil, nil
 	}
 
 	switch e := expr.(type) {
-	case *PlaceholderExpr:
+	case *ast.PlaceholderExpr:
 		if e.Index > len(params) {
 			return nil, fmt.Errorf("parameter index $%d out of range (count: %d)", e.Index, len(params))
 		}
-		return &LiteralExpr{Value: params[e.Index-1]}, nil
+		return &ast.LiteralExpr{Value: params[e.Index-1]}, nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left, err := substituteParamsExpr(e.Left, params)
 		if err != nil {
 			return nil, err
@@ -145,17 +146,17 @@ func substituteParamsExpr(expr Expression, params []catalog.Value) (Expression, 
 		if err != nil {
 			return nil, err
 		}
-		return &BinaryExpr{Left: left, Op: e.Op, Right: right}, nil
+		return &ast.BinaryExpr{Left: left, Op: e.Op, Right: right}, nil
 
-	case *UnaryExpr:
+	case *ast.UnaryExpr:
 		sub, err := substituteParamsExpr(e.Expr, params)
 		if err != nil {
 			return nil, err
 		}
-		return &UnaryExpr{Op: e.Op, Expr: sub}, nil
+		return &ast.UnaryExpr{Op: e.Op, Expr: sub}, nil
 
-	case *FunctionExpr:
-		newArgs := make([]Expression, len(e.Args))
+	case *ast.FunctionExpr:
+		newArgs := make([]ast.Expression, len(e.Args))
 		for i, arg := range e.Args {
 			var err error
 			newArgs[i], err = substituteParamsExpr(arg, params)
@@ -163,9 +164,9 @@ func substituteParamsExpr(expr Expression, params []catalog.Value) (Expression, 
 				return nil, err
 			}
 		}
-		return &FunctionExpr{Name: e.Name, Args: newArgs}, nil
+		return &ast.FunctionExpr{Name: e.Name, Args: newArgs}, nil
 
-	case *BetweenExpr:
+	case *ast.BetweenExpr:
 		subExpr, err := substituteParamsExpr(e.Expr, params)
 		if err != nil {
 			return nil, err
@@ -178,9 +179,9 @@ func substituteParamsExpr(expr Expression, params []catalog.Value) (Expression, 
 		if err != nil {
 			return nil, err
 		}
-		return &BetweenExpr{Expr: subExpr, Low: subLow, High: subHigh, Not: e.Not}, nil
+		return &ast.BetweenExpr{Expr: subExpr, Low: subLow, High: subHigh, Not: e.Not}, nil
 
-	case *LikeExpr:
+	case *ast.LikeExpr:
 		subExpr, err := substituteParamsExpr(e.Expr, params)
 		if err != nil {
 			return nil, err
@@ -189,23 +190,23 @@ func substituteParamsExpr(expr Expression, params []catalog.Value) (Expression, 
 		if err != nil {
 			return nil, err
 		}
-		return &LikeExpr{Expr: subExpr, Pattern: subPattern, CaseInsensitive: e.CaseInsensitive, Not: e.Not}, nil
+		return &ast.LikeExpr{Expr: subExpr, Pattern: subPattern, CaseInsensitive: e.CaseInsensitive, Not: e.Not}, nil
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		subExpr, err := substituteParamsExpr(e.Expr, params)
 		if err != nil {
 			return nil, err
 		}
-		return &IsNullExpr{Expr: subExpr, Not: e.Not}, nil
+		return &ast.IsNullExpr{Expr: subExpr, Not: e.Not}, nil
 
-	case *CastExpr:
+	case *ast.CastExpr:
 		subExpr, err := substituteParamsExpr(e.Expr, params)
 		if err != nil {
 			return nil, err
 		}
-		return &CastExpr{Expr: subExpr, TargetType: e.TargetType}, nil
+		return &ast.CastExpr{Expr: subExpr, TargetType: e.TargetType}, nil
 
-	case *LiteralExpr, *ColumnRef:
+	case *ast.LiteralExpr, *ast.ColumnRef:
 		return e, nil
 
 	default:

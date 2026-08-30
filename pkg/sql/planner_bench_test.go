@@ -5,6 +5,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 )
 
@@ -23,42 +25,42 @@ func BenchmarkPlanner_JoinOrdering(b *testing.B) {
 	planner, tableMeta, _ := setupPlannerBenchmark()
 
 	// Create a 3-way join query
-	joinStmt := &SelectStmt{
+	joinStmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Star: true},
 		},
-		Joins: []JoinClause{
+		Joins: []ast.JoinClause{
 			{
 				JoinType:  "INNER",
 				TableName: "orders",
-				Condition: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "users.id"},
-					Right: &ColumnRef{Name: "orders.user_id"},
+				Condition: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "users.id"},
+					Right: &ast.ColumnRef{Name: "orders.user_id"},
 				},
 			},
 			{
 				JoinType:  "INNER",
 				TableName: "products",
-				Condition: &BinaryExpr{
-					Op:    TOKEN_EQ,
-					Left:  &ColumnRef{Name: "orders.product_id"},
-					Right: &ColumnRef{Name: "products.id"},
+				Condition: &ast.BinaryExpr{
+					Op:    token.TOKEN_EQ,
+					Left:  &ast.ColumnRef{Name: "orders.product_id"},
+					Right: &ast.ColumnRef{Name: "products.id"},
 				},
 			},
 		},
-		Where: &BinaryExpr{
-			Op: TOKEN_AND,
-			Left: &BinaryExpr{
-				Op:    TOKEN_EQ,
-				Left:  &ColumnRef{Name: "users.status"},
-				Right: &LiteralExpr{Value: catalog.NewText("active")},
+		Where: &ast.BinaryExpr{
+			Op: token.TOKEN_AND,
+			Left: &ast.BinaryExpr{
+				Op:    token.TOKEN_EQ,
+				Left:  &ast.ColumnRef{Name: "users.status"},
+				Right: &ast.LiteralExpr{Value: catalog.NewText("active")},
 			},
-			Right: &BinaryExpr{
-				Op:    TOKEN_GT,
-				Left:  &ColumnRef{Name: "orders.amount"},
-				Right: &LiteralExpr{Value: catalog.NewFloat64(100.0)},
+			Right: &ast.BinaryExpr{
+				Op:    token.TOKEN_GT,
+				Left:  &ast.ColumnRef{Name: "orders.amount"},
+				Right: &ast.LiteralExpr{Value: catalog.NewFloat64(100.0)},
 			},
 		},
 	}
@@ -132,17 +134,17 @@ func BenchmarkPlanner_SelectivityEstimation(b *testing.B) {
 	}
 
 	// Test expression: WHERE age > 25 AND status = 'active'
-	whereExpr := &BinaryExpr{
-		Op: TOKEN_AND,
-		Left: &BinaryExpr{
-			Op:    TOKEN_GT,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+	whereExpr := &ast.BinaryExpr{
+		Op: token.TOKEN_AND,
+		Left: &ast.BinaryExpr{
+			Op:    token.TOKEN_GT,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
-		Right: &BinaryExpr{
-			Op:    TOKEN_EQ,
-			Left:  &ColumnRef{Name: "status"},
-			Right: &LiteralExpr{Value: catalog.NewText("active")},
+		Right: &ast.BinaryExpr{
+			Op:    token.TOKEN_EQ,
+			Left:  &ast.ColumnRef{Name: "status"},
+			Right: &ast.LiteralExpr{Value: catalog.NewText("active")},
 		},
 	}
 
@@ -153,7 +155,7 @@ func BenchmarkPlanner_SelectivityEstimation(b *testing.B) {
 }
 
 // setupPlannerBenchmark creates a planner setup for benchmarking.
-func setupPlannerBenchmark() (*Planner, *catalog.TableMeta, *SelectStmt) {
+func setupPlannerBenchmark() (*Planner, *catalog.TableMeta, *ast.SelectStmt) {
 	// Create index manager
 	idxMgr, _ := btree.NewIndexManager(":memory:", 4096)
 
@@ -208,15 +210,15 @@ func setupPlannerBenchmark() (*Planner, *catalog.TableMeta, *SelectStmt) {
 	_ = planner.statsMgr.SetTableStats(tableStats)
 
 	// Create a test query: SELECT * FROM users WHERE age > 25
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Star: true},
 		},
-		Where: &BinaryExpr{
-			Op:    TOKEN_GT,
-			Left:  &ColumnRef{Name: "age"},
-			Right: &LiteralExpr{Value: catalog.NewInt32(25)},
+		Where: &ast.BinaryExpr{
+			Op:    token.TOKEN_GT,
+			Left:  &ast.ColumnRef{Name: "age"},
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(25)},
 		},
 	}
 

@@ -97,7 +97,7 @@ VeridicalDB is a modern, embeddable database engine written in Go. It aims to pr
 
 ## Completed Features
 
-### ✅ SQL Parser & Lexer (`pkg/sql/lexer.go`, `pkg/sql/parser.go`)
+### ✅ SQL Parser & Lexer (`pkg/sql/token`, `pkg/sql/lex`, `pkg/sql/parser.go`)
 
 A hand-written recursive descent parser supporting:
 
@@ -287,7 +287,10 @@ superseded it.)_
 | `pkg/observability` | System catalog, Prometheus metrics, health | `system_catalog.go` |
 | `pkg/pgwire` | PostgreSQL wire protocol server | `server.go`, `protocol.go` |
 | `pkg/shard` | Hash-based sharding, coordinator, 2PC | `coordinator.go`, `shard.go`, `node.go` |
-| `pkg/sql` | Lexer, parser, planner, MVCC executor, session, PL/pgSQL | `lexer.go`, `parser.go`, `planner.go`, `mvcc_executor.go`, `session.go` |
+| `pkg/sql/token` | SQL token types, keyword table | `token.go` |
+| `pkg/sql/lex` | SQL lexer (produces `token.Token`s) | `lexer.go` |
+| `pkg/sql/ast` | SQL abstract syntax tree — every node type + the `Statement`/`Expression` interfaces | `ast.go` |
+| `pkg/sql` | Parser, planner, MVCC executor, session, PL/pgSQL | `parser.go`, `planner.go`, `mvcc_executor.go`, `session.go` |
 | `pkg/stats` | Table statistics for the cost model | `stats.go` |
 | `pkg/storage` | Heap + columnar storage engines, buffer pool, pager | `storage.go`, `columnar.go`, `buffer_pool.go` |
 | `pkg/txn` | Transaction manager, MVCC snapshots, visibility | `txn.go`, `visibility.go` |
@@ -295,8 +298,10 @@ superseded it.)_
 | `pkg/wal` | Write-ahead log, checkpoints, ARIES recovery | `wal.go`, `recovery.go`, `checkpoint.go` |
 
 > **Note:** `pkg/sql` still contains a second, pre-MVCC `executor.go` that is
-> unreachable at runtime (only tests use it). Removing it and splitting the
-> package are plan phases P2 and P4.
+> unreachable at runtime (only tests use it). Removing it is plan phase P2.
+> P4 splits `pkg/sql` into sub-packages in dependency order; `token`, `lex`, and
+> `ast` are done. `parse` and `plan` are next; `exec`/`session` follow after P2
+> deletes `executor.go`.
 
 ---
 
@@ -464,8 +469,8 @@ Nice-to-have for competitive advantage.
 
 ### Adding a New SQL Statement
 
-1. **Add tokens** to `pkg/sql/lexer.go` if new keywords needed
-2. **Add AST node** to `pkg/sql/ast.go`:
+1. **Add tokens** to `pkg/sql/token/token.go` if new keywords needed
+2. **Add AST node** to `pkg/sql/ast/ast.go`:
    ```go
    type NewStmt struct {
        Field1 string
@@ -583,7 +588,7 @@ separately (the "VeridicalDB Atlas" document). In brief:
 | P2.6b | The MVCC path's `GROUPING SETS` / `CUBE` / `ROLLUP` emit only the grand total; `GROUPING()` returns 0 for NULL group columns; `DISTINCT ON` does not deduplicate; window frames compute wrong moving values and `MIN`/`MAX`/`NTH_VALUE` are unsupported as window functions; `MERGE` result differences. **These are substantial — closer to reimplementing than porting.** 14 `sql_test.go` tests remain on `*Executor`, marked `TODO(P2)`. |
 | P2.7 | Once P2.2–P2.6b land and the last 14 tests pass on `Session`: delete `executor.go` (~7.9k LOC) + `information_schema.go`'s `*Executor` methods. |
 | P3 | One config package (`pkg/config`, viper dropped), one logger (`pkg/log`, `internal/logger` removed). **Done.** |
-| P4 | Split `pkg/sql` into `token / ast / parse / plan / exec / session` sub-packages |
+| P4 | Split `pkg/sql` into `token / lex / ast / parse / plan / exec / session` sub-packages. `token`, `lex`, `ast` extracted — **in progress** |
 | P5 | Decouple the TUI from `pkg/sql` behind an interface; atomic catalog writes |
 
 ---

@@ -1,6 +1,11 @@
-package sql
+// Package ast defines the abstract syntax tree produced by the SQL parser and
+// consumed by the planner and executors.
+package ast
 
-import "github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+import (
+	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
+)
 
 // AST node types for SQL statements
 
@@ -242,7 +247,7 @@ func (e *ColumnRef) exprNode() {}
 // BinaryExpr represents a binary operation (e.g., a = b, a AND b).
 type BinaryExpr struct {
 	Left  Expression
-	Op    TokenType
+	Op    token.TokenType
 	Right Expression
 }
 
@@ -250,7 +255,7 @@ func (e *BinaryExpr) exprNode() {}
 
 // UnaryExpr represents a unary operation (e.g., NOT x).
 type UnaryExpr struct {
-	Op   TokenType
+	Op   token.TokenType
 	Expr Expression
 }
 

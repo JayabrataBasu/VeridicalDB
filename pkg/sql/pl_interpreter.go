@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 // PLInterpreter executes PL/pgSQL code within a procedure or function.
@@ -99,7 +101,7 @@ func (pl *PLInterpreter) HasReturned() bool {
 }
 
 // ExecuteBlock executes a PL/pgSQL block.
-func (pl *PLInterpreter) ExecuteBlock(block *PLBlock) error {
+func (pl *PLInterpreter) ExecuteBlock(block *ast.PLBlock) error {
 	// Process DECLARE section
 	for _, decl := range block.Declarations {
 		var defaultVal *catalog.Value
@@ -143,7 +145,7 @@ func (pl *PLInterpreter) ExecuteBlock(block *PLBlock) error {
 }
 
 // executeStatements executes a list of PL statements.
-func (pl *PLInterpreter) executeStatements(stmts []PLStatement) error {
+func (pl *PLInterpreter) executeStatements(stmts []ast.PLStatement) error {
 	for _, stmt := range stmts {
 		if pl.returned || pl.exited {
 			break
@@ -156,29 +158,29 @@ func (pl *PLInterpreter) executeStatements(stmts []PLStatement) error {
 }
 
 // executeStatement executes a single PL statement.
-func (pl *PLInterpreter) executeStatement(stmt PLStatement) error {
+func (pl *PLInterpreter) executeStatement(stmt ast.PLStatement) error {
 	switch s := stmt.(type) {
-	case *PLAssign:
+	case *ast.PLAssign:
 		return pl.executeAssign(s)
-	case *PLIf:
+	case *ast.PLIf:
 		return pl.executeIf(s)
-	case *PLWhile:
+	case *ast.PLWhile:
 		return pl.executeWhile(s)
-	case *PLLoop:
+	case *ast.PLLoop:
 		return pl.executeLoop(s)
-	case *PLFor:
+	case *ast.PLFor:
 		return pl.executeFor(s)
-	case *PLExit:
+	case *ast.PLExit:
 		return pl.executeExit(s)
-	case *PLContinue:
+	case *ast.PLContinue:
 		return pl.executeContinue(s)
-	case *PLReturn:
+	case *ast.PLReturn:
 		return pl.executeReturn(s)
-	case *PLRaise:
+	case *ast.PLRaise:
 		return pl.executeRaise(s)
-	case *PLPerform:
+	case *ast.PLPerform:
 		return pl.executePerform(s)
-	case *PLSQL:
+	case *ast.PLSQL:
 		return pl.executePLSQL(s)
 	default:
 		return fmt.Errorf("unknown PL statement type: %T", stmt)
@@ -186,7 +188,7 @@ func (pl *PLInterpreter) executeStatement(stmt PLStatement) error {
 }
 
 // executeAssign executes a variable assignment.
-func (pl *PLInterpreter) executeAssign(stmt *PLAssign) error {
+func (pl *PLInterpreter) executeAssign(stmt *ast.PLAssign) error {
 	val, err := pl.evalExpression(stmt.Value)
 	if err != nil {
 		return fmt.Errorf("error evaluating assignment: %v", err)
@@ -195,7 +197,7 @@ func (pl *PLInterpreter) executeAssign(stmt *PLAssign) error {
 }
 
 // executeIf executes an IF statement.
-func (pl *PLInterpreter) executeIf(stmt *PLIf) error {
+func (pl *PLInterpreter) executeIf(stmt *ast.PLIf) error {
 	cond, err := pl.evalCondition(stmt.Condition)
 	if err != nil {
 		return err
@@ -225,7 +227,7 @@ func (pl *PLInterpreter) executeIf(stmt *PLIf) error {
 }
 
 // executeWhile executes a WHILE loop.
-func (pl *PLInterpreter) executeWhile(stmt *PLWhile) error {
+func (pl *PLInterpreter) executeWhile(stmt *ast.PLWhile) error {
 	for {
 		cond, err := pl.evalCondition(stmt.Condition)
 		if err != nil {
@@ -251,7 +253,7 @@ func (pl *PLInterpreter) executeWhile(stmt *PLWhile) error {
 }
 
 // executeLoop executes an infinite LOOP (until EXIT).
-func (pl *PLInterpreter) executeLoop(stmt *PLLoop) error {
+func (pl *PLInterpreter) executeLoop(stmt *ast.PLLoop) error {
 	for {
 		pl.exited = false
 		if err := pl.executeStatements(stmt.Body); err != nil {
@@ -266,7 +268,7 @@ func (pl *PLInterpreter) executeLoop(stmt *PLLoop) error {
 }
 
 // executeFor executes a FOR loop.
-func (pl *PLInterpreter) executeFor(stmt *PLFor) error {
+func (pl *PLInterpreter) executeFor(stmt *ast.PLFor) error {
 	if stmt.Query != nil {
 		// FOR rec IN (SELECT ...) LOOP
 		return pl.executeForQuery(stmt)
@@ -275,7 +277,7 @@ func (pl *PLInterpreter) executeFor(stmt *PLFor) error {
 }
 
 // executeForNumeric executes a numeric FOR loop.
-func (pl *PLInterpreter) executeForNumeric(stmt *PLFor) error {
+func (pl *PLInterpreter) executeForNumeric(stmt *ast.PLFor) error {
 	lower, err := pl.evalExpression(stmt.LowerBound)
 	if err != nil {
 		return fmt.Errorf("error evaluating FOR lower bound: %v", err)
@@ -327,7 +329,7 @@ func (pl *PLInterpreter) executeForNumeric(stmt *PLFor) error {
 }
 
 // executeForQuery executes a FOR query loop.
-func (pl *PLInterpreter) executeForQuery(stmt *PLFor) error {
+func (pl *PLInterpreter) executeForQuery(stmt *ast.PLFor) error {
 	// Execute the query
 	result, err := pl.session.Execute(stmt.Query)
 	if err != nil {
@@ -360,7 +362,7 @@ func (pl *PLInterpreter) executeForQuery(stmt *PLFor) error {
 }
 
 // executeExit executes an EXIT statement.
-func (pl *PLInterpreter) executeExit(stmt *PLExit) error {
+func (pl *PLInterpreter) executeExit(stmt *ast.PLExit) error {
 	if stmt.Condition != nil {
 		cond, err := pl.evalCondition(stmt.Condition)
 		if err != nil {
@@ -375,7 +377,7 @@ func (pl *PLInterpreter) executeExit(stmt *PLExit) error {
 }
 
 // executeContinue executes a CONTINUE statement.
-func (pl *PLInterpreter) executeContinue(stmt *PLContinue) error {
+func (pl *PLInterpreter) executeContinue(stmt *ast.PLContinue) error {
 	if stmt.Condition != nil {
 		cond, err := pl.evalCondition(stmt.Condition)
 		if err != nil {
@@ -391,7 +393,7 @@ func (pl *PLInterpreter) executeContinue(stmt *PLContinue) error {
 }
 
 // executeReturn executes a RETURN statement.
-func (pl *PLInterpreter) executeReturn(stmt *PLReturn) error {
+func (pl *PLInterpreter) executeReturn(stmt *ast.PLReturn) error {
 	if stmt.Value != nil {
 		val, err := pl.evalExpression(stmt.Value)
 		if err != nil {
@@ -404,7 +406,7 @@ func (pl *PLInterpreter) executeReturn(stmt *PLReturn) error {
 }
 
 // executeRaise executes a RAISE statement.
-func (pl *PLInterpreter) executeRaise(stmt *PLRaise) error {
+func (pl *PLInterpreter) executeRaise(stmt *ast.PLRaise) error {
 	msg := stmt.Message
 
 	// Format message with arguments
@@ -433,13 +435,13 @@ func (pl *PLInterpreter) executeRaise(stmt *PLRaise) error {
 }
 
 // executePerform executes a PERFORM statement (SELECT without returning).
-func (pl *PLInterpreter) executePerform(stmt *PLPerform) error {
+func (pl *PLInterpreter) executePerform(stmt *ast.PLPerform) error {
 	_, err := pl.session.Execute(stmt.Query)
 	return err
 }
 
 // executePLSQL executes an embedded SQL statement.
-func (pl *PLInterpreter) executePLSQL(stmt *PLSQL) error {
+func (pl *PLInterpreter) executePLSQL(stmt *ast.PLSQL) error {
 	result, err := pl.session.Execute(stmt.Statement)
 	if err != nil {
 		return err
@@ -461,25 +463,25 @@ func (pl *PLInterpreter) executePLSQL(stmt *PLSQL) error {
 }
 
 // evalExpression evaluates an expression in the PL context.
-func (pl *PLInterpreter) evalExpression(expr Expression) (catalog.Value, error) {
+func (pl *PLInterpreter) evalExpression(expr ast.Expression) (catalog.Value, error) {
 	switch e := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return e.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Treat as variable reference
 		if val, ok := pl.GetVariable(e.Name); ok {
 			return val, nil
 		}
 		return catalog.Value{}, fmt.Errorf("unknown variable: %s", e.Name)
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		return pl.evalBinaryExpr(e)
 
-	case *UnaryExpr:
+	case *ast.UnaryExpr:
 		return pl.evalUnaryExpr(e)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		return pl.evalFunctionExpr(e)
 
 	default:
@@ -490,7 +492,7 @@ func (pl *PLInterpreter) evalExpression(expr Expression) (catalog.Value, error) 
 }
 
 // evalBinaryExpr evaluates a binary expression.
-func (pl *PLInterpreter) evalBinaryExpr(expr *BinaryExpr) (catalog.Value, error) {
+func (pl *PLInterpreter) evalBinaryExpr(expr *ast.BinaryExpr) (catalog.Value, error) {
 	left, err := pl.evalExpression(expr.Left)
 	if err != nil {
 		return catalog.Value{}, err
@@ -501,39 +503,39 @@ func (pl *PLInterpreter) evalBinaryExpr(expr *BinaryExpr) (catalog.Value, error)
 	}
 
 	switch expr.Op {
-	case TOKEN_PLUS:
+	case token.TOKEN_PLUS:
 		return pl.addValues(left, right)
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		return pl.subtractValues(left, right)
-	case TOKEN_STAR:
+	case token.TOKEN_STAR:
 		return pl.multiplyValues(left, right)
-	case TOKEN_SLASH:
+	case token.TOKEN_SLASH:
 		return pl.divideValues(left, right)
-	case TOKEN_EQ:
+	case token.TOKEN_EQ:
 		return catalog.NewBool(left.Compare(right) == 0), nil
-	case TOKEN_NE:
+	case token.TOKEN_NE:
 		return catalog.NewBool(left.Compare(right) != 0), nil
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		cmp := left.Compare(right)
 		return catalog.NewBool(cmp < 0), nil
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		cmp := left.Compare(right)
 		return catalog.NewBool(cmp <= 0), nil
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		cmp := left.Compare(right)
 		return catalog.NewBool(cmp > 0), nil
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		cmp := left.Compare(right)
 		return catalog.NewBool(cmp >= 0), nil
-	case TOKEN_AND:
+	case token.TOKEN_AND:
 		lb, _ := pl.valueToBool(left)
 		rb, _ := pl.valueToBool(right)
 		return catalog.NewBool(lb && rb), nil
-	case TOKEN_OR:
+	case token.TOKEN_OR:
 		lb, _ := pl.valueToBool(left)
 		rb, _ := pl.valueToBool(right)
 		return catalog.NewBool(lb || rb), nil
-	case TOKEN_CONCAT:
+	case token.TOKEN_CONCAT:
 		return catalog.NewText(left.String() + right.String()), nil
 	default:
 		return catalog.Value{}, fmt.Errorf("unsupported binary operator: %v", expr.Op)
@@ -541,17 +543,17 @@ func (pl *PLInterpreter) evalBinaryExpr(expr *BinaryExpr) (catalog.Value, error)
 }
 
 // evalUnaryExpr evaluates a unary expression.
-func (pl *PLInterpreter) evalUnaryExpr(expr *UnaryExpr) (catalog.Value, error) {
+func (pl *PLInterpreter) evalUnaryExpr(expr *ast.UnaryExpr) (catalog.Value, error) {
 	val, err := pl.evalExpression(expr.Expr)
 	if err != nil {
 		return catalog.Value{}, err
 	}
 
 	switch expr.Op {
-	case TOKEN_NOT:
+	case token.TOKEN_NOT:
 		b, _ := pl.valueToBool(val)
 		return catalog.NewBool(!b), nil
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		if i, ok := pl.valueToInt64(val); ok {
 			return catalog.NewInt32(int32(-i)), nil
 		}
@@ -562,7 +564,7 @@ func (pl *PLInterpreter) evalUnaryExpr(expr *UnaryExpr) (catalog.Value, error) {
 }
 
 // evalFunctionExpr evaluates a function call.
-func (pl *PLInterpreter) evalFunctionExpr(expr *FunctionExpr) (catalog.Value, error) {
+func (pl *PLInterpreter) evalFunctionExpr(expr *ast.FunctionExpr) (catalog.Value, error) {
 	// Evaluate arguments
 	args := make([]catalog.Value, len(expr.Args))
 	for i, arg := range expr.Args {
@@ -637,7 +639,7 @@ func (pl *PLInterpreter) callUserFunction(name string, _ []catalog.Value) (catal
 }
 
 // evalCondition evaluates a boolean condition.
-func (pl *PLInterpreter) evalCondition(expr Expression) (bool, error) {
+func (pl *PLInterpreter) evalCondition(expr ast.Expression) (bool, error) {
 	val, err := pl.evalExpression(expr)
 	if err != nil {
 		return false, err

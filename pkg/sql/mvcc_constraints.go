@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -156,7 +157,7 @@ func (e *MVCCExecutor) checkForeignKeys(meta *catalog.TableMeta, values []catalo
 
 // findConflictRID locates an existing row that conflicts with values on the
 // statement's ON CONFLICT columns, or on the primary key when none are named.
-func (e *MVCCExecutor) findConflictRID(stmt *InsertStmt, schema *catalog.Schema, values []catalog.Value, tx *txn.Transaction) (storage.RID, []catalog.Value, bool, error) {
+func (e *MVCCExecutor) findConflictRID(stmt *ast.InsertStmt, schema *catalog.Schema, values []catalog.Value, tx *txn.Transaction) (storage.RID, []catalog.Value, bool, error) {
 	var idxs []int
 	if stmt.OnConflict != nil && len(stmt.OnConflict.ConflictColumns) > 0 {
 		for _, name := range stmt.OnConflict.ConflictColumns {
@@ -200,7 +201,7 @@ func (e *MVCCExecutor) findConflictRID(stmt *InsertStmt, schema *catalog.Schema,
 // evaluated against the existing row; a bare `excluded.<col>` reference resolves
 // to the row that was being inserted.
 func (e *MVCCExecutor) applyOnConflictUpdate(
-	stmt *InsertStmt,
+	stmt *ast.InsertStmt,
 	meta *catalog.TableMeta,
 	rid storage.RID,
 	existing []catalog.Value,
@@ -217,7 +218,7 @@ func (e *MVCCExecutor) applyOnConflictUpdate(
 		}
 
 		var val catalog.Value
-		if ref, ok := assign.Value.(*ColumnRef); ok && strings.HasPrefix(strings.ToLower(ref.Name), "excluded.") {
+		if ref, ok := assign.Value.(*ast.ColumnRef); ok && strings.HasPrefix(strings.ToLower(ref.Name), "excluded.") {
 			exCol := ref.Name[len("excluded."):]
 			_, exIdx := meta.Schema.ColumnByName(exCol)
 			if exIdx < 0 {

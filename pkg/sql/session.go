@@ -9,6 +9,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/lock"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
@@ -36,7 +37,7 @@ type Session struct {
 	autocommit bool
 
 	// preparedStmts stores prepared statements by name
-	preparedStmts map[string]Statement
+	preparedStmts map[string]ast.Statement
 
 	// currentUser is the authenticated user for this session
 	currentUser string
@@ -63,7 +64,7 @@ func NewSession(mtm *catalog.MVCCTableManager) *Session {
 		statsMan:      statsMan,
 		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
-		preparedStmts: make(map[string]Statement),
+		preparedStmts: make(map[string]ast.Statement),
 	}
 }
 
@@ -81,7 +82,7 @@ func NewSessionWithLocks(mtm *catalog.MVCCTableManager, lockMgr *lock.Manager) *
 		statsMan:      statsMan,
 		queryCache:    NewQueryCache(1000),
 		autocommit:    true,
-		preparedStmts: make(map[string]Statement),
+		preparedStmts: make(map[string]ast.Statement),
 	}
 }
 
@@ -225,7 +226,7 @@ func (s *Session) Authenticate(username, password string) error {
 
 // ExecuteSQL parses and executes a SQL string.
 func (s *Session) ExecuteSQL(input string) (*Result, error) {
-	var stmt Statement
+	var stmt ast.Statement
 	var cachedPlan *ExecutionPlan
 	useQueryCache := s.queryCache != nil && isQueryCacheCandidateSQL(input)
 	if useQueryCache {
@@ -241,7 +242,7 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 				return nil, fmt.Errorf("syntax error: %w", err)
 			}
 			stmt = parsed
-			if _, ok := stmt.(*SelectStmt); ok {
+			if _, ok := stmt.(*ast.SelectStmt); ok {
 				_ = s.queryCache.Put(input, stmt)
 			}
 		}
@@ -254,7 +255,7 @@ func (s *Session) ExecuteSQL(input string) (*Result, error) {
 		stmt = parsed
 	}
 
-	if selectStmt, ok := stmt.(*SelectStmt); ok && s.executor != nil {
+	if selectStmt, ok := stmt.(*ast.SelectStmt); ok && s.executor != nil {
 		plan := cachedPlan
 		if plan == nil {
 			plan = s.executor.planSelectExecution(selectStmt)
@@ -290,30 +291,30 @@ func (s *Session) QueryCacheStats() QueryCacheStats {
 }
 
 // Execute executes a SQL statement and returns the result.
-func (s *Session) Execute(stmt Statement) (*Result, error) {
+func (s *Session) Execute(stmt ast.Statement) (*Result, error) {
 	// Handle transaction control statements specially
 	switch stmt.(type) {
-	case *BeginStmt:
+	case *ast.BeginStmt:
 		return s.handleBegin()
-	case *CommitStmt:
+	case *ast.CommitStmt:
 		return s.handleCommit()
-	case *RollbackStmt:
+	case *ast.RollbackStmt:
 		return s.handleRollback()
 	}
 
 	// Handle prepared statements
 	switch typedStmt := stmt.(type) {
-	case *PrepareStmt:
+	case *ast.PrepareStmt:
 		return s.handlePrepare(typedStmt)
-	case *ExecuteStmt:
+	case *ast.ExecuteStmt:
 		return s.handleExecute(typedStmt)
-	case *DeallocateStmt:
+	case *ast.DeallocateStmt:
 		return s.handleDeallocate(typedStmt)
 	}
 
 	// For DDL statements (CREATE/DROP), we don't need a transaction
 	switch typedStmt := stmt.(type) {
-	case *CreateTableStmt:
+	case *ast.CreateTableStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
@@ -322,7 +323,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *DropTableStmt:
+	case *ast.DropTableStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
@@ -331,7 +332,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *CreateIndexStmt:
+	case *ast.CreateIndexStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
@@ -340,7 +341,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *DropIndexStmt:
+	case *ast.DropIndexStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
@@ -349,62 +350,62 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *CreateTriggerStmt:
+	case *ast.CreateTriggerStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
 		return s.handleCreateTrigger(typedStmt)
-	case *DropTriggerStmt:
+	case *ast.DropTriggerStmt:
 		if err := s.requireDatabaseSelected(); err != nil {
 			return nil, err
 		}
 		return s.handleDropTrigger(typedStmt)
 	// User management statements
-	case *CreateUserStmt:
+	case *ast.CreateUserStmt:
 		return s.handleCreateUser(typedStmt)
-	case *DropUserStmt:
+	case *ast.DropUserStmt:
 		return s.handleDropUser(typedStmt)
-	case *AlterUserStmt:
+	case *ast.AlterUserStmt:
 		return s.handleAlterUser(typedStmt)
-	case *GrantStmt:
+	case *ast.GrantStmt:
 		return s.handleGrant(typedStmt)
-	case *RevokeStmt:
+	case *ast.RevokeStmt:
 		return s.handleRevoke(typedStmt)
 	// Database management statements
-	case *CreateDatabaseStmt:
+	case *ast.CreateDatabaseStmt:
 		result, err := s.handleCreateDatabase(typedStmt)
 		if err == nil {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *DropDatabaseStmt:
+	case *ast.DropDatabaseStmt:
 		result, err := s.handleDropDatabase(typedStmt)
 		if err == nil {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
-	case *UseDatabaseStmt:
+	case *ast.UseDatabaseStmt:
 		result, err := s.handleUseDatabase(typedStmt)
 		if err == nil {
 			s.invalidateQueryCacheForStatement(stmt)
 		}
 		return result, err
 	// Stored procedure/function statements
-	case *CreateProcedureStmt:
+	case *ast.CreateProcedureStmt:
 		return s.handleCreateProcedure(typedStmt)
-	case *DropProcedureStmt:
+	case *ast.DropProcedureStmt:
 		return s.handleDropProcedure(typedStmt)
-	case *CreateFunctionStmt:
+	case *ast.CreateFunctionStmt:
 		return s.handleCreateFunction(typedStmt)
-	case *DropFunctionStmt:
+	case *ast.DropFunctionStmt:
 		return s.handleDropFunction(typedStmt)
-	case *CallStmt:
+	case *ast.CallStmt:
 		return s.handleCall(typedStmt)
-	case *ShowProceduresStmt:
+	case *ast.ShowProceduresStmt:
 		return s.handleShowProcedures(typedStmt)
-	case *ShowFunctionsStmt:
+	case *ast.ShowFunctionsStmt:
 		return s.handleShowFunctions(typedStmt)
-	case *ShowStmt:
+	case *ast.ShowStmt:
 		return s.handleShow(typedStmt)
 	}
 
@@ -445,7 +446,7 @@ func (s *Session) Execute(stmt Statement) (*Result, error) {
 	return result, nil
 }
 
-func (s *Session) executeSelectWithPlan(stmt *SelectStmt, plan *ExecutionPlan) (*Result, error) {
+func (s *Session) executeSelectWithPlan(stmt *ast.SelectStmt, plan *ExecutionPlan) (*Result, error) {
 	tx, shouldCommit, err := s.ensureTransaction()
 	if err != nil {
 		return nil, err
@@ -476,25 +477,25 @@ func (s *Session) executeSelectWithPlan(stmt *SelectStmt, plan *ExecutionPlan) (
 	return result, nil
 }
 
-func (s *Session) invalidateQueryCacheForStatement(stmt Statement) {
+func (s *Session) invalidateQueryCacheForStatement(stmt ast.Statement) {
 	if s.queryCache == nil || stmt == nil {
 		return
 	}
 
 	switch typedStmt := stmt.(type) {
-	case *CreateTableStmt:
+	case *ast.CreateTableStmt:
 		s.queryCache.InvalidateTable(typedStmt.TableName)
-	case *DropTableStmt:
+	case *ast.DropTableStmt:
 		s.queryCache.InvalidateTable(typedStmt.TableName)
-	case *AlterTableStmt:
+	case *ast.AlterTableStmt:
 		s.queryCache.InvalidateTable(typedStmt.TableName)
-	case *TruncateTableStmt:
+	case *ast.TruncateTableStmt:
 		s.queryCache.InvalidateTable(typedStmt.TableName)
-	case *CreateIndexStmt:
+	case *ast.CreateIndexStmt:
 		s.queryCache.InvalidateTable(typedStmt.TableName)
-	case *DropIndexStmt:
+	case *ast.DropIndexStmt:
 		s.queryCache.Clear()
-	case *CreateDatabaseStmt, *DropDatabaseStmt, *UseDatabaseStmt:
+	case *ast.CreateDatabaseStmt, *ast.DropDatabaseStmt, *ast.UseDatabaseStmt:
 		s.queryCache.Clear()
 	}
 }
@@ -608,7 +609,7 @@ func (s *Session) Close() {
 }
 
 // handleCreateIndex creates a new index.
-func (s *Session) handleCreateIndex(stmt *CreateIndexStmt) (*Result, error) {
+func (s *Session) handleCreateIndex(stmt *ast.CreateIndexStmt) (*Result, error) {
 	if s.idxMgr == nil {
 		return nil, fmt.Errorf("index manager not configured")
 	}
@@ -721,7 +722,7 @@ func encodeValueForIndex(v catalog.Value) ([]byte, error) {
 }
 
 // handleDropIndex removes an index.
-func (s *Session) handleDropIndex(stmt *DropIndexStmt) (*Result, error) {
+func (s *Session) handleDropIndex(stmt *ast.DropIndexStmt) (*Result, error) {
 	if s.idxMgr == nil {
 		return nil, fmt.Errorf("index manager not configured")
 	}
@@ -736,12 +737,12 @@ func (s *Session) handleDropIndex(stmt *DropIndexStmt) (*Result, error) {
 }
 
 // Prepare stores a prepared statement.
-func (s *Session) Prepare(name string, stmt Statement) {
+func (s *Session) Prepare(name string, stmt ast.Statement) {
 	s.preparedStmts[name] = stmt
 }
 
 // GetPrepared retrieves a prepared statement.
-func (s *Session) GetPrepared(name string) Statement {
+func (s *Session) GetPrepared(name string) ast.Statement {
 	return s.preparedStmts[name]
 }
 
@@ -750,21 +751,21 @@ func (s *Session) Deallocate(name string) {
 	delete(s.preparedStmts, name)
 }
 
-func (s *Session) handlePrepare(stmt *PrepareStmt) (*Result, error) {
+func (s *Session) handlePrepare(stmt *ast.PrepareStmt) (*Result, error) {
 	s.preparedStmts[stmt.Name] = stmt.Statement
 	return &Result{Message: "PREPARE"}, nil
 }
 
-func (s *Session) handleDeallocate(stmt *DeallocateStmt) (*Result, error) {
+func (s *Session) handleDeallocate(stmt *ast.DeallocateStmt) (*Result, error) {
 	if stmt.Name == "ALL" {
-		s.preparedStmts = make(map[string]Statement)
+		s.preparedStmts = make(map[string]ast.Statement)
 	} else {
 		delete(s.preparedStmts, stmt.Name)
 	}
 	return &Result{Message: "DEALLOCATE"}, nil
 }
 
-func (s *Session) handleExecute(stmt *ExecuteStmt) (*Result, error) {
+func (s *Session) handleExecute(stmt *ast.ExecuteStmt) (*Result, error) {
 	prepared, ok := s.preparedStmts[stmt.Name]
 	if !ok {
 		return nil, fmt.Errorf("prepared statement %q does not exist", stmt.Name)
@@ -791,7 +792,7 @@ func (s *Session) handleExecute(stmt *ExecuteStmt) (*Result, error) {
 }
 
 // handleCreateUser handles CREATE USER statement.
-func (s *Session) handleCreateUser(stmt *CreateUserStmt) (*Result, error) {
+func (s *Session) handleCreateUser(stmt *ast.CreateUserStmt) (*Result, error) {
 	if s.userCat == nil {
 		return nil, fmt.Errorf("user management not enabled (no user catalog)")
 	}
@@ -815,7 +816,7 @@ func (s *Session) handleCreateUser(stmt *CreateUserStmt) (*Result, error) {
 }
 
 // handleDropUser handles DROP USER statement.
-func (s *Session) handleDropUser(stmt *DropUserStmt) (*Result, error) {
+func (s *Session) handleDropUser(stmt *ast.DropUserStmt) (*Result, error) {
 	if s.userCat == nil {
 		return nil, fmt.Errorf("user management not enabled (no user catalog)")
 	}
@@ -839,7 +840,7 @@ func (s *Session) handleDropUser(stmt *DropUserStmt) (*Result, error) {
 }
 
 // handleAlterUser handles ALTER USER statement.
-func (s *Session) handleAlterUser(stmt *AlterUserStmt) (*Result, error) {
+func (s *Session) handleAlterUser(stmt *ast.AlterUserStmt) (*Result, error) {
 	if s.userCat == nil {
 		return nil, fmt.Errorf("user management not enabled (no user catalog)")
 	}
@@ -881,7 +882,7 @@ func (s *Session) handleAlterUser(stmt *AlterUserStmt) (*Result, error) {
 }
 
 // handleGrant handles GRANT statement.
-func (s *Session) handleGrant(stmt *GrantStmt) (*Result, error) {
+func (s *Session) handleGrant(stmt *ast.GrantStmt) (*Result, error) {
 	if s.userCat == nil {
 		return nil, fmt.Errorf("user management not enabled (no user catalog)")
 	}
@@ -905,7 +906,7 @@ func (s *Session) handleGrant(stmt *GrantStmt) (*Result, error) {
 }
 
 // handleRevoke handles REVOKE statement.
-func (s *Session) handleRevoke(stmt *RevokeStmt) (*Result, error) {
+func (s *Session) handleRevoke(stmt *ast.RevokeStmt) (*Result, error) {
 	if s.userCat == nil {
 		return nil, fmt.Errorf("user management not enabled (no user catalog)")
 	}
@@ -929,7 +930,7 @@ func (s *Session) handleRevoke(stmt *RevokeStmt) (*Result, error) {
 }
 
 // handleCreateDatabase handles CREATE DATABASE statement.
-func (s *Session) handleCreateDatabase(stmt *CreateDatabaseStmt) (*Result, error) {
+func (s *Session) handleCreateDatabase(stmt *ast.CreateDatabaseStmt) (*Result, error) {
 	if s.dbMgr == nil {
 		return nil, fmt.Errorf("multi-database support not enabled")
 	}
@@ -964,7 +965,7 @@ func (s *Session) handleCreateDatabase(stmt *CreateDatabaseStmt) (*Result, error
 }
 
 // handleDropDatabase handles DROP DATABASE statement.
-func (s *Session) handleDropDatabase(stmt *DropDatabaseStmt) (*Result, error) {
+func (s *Session) handleDropDatabase(stmt *ast.DropDatabaseStmt) (*Result, error) {
 	if s.dbMgr == nil {
 		return nil, fmt.Errorf("multi-database support not enabled")
 	}
@@ -993,7 +994,7 @@ func (s *Session) handleDropDatabase(stmt *DropDatabaseStmt) (*Result, error) {
 }
 
 // handleUseDatabase handles USE database statement.
-func (s *Session) handleUseDatabase(stmt *UseDatabaseStmt) (*Result, error) {
+func (s *Session) handleUseDatabase(stmt *ast.UseDatabaseStmt) (*Result, error) {
 	if s.dbMgr == nil {
 		// Even without dbMgr, allow switching if we just track the name
 		s.currentDatabase = stmt.Name
@@ -1009,7 +1010,7 @@ func (s *Session) handleUseDatabase(stmt *UseDatabaseStmt) (*Result, error) {
 }
 
 // handleCreateTrigger handles CREATE TRIGGER statement.
-func (s *Session) handleCreateTrigger(stmt *CreateTriggerStmt) (*Result, error) {
+func (s *Session) handleCreateTrigger(stmt *ast.CreateTriggerStmt) (*Result, error) {
 	if s.triggerCat == nil {
 		return nil, fmt.Errorf("trigger support not enabled")
 	}
@@ -1046,7 +1047,7 @@ func (s *Session) handleCreateTrigger(stmt *CreateTriggerStmt) (*Result, error) 
 }
 
 // handleDropTrigger handles DROP TRIGGER statement.
-func (s *Session) handleDropTrigger(stmt *DropTriggerStmt) (*Result, error) {
+func (s *Session) handleDropTrigger(stmt *ast.DropTriggerStmt) (*Result, error) {
 	if s.triggerCat == nil {
 		return nil, fmt.Errorf("trigger support not enabled")
 	}
@@ -1067,7 +1068,7 @@ func (s *Session) handleDropTrigger(stmt *DropTriggerStmt) (*Result, error) {
 }
 
 // handleCreateProcedure handles CREATE PROCEDURE statement.
-func (s *Session) handleCreateProcedure(stmt *CreateProcedureStmt) (*Result, error) {
+func (s *Session) handleCreateProcedure(stmt *ast.CreateProcedureStmt) (*Result, error) {
 	if s.procCat == nil {
 		return nil, fmt.Errorf("stored procedure support not enabled")
 	}
@@ -1106,7 +1107,7 @@ func (s *Session) handleCreateProcedure(stmt *CreateProcedureStmt) (*Result, err
 }
 
 // handleDropProcedure handles DROP PROCEDURE statement.
-func (s *Session) handleDropProcedure(stmt *DropProcedureStmt) (*Result, error) {
+func (s *Session) handleDropProcedure(stmt *ast.DropProcedureStmt) (*Result, error) {
 	if s.procCat == nil {
 		return nil, fmt.Errorf("stored procedure support not enabled")
 	}
@@ -1119,7 +1120,7 @@ func (s *Session) handleDropProcedure(stmt *DropProcedureStmt) (*Result, error) 
 }
 
 // handleCreateFunction handles CREATE FUNCTION statement.
-func (s *Session) handleCreateFunction(stmt *CreateFunctionStmt) (*Result, error) {
+func (s *Session) handleCreateFunction(stmt *ast.CreateFunctionStmt) (*Result, error) {
 	if s.procCat == nil {
 		return nil, fmt.Errorf("stored function support not enabled")
 	}
@@ -1159,7 +1160,7 @@ func (s *Session) handleCreateFunction(stmt *CreateFunctionStmt) (*Result, error
 }
 
 // handleDropFunction handles DROP FUNCTION statement.
-func (s *Session) handleDropFunction(stmt *DropFunctionStmt) (*Result, error) {
+func (s *Session) handleDropFunction(stmt *ast.DropFunctionStmt) (*Result, error) {
 	if s.procCat == nil {
 		return nil, fmt.Errorf("stored function support not enabled")
 	}
@@ -1172,7 +1173,7 @@ func (s *Session) handleDropFunction(stmt *DropFunctionStmt) (*Result, error) {
 }
 
 // handleCall handles CALL procedure_name(args...) statement.
-func (s *Session) handleCall(stmt *CallStmt) (*Result, error) {
+func (s *Session) handleCall(stmt *ast.CallStmt) (*Result, error) {
 	if s.procCat == nil {
 		return nil, fmt.Errorf("stored procedure support not enabled")
 	}
@@ -1230,7 +1231,7 @@ func (s *Session) handleCall(stmt *CallStmt) (*Result, error) {
 }
 
 // handleShowProcedures handles SHOW PROCEDURES statement.
-func (s *Session) handleShowProcedures(_ *ShowProceduresStmt) (*Result, error) {
+func (s *Session) handleShowProcedures(_ *ast.ShowProceduresStmt) (*Result, error) {
 	if s.procCat == nil {
 		return &Result{
 			Columns: []string{"procedure_name", "language", "params"},
@@ -1259,7 +1260,7 @@ func (s *Session) handleShowProcedures(_ *ShowProceduresStmt) (*Result, error) {
 }
 
 // handleShowFunctions handles SHOW FUNCTIONS statement.
-func (s *Session) handleShowFunctions(_ *ShowFunctionsStmt) (*Result, error) {
+func (s *Session) handleShowFunctions(_ *ast.ShowFunctionsStmt) (*Result, error) {
 	if s.procCat == nil {
 		return &Result{
 			Columns: []string{"function_name", "return_type", "language", "params"},
@@ -1289,7 +1290,7 @@ func (s *Session) handleShowFunctions(_ *ShowFunctionsStmt) (*Result, error) {
 }
 
 // handleShow handles SHOW statement (DATABASES, TABLES, etc.)
-func (s *Session) handleShow(stmt *ShowStmt) (*Result, error) {
+func (s *Session) handleShow(stmt *ast.ShowStmt) (*Result, error) {
 	switch strings.ToUpper(stmt.ShowType) {
 	case "DATABASES":
 		// Return actual database list from DatabaseManager

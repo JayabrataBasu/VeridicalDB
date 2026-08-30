@@ -23,7 +23,7 @@ mkdir -p "$TEST_DIR/data"
 cat > "$TEST_DIR/config.yaml" << EOF
 storage:
   data_dir: $TEST_DIR/data
-log:
+logging:
   level: error
 EOF
 

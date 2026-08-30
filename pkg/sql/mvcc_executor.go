@@ -12,13 +12,15 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/fts"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/stats"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/storage"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
 // convertPartitionSpec converts an AST PartitionSpec to a catalog PartitionSpec.
-func convertPartitionSpec(astSpec *PartitionSpec) *catalog.PartitionSpec {
+func convertPartitionSpec(astSpec *ast.PartitionSpec) *catalog.PartitionSpec {
 	if astSpec == nil {
 		return nil
 	}
@@ -26,11 +28,11 @@ func convertPartitionSpec(astSpec *PartitionSpec) *catalog.PartitionSpec {
 	// Convert partition type
 	var partType catalog.PartitionType
 	switch astSpec.Type {
-	case PartitionRange:
+	case ast.PartitionRange:
 		partType = catalog.PartitionTypeRange
-	case PartitionList:
+	case ast.PartitionList:
 		partType = catalog.PartitionTypeList
-	case PartitionHash:
+	case ast.PartitionHash:
 		partType = catalog.PartitionTypeHash
 	}
 
@@ -52,7 +54,7 @@ func convertPartitionSpec(astSpec *PartitionSpec) *catalog.PartitionSpec {
 }
 
 // convertPartitionBound converts AST partition bound to catalog PartitionBound.
-func convertPartitionBound(partType catalog.PartitionType, bound *PartitionBoundDef) catalog.PartitionBound {
+func convertPartitionBound(partType catalog.PartitionType, bound *ast.PartitionBoundDef) catalog.PartitionBound {
 	result := catalog.PartitionBound{
 		IsMaxValue: bound.IsMaxValue,
 	}
@@ -72,7 +74,7 @@ func convertPartitionBound(partType catalog.PartitionType, bound *PartitionBound
 }
 
 // convertBoundValues converts AST partition bound to catalog values.
-func convertBoundValues(bound *PartitionBoundDef) []catalog.Value {
+func convertBoundValues(bound *ast.PartitionBoundDef) []catalog.Value {
 	if bound == nil || len(bound.Values) == 0 {
 		return nil
 	}
@@ -85,12 +87,12 @@ func convertBoundValues(bound *PartitionBoundDef) []catalog.Value {
 }
 
 // exprToCatalogValue converts an AST expression to a catalog Value.
-func exprToCatalogValue(expr Expression) catalog.Value {
+func exprToCatalogValue(expr ast.Expression) catalog.Value {
 	switch e := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		// LiteralExpr already contains a catalog.Value
 		return e.Value
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Special case for MAXVALUE identifier
 		if strings.ToUpper(e.Name) == "MAXVALUE" {
 			return catalog.Value{IsNull: true} // MAXVALUE represented as null
@@ -196,46 +198,46 @@ func (e *MVCCExecutor) getStorageBufferStats() *storage.BufferPoolStats {
 
 // Execute executes a SQL statement within a transaction context.
 // For BEGIN/COMMIT/ROLLBACK, tx can be nil and session handles them.
-func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) Execute(stmt ast.Statement, tx *txn.Transaction) (*Result, error) {
 	switch s := stmt.(type) {
-	case *CreateTableStmt:
+	case *ast.CreateTableStmt:
 		return e.executeCreate(s)
-	case *CreateViewStmt:
+	case *ast.CreateViewStmt:
 		if tx != nil {
 			return e.executeCreateViewMVCC(s, tx)
 		}
 		return e.executeCreateView(s)
-	case *DropTableStmt:
+	case *ast.DropTableStmt:
 		return e.executeDrop(s)
-	case *DropViewStmt:
+	case *ast.DropViewStmt:
 		return e.executeDropView(s)
-	case *InsertStmt:
+	case *ast.InsertStmt:
 		return e.executeInsert(s, tx)
-	case *SelectStmt:
+	case *ast.SelectStmt:
 		return e.executeSelect(s, tx)
-	case *UnionStmt:
+	case *ast.UnionStmt:
 		return e.executeUnion(s, tx)
-	case *UpdateStmt:
+	case *ast.UpdateStmt:
 		return e.executeUpdate(s, tx)
-	case *DeleteStmt:
+	case *ast.DeleteStmt:
 		return e.executeDelete(s, tx)
-	case *AlterTableStmt:
+	case *ast.AlterTableStmt:
 		return e.executeAlter(s)
-	case *TruncateTableStmt:
+	case *ast.TruncateTableStmt:
 		return e.executeTruncate(s)
-	case *ShowStmt:
+	case *ast.ShowStmt:
 		return e.executeShow(s)
-	case *ExplainStmt:
+	case *ast.ExplainStmt:
 		return e.executeExplain(s, tx)
-	case *MergeStmt:
+	case *ast.MergeStmt:
 		return e.executeMerge(s, tx)
-	case *CreateFTSIndexStmt:
+	case *ast.CreateFTSIndexStmt:
 		return e.executeCreateFTSIndex(s)
-	case *DropFTSIndexStmt:
+	case *ast.DropFTSIndexStmt:
 		return e.executeDropFTSIndex(s)
-	case *AnalyzeStmt:
+	case *ast.AnalyzeStmt:
 		return e.executeAnalyze(s, tx)
-	case *BeginStmt, *CommitStmt, *RollbackStmt:
+	case *ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt:
 		// These are handled by the session, not the executor
 		return nil, fmt.Errorf("transaction statements should be handled by session")
 	default:
@@ -243,7 +245,7 @@ func (e *MVCCExecutor) Execute(stmt Statement, tx *txn.Transaction) (*Result, er
 	}
 }
 
-func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
+func (e *MVCCExecutor) executeCreate(stmt *ast.CreateTableStmt) (*Result, error) {
 	cols := make([]catalog.Column, len(stmt.Columns))
 	for i, def := range stmt.Columns {
 		col := catalog.Column{
@@ -350,7 +352,7 @@ func (e *MVCCExecutor) executeCreate(stmt *CreateTableStmt) (*Result, error) {
 	}, nil
 }
 
-func (e *MVCCExecutor) executeDrop(stmt *DropTableStmt) (*Result, error) {
+func (e *MVCCExecutor) executeDrop(stmt *ast.DropTableStmt) (*Result, error) {
 	if err := e.mtm.DropTable(stmt.TableName); err != nil {
 		return nil, err
 	}
@@ -359,7 +361,7 @@ func (e *MVCCExecutor) executeDrop(stmt *DropTableStmt) (*Result, error) {
 	}, nil
 }
 
-func (e *MVCCExecutor) executeCreateFTSIndex(stmt *CreateFTSIndexStmt) (*Result, error) {
+func (e *MVCCExecutor) executeCreateFTSIndex(stmt *ast.CreateFTSIndexStmt) (*Result, error) {
 	if e.ftsMgr == nil {
 		return nil, fmt.Errorf("full-text search not enabled")
 	}
@@ -410,7 +412,7 @@ func (e *MVCCExecutor) executeCreateFTSIndex(stmt *CreateFTSIndexStmt) (*Result,
 	return &Result{Message: fmt.Sprintf("Full-text index %s created on %s (%d rows indexed)", stmt.IndexName, stmt.TableName, count)}, nil
 }
 
-func (e *MVCCExecutor) executeDropFTSIndex(stmt *DropFTSIndexStmt) (*Result, error) {
+func (e *MVCCExecutor) executeDropFTSIndex(stmt *ast.DropFTSIndexStmt) (*Result, error) {
 	if e.ftsMgr == nil {
 		return nil, fmt.Errorf("full-text search not enabled")
 	}
@@ -426,7 +428,7 @@ func (e *MVCCExecutor) executeDropFTSIndex(stmt *DropFTSIndexStmt) (*Result, err
 	return &Result{Message: fmt.Sprintf("Full-text index %s dropped", stmt.IndexName)}, nil
 }
 
-func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeInsert(stmt *ast.InsertStmt, tx *txn.Transaction) (*Result, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("INSERT requires an active transaction")
 	}
@@ -610,7 +612,7 @@ func (e *MVCCExecutor) executeInsert(stmt *InsertStmt, tx *txn.Transaction) (*Re
 	}
 }
 
-func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelect(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("SELECT requires an active transaction")
 	}
@@ -648,7 +650,7 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	hasWindowFunctions := false
 	for _, col := range stmt.Columns {
 		if col.Expression != nil {
-			if _, ok := col.Expression.(*WindowFuncExpr); ok {
+			if _, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 				hasWindowFunctions = true
 				break
 			}
@@ -687,7 +689,7 @@ func (e *MVCCExecutor) executeSelect(stmt *SelectStmt, tx *txn.Transaction) (*Re
 	return e.executeSelectTableScan(stmt, tx)
 }
 
-func (e *MVCCExecutor) executeSelectTableScan(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectTableScan(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	// Fall back to full table scan
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
@@ -698,7 +700,7 @@ func (e *MVCCExecutor) executeSelectTableScan(stmt *SelectStmt, tx *txn.Transact
 	// Determine output columns
 	var outCols []string
 	var colIndices []int
-	var colExpressions []Expression // For expressions like CASE
+	var colExpressions []ast.Expression // For expressions like CASE
 
 	if len(stmt.Columns) == 1 && stmt.Columns[0].Star {
 		// SELECT *
@@ -900,7 +902,7 @@ func (e *MVCCExecutor) executeSelectTableScan(stmt *SelectStmt, tx *txn.Transact
 	}, nil
 }
 
-func (e *MVCCExecutor) executeSelectWithPlan(stmt *SelectStmt, tx *txn.Transaction, plan *ExecutionPlan) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithPlan(stmt *ast.SelectStmt, tx *txn.Transaction, plan *ExecutionPlan) (*Result, error) {
 	if plan == nil {
 		return e.executeSelectTableScan(stmt, tx)
 	}
@@ -922,7 +924,7 @@ func (e *MVCCExecutor) executeSelectWithPlan(stmt *SelectStmt, tx *txn.Transacti
 	}
 }
 
-func (e *MVCCExecutor) planSelectExecution(stmt *SelectStmt) *ExecutionPlan {
+func (e *MVCCExecutor) planSelectExecution(stmt *ast.SelectStmt) *ExecutionPlan {
 	if stmt == nil || !canUseIndexExecutionFastPathMVCC(stmt) || e.mtm == nil {
 		return nil
 	}
@@ -950,23 +952,23 @@ func (e *MVCCExecutor) planSelectExecution(stmt *SelectStmt) *ExecutionPlan {
 	return planner.Plan(stmt, meta)
 }
 
-func isUniqueEqualityFilterMVCC(where Expression, schema *catalog.Schema) bool {
+func isUniqueEqualityFilterMVCC(where ast.Expression, schema *catalog.Schema) bool {
 	if where == nil || schema == nil {
 		return false
 	}
 
-	binExpr, ok := where.(*BinaryExpr)
-	if !ok || binExpr.Op != TOKEN_EQ {
+	binExpr, ok := where.(*ast.BinaryExpr)
+	if !ok || binExpr.Op != token.TOKEN_EQ {
 		return false
 	}
 
 	var colName string
-	if col, ok := binExpr.Left.(*ColumnRef); ok {
-		if _, ok := binExpr.Right.(*LiteralExpr); ok {
+	if col, ok := binExpr.Left.(*ast.ColumnRef); ok {
+		if _, ok := binExpr.Right.(*ast.LiteralExpr); ok {
 			colName = col.Name
 		}
-	} else if col, ok := binExpr.Right.(*ColumnRef); ok {
-		if _, ok := binExpr.Left.(*LiteralExpr); ok {
+	} else if col, ok := binExpr.Right.(*ast.ColumnRef); ok {
+		if _, ok := binExpr.Left.(*ast.LiteralExpr); ok {
 			colName = col.Name
 		}
 	}
@@ -984,7 +986,7 @@ func isUniqueEqualityFilterMVCC(where Expression, schema *catalog.Schema) bool {
 }
 
 // executeSelectWithAggregatesMVCC handles simple aggregate queries (no GROUP BY or global aggregates)
-func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("SELECT with aggregates requires an active transaction")
 	}
@@ -1190,7 +1192,7 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 	// Validate that non-aggregate columns appear in GROUP BY
 	type columnInfo struct {
 		isAggregate bool
-		aggregate   *AggregateFunc
+		aggregate   *ast.AggregateFunc
 		colName     string
 		colIdx      int // schema column index for regular columns
 	}
@@ -1426,7 +1428,7 @@ func (e *MVCCExecutor) executeSelectWithAggregatesMVCC(stmt *SelectStmt, tx *txn
 	return &Result{Columns: outputCols, Rows: resultRows}, nil
 }
 
-func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeUpdate(stmt *ast.UpdateStmt, tx *txn.Transaction) (*Result, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("UPDATE requires an active transaction")
 	}
@@ -1564,7 +1566,7 @@ func (e *MVCCExecutor) executeUpdate(stmt *UpdateStmt, tx *txn.Transaction) (*Re
 	}, nil
 }
 
-func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeDelete(stmt *ast.DeleteStmt, tx *txn.Transaction) (*Result, error) {
 	if tx == nil {
 		return nil, fmt.Errorf("DELETE requires an active transaction")
 	}
@@ -1652,7 +1654,7 @@ func (e *MVCCExecutor) executeDelete(stmt *DeleteStmt, tx *txn.Transaction) (*Re
 	}, nil
 }
 
-func (e *MVCCExecutor) collectIndexedMutationCandidates(tableName string, where Expression, schema *catalog.Schema, tx *txn.Transaction) ([]*catalog.MVCCRow, bool, error) {
+func (e *MVCCExecutor) collectIndexedMutationCandidates(tableName string, where ast.Expression, schema *catalog.Schema, tx *txn.Transaction) ([]*catalog.MVCCRow, bool, error) {
 	if tx == nil || where == nil {
 		return nil, false, nil
 	}
@@ -1693,12 +1695,12 @@ func (e *MVCCExecutor) collectIndexedMutationCandidates(tableName string, where 
 
 // evalExpr evaluates an expression to a value.
 // tx may be nil for contexts without an active transaction; subqueries require a non-nil tx.
-func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalExpr(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		if row == nil {
 			return catalog.Value{}, fmt.Errorf("cannot reference column %s without row context", ex.Name)
 		}
@@ -1708,10 +1710,10 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		// Handle arithmetic operations
 		switch ex.Op {
-		case TOKEN_PLUS, TOKEN_MINUS, TOKEN_STAR, TOKEN_SLASH:
+		case token.TOKEN_PLUS, token.TOKEN_MINUS, token.TOKEN_STAR, token.TOKEN_SLASH:
 			left, err := e.evalExpr(ex.Left, schema, row, tx)
 			if err != nil {
 				return catalog.Value{}, err
@@ -1724,7 +1726,7 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		}
 		return catalog.Value{}, fmt.Errorf("unsupported binary operator in expression: %v", ex.Op)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		// Evaluate function arguments
 		args := make([]catalog.Value, len(ex.Args))
 		for i, arg := range ex.Args {
@@ -1736,13 +1738,13 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		}
 		return evalFunction(ex.Name, args)
 
-	case *CaseExpr:
+	case *ast.CaseExpr:
 		return e.evalCaseExpr(ex, schema, row, tx)
 
-	case *CastExpr:
+	case *ast.CastExpr:
 		return e.evalCastExpr(ex, schema, row, tx)
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		// IS NULL in value context returns boolean
 		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
@@ -1754,38 +1756,38 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 		}
 		return catalog.NewBool(result), nil
 
-	case *JSONAccessExpr:
+	case *ast.JSONAccessExpr:
 		return e.evalJSONAccess(ex, schema, row, tx)
 
-	case *JSONPathExpr:
+	case *ast.JSONPathExpr:
 		return e.evalJSONPath(ex, schema, row, tx)
 
-	case *JSONContainsExpr:
+	case *ast.JSONContainsExpr:
 		return e.evalJSONContains(ex, schema, row, tx)
 
-	case *JSONExistsExpr:
+	case *ast.JSONExistsExpr:
 		return e.evalJSONExists(ex, schema, row, tx)
 
 	// Full-Text Search expressions
-	case *TSVectorExpr:
+	case *ast.TSVectorExpr:
 		return e.evalTSVector(ex, schema, row, tx)
 
-	case *TSQueryExpr:
+	case *ast.TSQueryExpr:
 		return e.evalTSQuery(ex, schema, row, tx)
 
-	case *TSMatchExpr:
+	case *ast.TSMatchExpr:
 		return e.evalTSMatch(ex, schema, row, tx)
 
-	case *TSRankExpr:
+	case *ast.TSRankExpr:
 		return e.evalTSRank(ex, schema, row, tx)
 
-	case *TSHeadlineExpr:
+	case *ast.TSHeadlineExpr:
 		return e.evalTSHeadline(ex, schema, row, tx)
 
-	case *MatchAgainstExpr:
+	case *ast.MatchAgainstExpr:
 		return e.evalMatchAgainst(ex, schema, row, tx)
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		// Scalar subquery: execute and return the single-column single-row value
 		if tx == nil {
 			return catalog.Value{}, fmt.Errorf("subquery requires an active transaction")
@@ -1819,11 +1821,11 @@ func (e *MVCCExecutor) evalExpr(expr Expression, schema *catalog.Schema, row []c
 }
 
 // evalCondition evaluates a boolean expression.
-func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (bool, error) {
+func (e *MVCCExecutor) evalCondition(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalCondition(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
@@ -1833,7 +1835,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			}
 			return e.evalCondition(ex.Right, schema, row, tx)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalCondition(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
@@ -1843,7 +1845,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			}
 			return e.evalCondition(ex.Right, schema, row, tx)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			leftVal, err := e.evalExpr(ex.Left, schema, row, tx)
 			if err != nil {
 				return false, err
@@ -1858,8 +1860,8 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			return false, fmt.Errorf("unsupported operator in condition: %v", ex.Op)
 		}
 
-	case *UnaryExpr:
-		if ex.Op == TOKEN_NOT {
+	case *ast.UnaryExpr:
+		if ex.Op == token.TOKEN_NOT {
 			result, err := e.evalCondition(ex.Expr, schema, row, tx)
 			if err != nil {
 				return false, err
@@ -1868,7 +1870,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return false, fmt.Errorf("unsupported unary operator: %v", ex.Op)
 
-	case *InExpr:
+	case *ast.InExpr:
 		// Evaluate IN expression
 		leftVal, err := e.evalExpr(ex.Left, schema, row, tx)
 		if err != nil {
@@ -1901,7 +1903,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 				if len(r) == 0 {
 					continue
 				}
-				eq, err := compareValuesMVCC(leftVal, r[0], TOKEN_EQ)
+				eq, err := compareValuesMVCC(leftVal, r[0], token.TOKEN_EQ)
 				if err != nil {
 					return false, err
 				}
@@ -1925,7 +1927,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 			if rightVal.IsNull {
 				continue // Skip NULL values in the list
 			}
-			eq, err := compareValuesMVCC(leftVal, rightVal, TOKEN_EQ)
+			eq, err := compareValuesMVCC(leftVal, rightVal, token.TOKEN_EQ)
 			if err != nil {
 				return false, err
 			}
@@ -1940,7 +1942,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return found, nil
 
-	case *BetweenExpr:
+	case *ast.BetweenExpr:
 		// Evaluate BETWEEN expression
 		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
@@ -1960,11 +1962,11 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 
 		// val >= low AND val <= high
-		geLow, err := compareValuesMVCC(val, lowVal, TOKEN_GE)
+		geLow, err := compareValuesMVCC(val, lowVal, token.TOKEN_GE)
 		if err != nil {
 			return false, err
 		}
-		leHigh, err := compareValuesMVCC(val, highVal, TOKEN_LE)
+		leHigh, err := compareValuesMVCC(val, highVal, token.TOKEN_LE)
 		if err != nil {
 			return false, err
 		}
@@ -1975,7 +1977,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return result, nil
 
-	case *LikeExpr:
+	case *ast.LikeExpr:
 		// Evaluate LIKE expression
 		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
@@ -2004,7 +2006,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return result, nil
 
-	case *IsNullExpr:
+	case *ast.IsNullExpr:
 		// Evaluate IS NULL / IS NOT NULL
 		val, err := e.evalExpr(ex.Expr, schema, row, tx)
 		if err != nil {
@@ -2016,7 +2018,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return result, nil // IS NULL
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		// Evaluate scalar subquery used as a boolean expression
 		v, err := e.evalExpr(ex, schema, row, tx)
 		if err != nil {
@@ -2030,7 +2032,7 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return v.Bool, nil
 
-	case *ExistsExpr:
+	case *ast.ExistsExpr:
 		if tx == nil {
 			return false, fmt.Errorf("EXISTS subquery requires an active transaction")
 		}
@@ -2051,13 +2053,13 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 		}
 		return exists, nil
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
 		}
 		return false, fmt.Errorf("expected boolean expression")
 
-	case *TSMatchExpr:
+	case *ast.TSMatchExpr:
 		// Evaluate Full-Text Search match expression
 		result, err := e.evalTSMatch(ex, schema, row, tx)
 		if err != nil {
@@ -2074,11 +2076,11 @@ func (e *MVCCExecutor) evalCondition(expr Expression, schema *catalog.Schema, ro
 }
 
 // evalHavingConditionMVCC evaluates a HAVING condition against group aggregates for MVCC executor.
-func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState, columns []SelectColumn, schema *catalog.Schema) (bool, error) {
+func (e *MVCCExecutor) evalHavingConditionMVCC(expr ast.Expression, grp *groupState, columns []ast.SelectColumn, schema *catalog.Schema) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalHavingConditionMVCC(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -2088,7 +2090,7 @@ func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState,
 			}
 			return e.evalHavingConditionMVCC(ex.Right, grp, columns, schema)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalHavingConditionMVCC(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -2098,7 +2100,7 @@ func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState,
 			}
 			return e.evalHavingConditionMVCC(ex.Right, grp, columns, schema)
 
-		case TOKEN_EQ, TOKEN_NE, TOKEN_LT, TOKEN_LE, TOKEN_GT, TOKEN_GE:
+		case token.TOKEN_EQ, token.TOKEN_NE, token.TOKEN_LT, token.TOKEN_LE, token.TOKEN_GT, token.TOKEN_GE:
 			left, err := e.evalHavingExprMVCC(ex.Left, grp, columns, schema)
 			if err != nil {
 				return false, err
@@ -2110,7 +2112,7 @@ func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState,
 			return compareValuesMVCC(left, right, ex.Op)
 		}
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		if ex.Value.Type == catalog.TypeBool {
 			return ex.Value.Bool, nil
 		}
@@ -2120,12 +2122,12 @@ func (e *MVCCExecutor) evalHavingConditionMVCC(expr Expression, grp *groupState,
 }
 
 // evalHavingExprMVCC evaluates an expression in HAVING context (can reference aggregates).
-func (e *MVCCExecutor) evalHavingExprMVCC(expr Expression, grp *groupState, columns []SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
+func (e *MVCCExecutor) evalHavingExprMVCC(expr ast.Expression, grp *groupState, columns []ast.SelectColumn, _ *catalog.Schema) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Look in SELECT columns for non-aggregate columns
 		for i, col := range columns {
 			if col.Name == ex.Name && col.Aggregate == nil {
@@ -2136,13 +2138,13 @@ func (e *MVCCExecutor) evalHavingExprMVCC(expr Expression, grp *groupState, colu
 		}
 		return catalog.Value{}, fmt.Errorf("column %s not found in GROUP BY", ex.Name)
 
-	case *FunctionExpr:
+	case *ast.FunctionExpr:
 		funcName := strings.ToUpper(ex.Name)
 
 		// Try to extract simple first argument name (ColumnRef)
 		var argName string
 		if len(ex.Args) > 0 {
-			if cref, ok := ex.Args[0].(*ColumnRef); ok {
+			if cref, ok := ex.Args[0].(*ast.ColumnRef); ok {
 				argName = cref.Name
 			}
 		}
@@ -2196,7 +2198,7 @@ func (e *MVCCExecutor) evalHavingExprMVCC(expr Expression, grp *groupState, colu
 // compareValues compares two values with the given operator.
 // Note: This function is shared with executor.go, using the same name
 // compareValuesMVCC is local to avoid redeclaration
-func compareValuesMVCC(left, right catalog.Value, op TokenType) (bool, error) {
+func compareValuesMVCC(left, right catalog.Value, op token.TokenType) (bool, error) {
 	// Handle NULL comparisons
 	if left.IsNull || right.IsNull {
 		return false, nil // NULL comparisons are always false
@@ -2206,17 +2208,17 @@ func compareValuesMVCC(left, right catalog.Value, op TokenType) (bool, error) {
 	if lnum, lok := toNumeric(left); lok {
 		if rnum, rok := toNumeric(right); rok {
 			switch op {
-			case TOKEN_EQ:
+			case token.TOKEN_EQ:
 				return lnum == rnum, nil
-			case TOKEN_NE:
+			case token.TOKEN_NE:
 				return lnum != rnum, nil
-			case TOKEN_LT:
+			case token.TOKEN_LT:
 				return lnum < rnum, nil
-			case TOKEN_LE:
+			case token.TOKEN_LE:
 				return lnum <= rnum, nil
-			case TOKEN_GT:
+			case token.TOKEN_GT:
 				return lnum > rnum, nil
-			case TOKEN_GE:
+			case token.TOKEN_GE:
 				return lnum >= rnum, nil
 			}
 		}
@@ -2267,17 +2269,17 @@ func compareValuesMVCC(left, right catalog.Value, op TokenType) (bool, error) {
 	}
 
 	switch op {
-	case TOKEN_EQ:
+	case token.TOKEN_EQ:
 		return cmp == 0, nil
-	case TOKEN_NE:
+	case token.TOKEN_NE:
 		return cmp != 0, nil
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		return cmp < 0, nil
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		return cmp <= 0, nil
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		return cmp > 0, nil
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		return cmp >= 0, nil
 	default:
 		return false, fmt.Errorf("unsupported comparison operator: %v", op)
@@ -2464,19 +2466,19 @@ func decodeRID(tableName string, data []byte) (storage.RID, error) {
 type IndexScanInfo struct {
 	IndexName string
 	Key       []byte
-	Op        TokenType // The comparison operator (=, <, >, <=, >=)
+	Op        token.TokenType // The comparison operator (=, <, >, <=, >=)
 	Column    string
 }
 
 // findUsableIndex checks if an index can be used for a WHERE clause.
 // Returns nil if no suitable index is found.
-func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schema *catalog.Schema) *IndexScanInfo {
+func (e *MVCCExecutor) findUsableIndex(tableName string, where ast.Expression, schema *catalog.Schema) *IndexScanInfo {
 	if e.indexMgr == nil || where == nil {
 		return nil
 	}
 
 	// Handle AND expressions recursively
-	if binExpr, ok := where.(*BinaryExpr); ok && binExpr.Op == TOKEN_AND {
+	if binExpr, ok := where.(*ast.BinaryExpr); ok && binExpr.Op == token.TOKEN_AND {
 		if info := e.findUsableIndex(tableName, binExpr.Left, schema); info != nil {
 			return info
 		}
@@ -2485,23 +2487,23 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schem
 
 	// Look for simple equality or range conditions: column <op> literal
 	switch ex := where.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		// Check for equality and range operators
-		if ex.Op == TOKEN_EQ || ex.Op == TOKEN_LT || ex.Op == TOKEN_GT ||
-			ex.Op == TOKEN_LE || ex.Op == TOKEN_GE {
+		if ex.Op == token.TOKEN_EQ || ex.Op == token.TOKEN_LT || ex.Op == token.TOKEN_GT ||
+			ex.Op == token.TOKEN_LE || ex.Op == token.TOKEN_GE {
 			// Check if left is column and right is literal (or vice versa)
 			var colName string
-			var literal *LiteralExpr
+			var literal *ast.LiteralExpr
 			op := ex.Op
 
-			if col, ok := ex.Left.(*ColumnRef); ok {
-				if lit, ok := ex.Right.(*LiteralExpr); ok {
+			if col, ok := ex.Left.(*ast.ColumnRef); ok {
+				if lit, ok := ex.Right.(*ast.LiteralExpr); ok {
 					colName = col.Name
 					literal = lit
 					// op stays the same: column < 10 means op is <
 				}
-			} else if col, ok := ex.Right.(*ColumnRef); ok {
-				if lit, ok := ex.Left.(*LiteralExpr); ok {
+			} else if col, ok := ex.Right.(*ast.ColumnRef); ok {
+				if lit, ok := ex.Left.(*ast.LiteralExpr); ok {
 					colName = col.Name
 					literal = lit
 					// Flip the operator: 10 < column means column > 10
@@ -2534,16 +2536,16 @@ func (e *MVCCExecutor) findUsableIndex(tableName string, where Expression, schem
 }
 
 // flipComparisonOperator flips a comparison operator (for when literal is on left side).
-func flipComparisonOperator(op TokenType) TokenType {
+func flipComparisonOperator(op token.TokenType) token.TokenType {
 	switch op {
-	case TOKEN_LT:
-		return TOKEN_GT
-	case TOKEN_GT:
-		return TOKEN_LT
-	case TOKEN_LE:
-		return TOKEN_GE
-	case TOKEN_GE:
-		return TOKEN_LE
+	case token.TOKEN_LT:
+		return token.TOKEN_GT
+	case token.TOKEN_GT:
+		return token.TOKEN_LT
+	case token.TOKEN_LE:
+		return token.TOKEN_GE
+	case token.TOKEN_GE:
+		return token.TOKEN_LE
 	default:
 		return op
 	}
@@ -2552,7 +2554,7 @@ func flipComparisonOperator(op TokenType) TokenType {
 // executeIndexScan performs an index scan using the given IndexScanInfo.
 func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *txn.Transaction) ([]storage.RID, error) {
 	switch scanInfo.Op {
-	case TOKEN_EQ:
+	case token.TOKEN_EQ:
 		// For equality, use SearchAll to get all matching RIDs (handles non-unique indexes)
 		rids, err := e.indexMgr.SearchAll(scanInfo.IndexName, scanInfo.Key)
 		if err != nil {
@@ -2563,7 +2565,7 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 		}
 		return rids, nil
 
-	case TOKEN_LT:
+	case token.TOKEN_LT:
 		// column < value: scan from minimum to value (exclusive)
 		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, nil, scanInfo.Key)
 		if err != nil {
@@ -2575,7 +2577,7 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 		// Exclude the boundary key (less than, not less than or equal)
 		return e.filterExcludeBoundary(rids, scanInfo.Key, false), nil
 
-	case TOKEN_LE:
+	case token.TOKEN_LE:
 		// column <= value: scan from minimum to value (inclusive)
 		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, nil, scanInfo.Key)
 		if err != nil {
@@ -2587,7 +2589,7 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 		// Include the boundary (SearchRange is inclusive)
 		return rids, nil
 
-	case TOKEN_GT:
+	case token.TOKEN_GT:
 		// column > value: scan from value to maximum (exclusive)
 		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, scanInfo.Key, nil)
 		if err != nil {
@@ -2599,7 +2601,7 @@ func (e *MVCCExecutor) executeIndexScan(_ string, scanInfo *IndexScanInfo, _ *tx
 		// Exclude the boundary key (greater than, not greater than or equal)
 		return e.filterExcludeBoundary(rids, scanInfo.Key, true), nil
 
-	case TOKEN_GE:
+	case token.TOKEN_GE:
 		// column >= value: scan from value to maximum (inclusive)
 		rids, err := e.indexMgr.SearchRange(scanInfo.IndexName, scanInfo.Key, nil)
 		if err != nil {
@@ -2631,7 +2633,7 @@ func (e *MVCCExecutor) filterExcludeBoundary(rids []storage.RID, _ []byte, _ boo
 }
 
 // executeSelectWithJoins handles SELECT with JOIN clauses for MVCC executor.
-func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithJoins(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	if len(stmt.Joins) != 1 {
 		return nil, fmt.Errorf("only single JOIN is currently supported")
 	}
@@ -2939,11 +2941,11 @@ func (e *MVCCExecutor) executeSelectWithJoins(stmt *SelectStmt, tx *txn.Transact
 }
 
 // evalJoinConditionMVCC evaluates a join condition for MVCC executor.
-func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
+func (e *MVCCExecutor) evalJoinConditionMVCC(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (bool, error) {
 	switch ex := expr.(type) {
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		switch ex.Op {
-		case TOKEN_AND:
+		case token.TOKEN_AND:
 			left, err := e.evalJoinConditionMVCC(ex.Left, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2953,7 +2955,7 @@ func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Sc
 			}
 			return e.evalJoinConditionMVCC(ex.Right, schema, row, colMap)
 
-		case TOKEN_OR:
+		case token.TOKEN_OR:
 			left, err := e.evalJoinConditionMVCC(ex.Left, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2975,8 +2977,8 @@ func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Sc
 			}
 			return compareValuesMVCC(leftVal, rightVal, ex.Op)
 		}
-	case *UnaryExpr:
-		if ex.Op == TOKEN_NOT {
+	case *ast.UnaryExpr:
+		if ex.Op == token.TOKEN_NOT {
 			result, err := e.evalJoinConditionMVCC(ex.Expr, schema, row, colMap)
 			if err != nil {
 				return false, err
@@ -2988,23 +2990,23 @@ func (e *MVCCExecutor) evalJoinConditionMVCC(expr Expression, schema *catalog.Sc
 }
 
 // evalJoinExprMVCC evaluates an expression in a join context for MVCC executor.
-func (e *MVCCExecutor) evalJoinExprMVCC(expr Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJoinExprMVCC(expr ast.Expression, _ *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// ColumnRef.Name may be "table.column" or just "column"
 		idx, ok := colMap[ex.Name]
 		if !ok {
 			return catalog.Value{}, fmt.Errorf("unknown column in join: %s", ex.Name)
 		}
 		return row[idx], nil
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 	}
 	return catalog.Value{}, fmt.Errorf("unsupported expression type in join: %T", expr)
 }
 
 // executeSelectWithIndex performs a SELECT using an index scan when possible.
-func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transaction) (*Result, bool, error) {
+func (e *MVCCExecutor) executeSelectWithIndex(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, bool, error) {
 	if !canUseIndexExecutionFastPathMVCC(stmt) {
 		return nil, false, nil
 	}
@@ -3112,7 +3114,7 @@ func (e *MVCCExecutor) executeSelectWithIndex(stmt *SelectStmt, tx *txn.Transact
 	}, true, nil
 }
 
-func canUseIndexExecutionFastPathMVCC(stmt *SelectStmt) bool {
+func canUseIndexExecutionFastPathMVCC(stmt *ast.SelectStmt) bool {
 	if stmt == nil {
 		return false
 	}
@@ -3128,7 +3130,7 @@ func canUseIndexExecutionFastPathMVCC(stmt *SelectStmt) bool {
 }
 
 // executeAlter handles ALTER TABLE statements.
-func (e *MVCCExecutor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
+func (e *MVCCExecutor) executeAlter(stmt *ast.AlterTableStmt) (*Result, error) {
 	meta, err := e.mtm.GetTableMeta(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table %q does not exist", stmt.TableName)
@@ -3153,7 +3155,7 @@ func (e *MVCCExecutor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 		}
 		// Handle default value
 		if stmt.ColumnDef.HasDefault && stmt.ColumnDef.Default != nil {
-			if lit, ok := stmt.ColumnDef.Default.(*LiteralExpr); ok {
+			if lit, ok := stmt.ColumnDef.Default.(*ast.LiteralExpr); ok {
 				val := lit.Value
 				newCol.DefaultValue = &val
 			}
@@ -3243,7 +3245,7 @@ func (e *MVCCExecutor) executeAlter(stmt *AlterTableStmt) (*Result, error) {
 }
 
 // executeTruncate handles TRUNCATE TABLE statements.
-func (e *MVCCExecutor) executeTruncate(stmt *TruncateTableStmt) (*Result, error) {
+func (e *MVCCExecutor) executeTruncate(stmt *ast.TruncateTableStmt) (*Result, error) {
 	// Verify table exists
 	_, err := e.mtm.GetTableMeta(stmt.TableName)
 	if err != nil {
@@ -3263,7 +3265,7 @@ func (e *MVCCExecutor) executeTruncate(stmt *TruncateTableStmt) (*Result, error)
 }
 
 // executeShow handles SHOW statements.
-func (e *MVCCExecutor) executeShow(stmt *ShowStmt) (*Result, error) {
+func (e *MVCCExecutor) executeShow(stmt *ast.ShowStmt) (*Result, error) {
 	switch stmt.ShowType {
 	case "TABLES":
 		// List all tables
@@ -3343,8 +3345,8 @@ func (e *MVCCExecutor) executeShow(stmt *ShowStmt) (*Result, error) {
 }
 
 // executeExplain executes an EXPLAIN statement
-func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*Result, error) {
-	selectStmt, ok := stmt.Statement.(*SelectStmt)
+func (e *MVCCExecutor) executeExplain(stmt *ast.ExplainStmt, tx *txn.Transaction) (*Result, error) {
+	selectStmt, ok := stmt.Statement.(*ast.SelectStmt)
 	if !ok {
 		return nil, fmt.Errorf("EXPLAIN only supports SELECT statements")
 	}
@@ -3413,7 +3415,7 @@ func (e *MVCCExecutor) executeExplain(stmt *ExplainStmt, tx *txn.Transaction) (*
 }
 
 // evalCaseExpr evaluates a CASE WHEN expression.
-func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalCaseExpr(caseExpr *ast.CaseExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Simple CASE: CASE operand WHEN val1 THEN res1 ...
 	// Searched CASE: CASE WHEN cond1 THEN res1 ...
 
@@ -3431,7 +3433,7 @@ func (e *MVCCExecutor) evalCaseExpr(caseExpr *CaseExpr, schema *catalog.Schema, 
 			}
 
 			// Compare operand with WHEN value
-			equal, err := compareValuesMVCC(operandVal, whenVal, TOKEN_EQ)
+			equal, err := compareValuesMVCC(operandVal, whenVal, token.TOKEN_EQ)
 			if err != nil {
 				return catalog.Value{}, err
 			}
@@ -3492,7 +3494,7 @@ func (e *MVCCExecutor) validateCheckConstraints(schema *catalog.Schema, values [
 }
 
 // evalCastExpr evaluates a CAST expression for MVCC executor.
-func (e *MVCCExecutor) evalCastExpr(cast *CastExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalCastExpr(cast *ast.CastExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	val, err := e.evalExpr(cast.Expr, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
@@ -3618,7 +3620,7 @@ func isValidJSON(s string) bool {
 }
 
 // evalJSONAccess evaluates -> and ->> operators
-func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJSONAccess(expr *ast.JSONAccessExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
@@ -3709,7 +3711,7 @@ func (e *MVCCExecutor) evalJSONAccess(expr *JSONAccessExpr, schema *catalog.Sche
 }
 
 // evalJSONPath evaluates #> and #>> operators
-func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJSONPath(expr *ast.JSONPathExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
@@ -3803,7 +3805,7 @@ func (e *MVCCExecutor) evalJSONPath(expr *JSONPathExpr, schema *catalog.Schema, 
 }
 
 // evalJSONContains evaluates @> and <@ operators
-func (e *MVCCExecutor) evalJSONContains(expr *JSONContainsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJSONContains(expr *ast.JSONContainsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	leftVal, err := e.evalExpr(expr.Left, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
@@ -3911,7 +3913,7 @@ func jsonEqual(a, b interface{}) bool {
 }
 
 // evalJSONExists evaluates ?, ?|, ?& operators
-func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalJSONExists(expr *ast.JSONExistsExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	objVal, err := e.evalExpr(expr.Object, schema, row, tx)
 	if err != nil {
 		return catalog.Value{}, err
@@ -3985,12 +3987,12 @@ func (e *MVCCExecutor) evalJSONExists(expr *JSONExistsExpr, schema *catalog.Sche
 }
 
 // executeCreateView creates a new view (MVCC version).
-func (e *MVCCExecutor) executeCreateView(_ *CreateViewStmt) (*Result, error) {
+func (e *MVCCExecutor) executeCreateView(_ *ast.CreateViewStmt) (*Result, error) {
 	return nil, fmt.Errorf("CREATE VIEW should be created via Session/Executor; use CREATE VIEW via Session")
 }
 
 // executeDropView drops a view (MVCC version).
-func (e *MVCCExecutor) executeDropView(stmt *DropViewStmt) (*Result, error) {
+func (e *MVCCExecutor) executeDropView(stmt *ast.DropViewStmt) (*Result, error) {
 	if stmt.IfExists {
 		return &Result{Message: fmt.Sprintf("View '%s' does not exist (IF EXISTS specified).", stmt.ViewName)}, nil
 	}
@@ -4004,7 +4006,7 @@ func (e *MVCCExecutor) executeDropView(stmt *DropViewStmt) (*Result, error) {
 }
 
 // executeCreateViewMVCC stores view definitions for later expansion during SELECT.
-func (e *MVCCExecutor) executeCreateViewMVCC(stmt *CreateViewStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeCreateViewMVCC(stmt *ast.CreateViewStmt, tx *txn.Transaction) (*Result, error) {
 	e.viewsMu.Lock()
 	defer e.viewsMu.Unlock()
 
@@ -4040,7 +4042,7 @@ func (e *MVCCExecutor) executeCreateViewMVCC(stmt *CreateViewStmt, tx *txn.Trans
 }
 
 // executeSelectFromView expands and executes a SELECT from a view definition under a transaction.
-func (e *MVCCExecutor) executeSelectFromView(outerStmt *SelectStmt, viewDef *ViewDef, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectFromView(outerStmt *ast.SelectStmt, viewDef *ViewDef, tx *txn.Transaction) (*Result, error) {
 	// Execute the view's underlying query
 	viewResult, err := e.executeSelect(viewDef.Query, tx)
 	if err != nil {
@@ -4177,7 +4179,7 @@ func (e *MVCCExecutor) executeSelectFromView(outerStmt *SelectStmt, viewDef *Vie
 }
 
 // executeUnion executes a UNION/INTERSECT/EXCEPT operation (MVCC version).
-func (e *MVCCExecutor) executeUnion(stmt *UnionStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeUnion(stmt *ast.UnionStmt, tx *txn.Transaction) (*Result, error) {
 	// Execute left SELECT
 	leftResult, err := e.executeSelect(stmt.Left, tx)
 	if err != nil {
@@ -4291,7 +4293,7 @@ func (e *MVCCExecutor) executeUnion(stmt *UnionStmt, tx *txn.Transaction) (*Resu
 }
 
 // sortRowsMVCC sorts rows for MVCC executor based on ORDER BY clauses.
-func sortRowsMVCC(rows [][]catalog.Value, orderBy []OrderByClause, orderByIndices []int) {
+func sortRowsMVCC(rows [][]catalog.Value, orderBy []ast.OrderByClause, orderByIndices []int) {
 	if len(rows) <= 1 || len(orderBy) == 0 {
 		return
 	}
@@ -4385,7 +4387,7 @@ func compareValuesForSortMVCC(left, right catalog.Value) int {
 }
 
 // executeSelectWithWindowFunctions handles SELECT with window functions using MVCC.
-func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	cat := e.mtm.Catalog()
 	meta, err := cat.GetTable(stmt.TableName)
 	if err != nil {
@@ -4428,7 +4430,7 @@ func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *tx
 		} else if col.Name != "" {
 			outputCols = append(outputCols, col.Name)
 		} else if col.Expression != nil {
-			if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+			if wf, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 				outputCols = append(outputCols, wf.Function)
 			} else {
 				outputCols = append(outputCols, "expr")
@@ -4448,7 +4450,7 @@ func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *tx
 			continue // handled separately
 		}
 
-		if wf, ok := col.Expression.(*WindowFuncExpr); ok {
+		if wf, ok := col.Expression.(*ast.WindowFuncExpr); ok {
 			// This is a window function - compute values for all rows
 			windowValues, err := e.computeWindowFunction(wf, allRows, meta.Schema)
 			if err != nil {
@@ -4554,7 +4556,7 @@ func (e *MVCCExecutor) executeSelectWithWindowFunctions(stmt *SelectStmt, tx *tx
 }
 
 // computeWindowFunction computes window function values for all rows (MVCC version).
-func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
+func (e *MVCCExecutor) computeWindowFunction(wf *ast.WindowFuncExpr, rows [][]catalog.Value, schema *catalog.Schema) ([]catalog.Value, error) {
 	result := make([]catalog.Value, len(rows))
 
 	// Get partition column indices
@@ -4645,7 +4647,7 @@ func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalo
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("SUM requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("SUM argument must be a column reference")
 			}
@@ -4677,7 +4679,7 @@ func (e *MVCCExecutor) computeWindowFunction(wf *WindowFuncExpr, rows [][]catalo
 			if len(wf.Args) != 1 {
 				return nil, fmt.Errorf("AVG requires exactly 1 argument")
 			}
-			colRef, ok := wf.Args[0].(*ColumnRef)
+			colRef, ok := wf.Args[0].(*ast.ColumnRef)
 			if !ok {
 				return nil, fmt.Errorf("AVG argument must be a column reference")
 			}
@@ -4767,7 +4769,7 @@ func mvccValueToString(v catalog.Value) string {
 }
 
 // executeSelectWithLateralJoin handles SELECT with a LATERAL join for MVCC.
-func (e *MVCCExecutor) executeSelectWithLateralJoin(stmt *SelectStmt, tx *txn.Transaction, leftMeta *catalog.TableMeta, join JoinClause) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithLateralJoin(stmt *ast.SelectStmt, tx *txn.Transaction, leftMeta *catalog.TableMeta, join ast.JoinClause) (*Result, error) {
 	var joinedRows [][]catalog.Value
 	var combinedSchema *catalog.Schema
 	var colTableMap map[string]int
@@ -4946,8 +4948,8 @@ func (e *MVCCExecutor) executeSelectWithLateralJoin(stmt *SelectStmt, tx *txn.Tr
 }
 
 // substituteCorrelatedColumnsMVCC replaces column references from the left table with actual values.
-func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *SelectStmt {
-	newQuery := &SelectStmt{
+func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *ast.SelectStmt, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) *ast.SelectStmt {
+	newQuery := &ast.SelectStmt{
 		Distinct:   subquery.Distinct,
 		DistinctOn: append([]string{}, subquery.DistinctOn...),
 		TableName:  subquery.TableName,
@@ -4957,10 +4959,10 @@ func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *SelectStmt, lef
 		Offset:     subquery.Offset,
 	}
 
-	newQuery.Columns = make([]SelectColumn, len(subquery.Columns))
+	newQuery.Columns = make([]ast.SelectColumn, len(subquery.Columns))
 	copy(newQuery.Columns, subquery.Columns)
 
-	newQuery.OrderBy = make([]OrderByClause, len(subquery.OrderBy))
+	newQuery.OrderBy = make([]ast.OrderByClause, len(subquery.OrderBy))
 	copy(newQuery.OrderBy, subquery.OrderBy)
 
 	if subquery.Where != nil {
@@ -4975,9 +4977,9 @@ func (e *MVCCExecutor) substituteCorrelatedColumnsMVCC(subquery *SelectStmt, lef
 }
 
 // substituteExpressionValuesMVCC substitutes column references from the left table with actual values.
-func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) Expression {
+func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr ast.Expression, leftMeta *catalog.TableMeta, leftRow []catalog.Value, leftTableName string, leftTableAlias string) ast.Expression {
 	switch ex := expr.(type) {
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		colName := ex.Name
 		parts := splitQualifiedName(colName)
 		var lookupName string
@@ -4993,30 +4995,30 @@ func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta 
 
 		for i, col := range leftMeta.Schema.Columns {
 			if col.Name == lookupName {
-				return &LiteralExpr{Value: leftRow[i]}
+				return &ast.LiteralExpr{Value: leftRow[i]}
 			}
 		}
 		return ex
 
-	case *BinaryExpr:
-		return &BinaryExpr{
+	case *ast.BinaryExpr:
+		return &ast.BinaryExpr{
 			Left:  e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Op:    ex.Op,
 			Right: e.substituteExpressionValuesMVCC(ex.Right, leftMeta, leftRow, leftTableName, leftTableAlias),
 		}
 
-	case *UnaryExpr:
-		return &UnaryExpr{
+	case *ast.UnaryExpr:
+		return &ast.UnaryExpr{
 			Op:   ex.Op,
 			Expr: e.substituteExpressionValuesMVCC(ex.Expr, leftMeta, leftRow, leftTableName, leftTableAlias),
 		}
 
-	case *InExpr:
-		newValues := make([]Expression, len(ex.Values))
+	case *ast.InExpr:
+		newValues := make([]ast.Expression, len(ex.Values))
 		for i, v := range ex.Values {
 			newValues[i] = e.substituteExpressionValuesMVCC(v, leftMeta, leftRow, leftTableName, leftTableAlias)
 		}
-		return &InExpr{
+		return &ast.InExpr{
 			Left:   e.substituteExpressionValuesMVCC(ex.Left, leftMeta, leftRow, leftTableName, leftTableAlias),
 			Values: newValues,
 			Not:    ex.Not,
@@ -5029,9 +5031,9 @@ func (e *MVCCExecutor) substituteExpressionValuesMVCC(expr Expression, leftMeta 
 
 // substituteExpressionValuesCorrelated substitutes outer values into expressions, but avoids
 // replacing columns that clearly belong to the inner (subquery) table by using innerSchema.
-func (e *MVCCExecutor) substituteExpressionValuesCorrelated(expr Expression, outerSchema *catalog.Schema, outerRow []catalog.Value, innerSchema *catalog.Schema, innerTableName string) Expression {
+func (e *MVCCExecutor) substituteExpressionValuesCorrelated(expr ast.Expression, outerSchema *catalog.Schema, outerRow []catalog.Value, innerSchema *catalog.Schema, innerTableName string) ast.Expression {
 	switch ex := expr.(type) {
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		// Determine column name and optional qualifier
 		name := ex.Name
 		qualifier := ""
@@ -5071,57 +5073,57 @@ func (e *MVCCExecutor) substituteExpressionValuesCorrelated(expr Expression, out
 		if col == nil || idx < 0 || idx >= len(outerRow) {
 			return ex
 		}
-		return &LiteralExpr{Value: outerRow[idx]}
+		return &ast.LiteralExpr{Value: outerRow[idx]}
 
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex
 
-	case *BinaryExpr:
-		return &BinaryExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Op: ex.Op, Right: e.substituteExpressionValuesCorrelated(ex.Right, outerSchema, outerRow, innerSchema, innerTableName)}
+	case *ast.BinaryExpr:
+		return &ast.BinaryExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Op: ex.Op, Right: e.substituteExpressionValuesCorrelated(ex.Right, outerSchema, outerRow, innerSchema, innerTableName)}
 
-	case *UnaryExpr:
-		return &UnaryExpr{Op: ex.Op, Expr: e.substituteExpressionValuesCorrelated(ex.Expr, outerSchema, outerRow, innerSchema, innerTableName)}
+	case *ast.UnaryExpr:
+		return &ast.UnaryExpr{Op: ex.Op, Expr: e.substituteExpressionValuesCorrelated(ex.Expr, outerSchema, outerRow, innerSchema, innerTableName)}
 
-	case *InExpr:
-		var vals []Expression
+	case *ast.InExpr:
+		var vals []ast.Expression
 		for _, v := range ex.Values {
 			vals = append(vals, e.substituteExpressionValuesCorrelated(v, outerSchema, outerRow, innerSchema, innerTableName))
 		}
-		var subq *SelectStmt
+		var subq *ast.SelectStmt
 		if ex.Subquery != nil {
 			subq = e.substituteCorrelatedSelectUsingSchema(ex.Subquery, outerSchema, outerRow)
 		}
-		return &InExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Values: vals, Subquery: subq, Not: ex.Not}
+		return &ast.InExpr{Left: e.substituteExpressionValuesCorrelated(ex.Left, outerSchema, outerRow, innerSchema, innerTableName), Values: vals, Subquery: subq, Not: ex.Not}
 
-	case *CaseExpr:
-		newWhens := make([]WhenClause, len(ex.Whens))
+	case *ast.CaseExpr:
+		newWhens := make([]ast.WhenClause, len(ex.Whens))
 		for i, w := range ex.Whens {
-			newWhens[i] = WhenClause{Condition: e.substituteExpressionValuesCorrelated(w.Condition, outerSchema, outerRow, innerSchema, innerTableName), Result: e.substituteExpressionValuesCorrelated(w.Result, outerSchema, outerRow, innerSchema, innerTableName)}
+			newWhens[i] = ast.WhenClause{Condition: e.substituteExpressionValuesCorrelated(w.Condition, outerSchema, outerRow, innerSchema, innerTableName), Result: e.substituteExpressionValuesCorrelated(w.Result, outerSchema, outerRow, innerSchema, innerTableName)}
 		}
-		var newElse Expression
+		var newElse ast.Expression
 		if ex.Else != nil {
 			newElse = e.substituteExpressionValuesCorrelated(ex.Else, outerSchema, outerRow, innerSchema, innerTableName)
 		}
-		return &CaseExpr{Operand: ex.Operand, Whens: newWhens, Else: newElse}
+		return &ast.CaseExpr{Operand: ex.Operand, Whens: newWhens, Else: newElse}
 
-	case *FunctionExpr:
-		newArgs := make([]Expression, len(ex.Args))
+	case *ast.FunctionExpr:
+		newArgs := make([]ast.Expression, len(ex.Args))
 		for i, a := range ex.Args {
 			newArgs[i] = e.substituteExpressionValuesCorrelated(a, outerSchema, outerRow, innerSchema, innerTableName)
 		}
-		return &FunctionExpr{Name: ex.Name, Args: newArgs}
+		return &ast.FunctionExpr{Name: ex.Name, Args: newArgs}
 
-	case *ExistsExpr:
+	case *ast.ExistsExpr:
 		if ex.Query != nil {
 			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, outerSchema, outerRow)
-			return &ExistsExpr{Query: newQuery, Not: ex.Not}
+			return &ast.ExistsExpr{Query: newQuery, Not: ex.Not}
 		}
 		return ex
 
-	case *SubqueryExpr:
+	case *ast.SubqueryExpr:
 		if ex.Query != nil {
 			newQuery := e.substituteCorrelatedSelectUsingSchema(ex.Query, outerSchema, outerRow)
-			return &SubqueryExpr{Query: newQuery}
+			return &ast.SubqueryExpr{Query: newQuery}
 		}
 		return ex
 
@@ -5132,18 +5134,18 @@ func (e *MVCCExecutor) substituteExpressionValuesCorrelated(expr Expression, out
 
 // substituteCorrelatedSelectUsingSchema returns a shallow copy of the SelectStmt with WHERE/HAVING
 // and column expressions substituted using the provided outer schema/row.
-func (e *MVCCExecutor) substituteCorrelatedSelectUsingSchema(sub *SelectStmt, schema *catalog.Schema, row []catalog.Value) *SelectStmt {
+func (e *MVCCExecutor) substituteCorrelatedSelectUsingSchema(sub *ast.SelectStmt, schema *catalog.Schema, row []catalog.Value) *ast.SelectStmt {
 	if sub == nil {
 		return nil
 	}
-	newQ := &SelectStmt{
+	newQ := &ast.SelectStmt{
 		With:         sub.With,
 		Distinct:     sub.Distinct,
 		DistinctOn:   append([]string{}, sub.DistinctOn...),
 		TableName:    sub.TableName,
 		TableAlias:   sub.TableAlias,
 		GroupBy:      append([]string{}, sub.GroupBy...),
-		GroupingSets: append([]GroupingSet{}, sub.GroupingSets...),
+		GroupingSets: append([]ast.GroupingSet{}, sub.GroupingSets...),
 		Limit:        sub.Limit,
 		LimitExpr:    sub.LimitExpr,
 		Offset:       sub.Offset,
@@ -5158,7 +5160,7 @@ func (e *MVCCExecutor) substituteCorrelatedSelectUsingSchema(sub *SelectStmt, sc
 	}
 
 	// Copy columns and substitute expressions inside any Expression fields
-	newQ.Columns = make([]SelectColumn, len(sub.Columns))
+	newQ.Columns = make([]ast.SelectColumn, len(sub.Columns))
 	for i, sc := range sub.Columns {
 		nc := sc
 		if nc.Expression != nil {
@@ -5183,7 +5185,7 @@ func (e *MVCCExecutor) substituteCorrelatedSelectUsingSchema(sub *SelectStmt, sc
 }
 
 // executeMerge handles MERGE statements for MVCC executor.
-func (e *MVCCExecutor) executeMerge(stmt *MergeStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeMerge(stmt *ast.MergeStmt, tx *txn.Transaction) (*Result, error) {
 	cat := e.mtm.Catalog()
 
 	targetMeta, err := cat.GetTable(stmt.TargetTable)
@@ -5451,19 +5453,19 @@ func (e *MVCCExecutor) executeMerge(stmt *MergeStmt, tx *txn.Transaction) (*Resu
 }
 
 // evalMergeExprMVCC evaluates an expression in MERGE context for MVCC.
-func (e *MVCCExecutor) evalMergeExprMVCC(expr Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
+func (e *MVCCExecutor) evalMergeExprMVCC(expr ast.Expression, schema *catalog.Schema, row []catalog.Value, colMap map[string]int) (catalog.Value, error) {
 	switch ex := expr.(type) {
-	case *LiteralExpr:
+	case *ast.LiteralExpr:
 		return ex.Value, nil
 
-	case *ColumnRef:
+	case *ast.ColumnRef:
 		idx, ok := colMap[ex.Name]
 		if !ok {
 			return catalog.Value{}, fmt.Errorf("unknown column: %s", ex.Name)
 		}
 		return row[idx], nil
 
-	case *BinaryExpr:
+	case *ast.BinaryExpr:
 		left, err := e.evalMergeExprMVCC(ex.Left, schema, row, colMap)
 		if err != nil {
 			return catalog.Value{}, err
@@ -5479,18 +5481,18 @@ func (e *MVCCExecutor) evalMergeExprMVCC(expr Expression, schema *catalog.Schema
 	}
 }
 
-func evalBinaryExprValueMVCC(left catalog.Value, op TokenType, right catalog.Value) (catalog.Value, error) {
+func evalBinaryExprValueMVCC(left catalog.Value, op token.TokenType, right catalog.Value) (catalog.Value, error) {
 	leftNum := valueToInt64MVCC(left)
 	rightNum := valueToInt64MVCC(right)
 
 	switch op {
-	case TOKEN_PLUS:
+	case token.TOKEN_PLUS:
 		return catalog.NewInt64(leftNum + rightNum), nil
-	case TOKEN_MINUS:
+	case token.TOKEN_MINUS:
 		return catalog.NewInt64(leftNum - rightNum), nil
-	case TOKEN_STAR:
+	case token.TOKEN_STAR:
 		return catalog.NewInt64(leftNum * rightNum), nil
-	case TOKEN_SLASH:
+	case token.TOKEN_SLASH:
 		if rightNum == 0 {
 			return catalog.Value{}, fmt.Errorf("division by zero")
 		}
@@ -5516,7 +5518,7 @@ func valueToInt64MVCC(v catalog.Value) int64 {
 
 // EvaluateExpression evaluates an expression with no row context.
 // This is useful for evaluating parameters in EXECUTE statements.
-func (e *MVCCExecutor) EvaluateExpression(expr Expression) (catalog.Value, error) {
+func (e *MVCCExecutor) EvaluateExpression(expr ast.Expression) (catalog.Value, error) {
 	return e.evalExpr(expr, nil, nil, nil)
 }
 
@@ -5683,7 +5685,7 @@ func (e *MVCCExecutor) fireAfterDeleteTriggers(tableName string, oldRow []catalo
 // ==================== Full-Text Search Evaluation Functions ====================
 
 // evalTSVector evaluates to_tsvector() - converts text to a text search vector.
-func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSVector(expr *ast.TSVectorExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate the text expression
 	textVal, err := e.evalExpr(expr.Text, schema, row, tx)
 	if err != nil {
@@ -5711,7 +5713,7 @@ func (e *MVCCExecutor) evalTSVector(expr *TSVectorExpr, schema *catalog.Schema, 
 }
 
 // evalTSQuery evaluates to_tsquery(), plainto_tsquery(), websearch_to_tsquery().
-func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSQuery(expr *ast.TSQueryExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate the query expression
 	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
@@ -5735,7 +5737,7 @@ func (e *MVCCExecutor) evalTSQuery(expr *TSQueryExpr, schema *catalog.Schema, ro
 }
 
 // evalTSMatch evaluates the @@ text search match operator.
-func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSMatch(expr *ast.TSMatchExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate left (vector/text) and right (query/text)
 	leftVal, err := e.evalExpr(expr.Left, schema, row, tx)
 	if err != nil {
@@ -5769,7 +5771,7 @@ func (e *MVCCExecutor) evalTSMatch(expr *TSMatchExpr, schema *catalog.Schema, ro
 }
 
 // evalTSRank evaluates ts_rank() - calculates relevance ranking.
-func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSRank(expr *ast.TSRankExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate vector and query
 	vectorVal, err := e.evalExpr(expr.Vector, schema, row, tx)
 	if err != nil {
@@ -5803,7 +5805,7 @@ func (e *MVCCExecutor) evalTSRank(expr *TSRankExpr, schema *catalog.Schema, row 
 }
 
 // evalTSHeadline evaluates ts_headline() - generates result headlines with highlighted terms.
-func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalTSHeadline(expr *ast.TSHeadlineExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Evaluate text and query
 	textVal, err := e.evalExpr(expr.Text, schema, row, tx)
 	if err != nil {
@@ -5836,7 +5838,7 @@ func (e *MVCCExecutor) evalTSHeadline(expr *TSHeadlineExpr, schema *catalog.Sche
 }
 
 // evalMatchAgainst evaluates MySQL-style MATCH...AGAINST expression.
-func (e *MVCCExecutor) evalMatchAgainst(expr *MatchAgainstExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
+func (e *MVCCExecutor) evalMatchAgainst(expr *ast.MatchAgainstExpr, schema *catalog.Schema, row []catalog.Value, tx *txn.Transaction) (catalog.Value, error) {
 	// Get query text
 	queryVal, err := e.evalExpr(expr.Query, schema, row, tx)
 	if err != nil {
@@ -6186,7 +6188,7 @@ func isStopWord(word string) bool {
 }
 
 // executeSelectWithCTEs handles SELECT with WITH clause (Common Table Expressions) for MVCC.
-func (e *MVCCExecutor) executeSelectWithCTEs(stmt *SelectStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeSelectWithCTEs(stmt *ast.SelectStmt, tx *txn.Transaction) (*Result, error) {
 	// Save any existing CTE data (for nested CTEs)
 	e.cteMu.Lock()
 	oldCTEData := make(map[string]*Result)
@@ -6251,7 +6253,7 @@ func (e *MVCCExecutor) executeSelectWithCTEs(stmt *SelectStmt, tx *txn.Transacti
 }
 
 // executeSelectFromCTE executes a SELECT query against a CTE result set.
-func (e *MVCCExecutor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result) (*Result, error) {
+func (e *MVCCExecutor) executeSelectFromCTE(stmt *ast.SelectStmt, cteResult *Result) (*Result, error) {
 	// Create a temporary schema for the CTE result
 	cols := make([]catalog.Column, len(cteResult.Columns))
 	for i, name := range cteResult.Columns {
@@ -6310,7 +6312,7 @@ func (e *MVCCExecutor) executeSelectFromCTE(stmt *SelectStmt, cteResult *Result)
 }
 
 // executeRecursiveCTEMVCC executes a recursive CTE with iterative fixed-point evaluation for MVCC.
-func (e *MVCCExecutor) executeRecursiveCTEMVCC(cte *CTE, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeRecursiveCTEMVCC(cte *ast.CTE, tx *txn.Transaction) (*Result, error) {
 	const maxIterations = 1000
 
 	// Execute the base case (anchor query)
@@ -6363,7 +6365,7 @@ func (e *MVCCExecutor) executeRecursiveCTEMVCC(cte *CTE, tx *txn.Transaction) (*
 // executeAnalyze collects statistics for query optimization via the MVCC path.
 // ANALYZE            - analyzes all tables in the current database
 // ANALYZE tablename  - analyzes a specific table
-func (e *MVCCExecutor) executeAnalyze(stmt *AnalyzeStmt, tx *txn.Transaction) (*Result, error) {
+func (e *MVCCExecutor) executeAnalyze(stmt *ast.AnalyzeStmt, tx *txn.Transaction) (*Result, error) {
 	if e.statsMan == nil {
 		return &Result{
 			Columns: []string{"ANALYZE"},
@@ -6467,9 +6469,9 @@ func (e *MVCCExecutor) analyzeTableMVCC(tableName string, columns []string, tx *
 	}
 
 	// Full table scan to collect statistics.
-	selectStmt := &SelectStmt{
+	selectStmt := &ast.SelectStmt{
 		TableName: tableName,
-		Columns:   []SelectColumn{{Star: true}},
+		Columns:   []ast.SelectColumn{{Star: true}},
 	}
 	result, err := e.executeSelect(selectStmt, tx)
 	if err != nil {

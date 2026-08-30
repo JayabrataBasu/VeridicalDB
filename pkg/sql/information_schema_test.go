@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 func TestInformationSchema(t *testing.T) {
@@ -11,9 +13,9 @@ func TestInformationSchema(t *testing.T) {
 	executor := NewExecutor(tm)
 
 	// Create some tables
-	_, err := executor.Execute(&CreateTableStmt{
+	_, err := executor.Execute(&ast.CreateTableStmt{
 		TableName: "users",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
 			{Name: "name", Type: catalog.TypeText},
 		},
@@ -22,9 +24,9 @@ func TestInformationSchema(t *testing.T) {
 		t.Fatalf("Failed to create users table: %v", err)
 	}
 
-	_, err = executor.Execute(&CreateTableStmt{
+	_, err = executor.Execute(&ast.CreateTableStmt{
 		TableName: "posts",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32, PrimaryKey: true},
 			{Name: "user_id", Type: catalog.TypeInt32, ReferencesTable: "users", ReferencesColumn: "id"},
 			{Name: "title", Type: catalog.TypeText},
@@ -35,13 +37,13 @@ func TestInformationSchema(t *testing.T) {
 	}
 
 	// Test information_schema.tables
-	result, err := executor.Execute(&SelectStmt{
+	result, err := executor.Execute(&ast.SelectStmt{
 		TableName: "information_schema.tables",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Name: "table_name"},
 			{Name: "table_type"},
 		},
-		OrderBy: []OrderByClause{{Column: "table_name"}},
+		OrderBy: []ast.OrderByClause{{Column: "table_name"}},
 	})
 	if err != nil {
 		t.Fatalf("Failed to query information_schema.tables: %v", err)
@@ -58,19 +60,19 @@ func TestInformationSchema(t *testing.T) {
 	}
 
 	// Test information_schema.columns
-	result, err = executor.Execute(&SelectStmt{
+	result, err = executor.Execute(&ast.SelectStmt{
 		TableName: "information_schema.columns",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Name: "table_name"},
 			{Name: "column_name"},
 			{Name: "data_type"},
 		},
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "table_name"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewText("users")},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "table_name"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewText("users")},
 		},
-		OrderBy: []OrderByClause{{Column: "column_name"}},
+		OrderBy: []ast.OrderByClause{{Column: "column_name"}},
 	})
 	if err != nil {
 		t.Fatalf("Failed to query information_schema.columns: %v", err)
@@ -88,13 +90,13 @@ func TestInformationSchema(t *testing.T) {
 	}
 
 	// Test information_schema.table_constraints
-	result, err = executor.Execute(&SelectStmt{
+	result, err = executor.Execute(&ast.SelectStmt{
 		TableName: "information_schema.table_constraints",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Name: "constraint_type"},
 			{Name: "table_name"},
 		},
-		OrderBy: []OrderByClause{{Column: "constraint_type"}},
+		OrderBy: []ast.OrderByClause{{Column: "constraint_type"}},
 	})
 	if err != nil {
 		t.Fatalf("Failed to query information_schema.table_constraints: %v", err)

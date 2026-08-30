@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 // QueryCache caches parsed SQL queries and their execution plans.
@@ -25,8 +27,8 @@ type QueryCache struct {
 // CacheEntry represents a cached query.
 type CacheEntry struct {
 	Key          string
-	ParsedAST    Statement   // The parsed statement
-	PreparedPlan interface{} // Optional: prepared execution plan
+	ParsedAST    ast.Statement // The parsed statement
+	PreparedPlan interface{}   // Optional: prepared execution plan
 	CreatedAt    time.Time
 	LastAccess   time.Time
 	AccessCount  uint64
@@ -78,7 +80,7 @@ func (qc *QueryCache) Get(sql string) (*CacheEntry, bool) {
 }
 
 // Put adds a query to the cache.
-func (qc *QueryCache) Put(sql string, stmt Statement) error {
+func (qc *QueryCache) Put(sql string, stmt ast.Statement) error {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
 
@@ -113,7 +115,7 @@ func (qc *QueryCache) Put(sql string, stmt Statement) error {
 }
 
 // PutWithPlan adds a query with its execution plan to the cache.
-func (qc *QueryCache) PutWithPlan(sql string, stmt Statement, plan interface{}) error {
+func (qc *QueryCache) PutWithPlan(sql string, stmt ast.Statement, plan interface{}) error {
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
 
@@ -278,16 +280,16 @@ func canonicalizeSQL(sql string) string {
 
 // referencesTable checks if a statement references a given table.
 // This is a simple implementation - could be enhanced.
-func (qc *QueryCache) referencesTable(stmt Statement, tableName string) bool {
+func (qc *QueryCache) referencesTable(stmt ast.Statement, tableName string) bool {
 	switch s := stmt.(type) {
-	case *SelectStmt:
+	case *ast.SelectStmt:
 		// Check table name
 		return s.TableName == tableName
-	case *InsertStmt:
+	case *ast.InsertStmt:
 		return s.TableName == tableName
-	case *UpdateStmt:
+	case *ast.UpdateStmt:
 		return s.TableName == tableName
-	case *DeleteStmt:
+	case *ast.DeleteStmt:
 		return s.TableName == tableName
 	default:
 		// For unknown statement types, conservatively return true

@@ -3,6 +3,8 @@ package sql
 import (
 	"testing"
 	"time"
+
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 func TestQueryCacheBasics(t *testing.T) {
@@ -16,7 +18,7 @@ func TestQueryCacheBasics(t *testing.T) {
 
 	// Test Put
 	sql := "SELECT * FROM users WHERE id = 1"
-	stmt := &SelectStmt{TableName: "users"}
+	stmt := &ast.SelectStmt{TableName: "users"}
 
 	err := cache.Put(sql, stmt)
 	if err != nil {
@@ -32,7 +34,7 @@ func TestQueryCacheBasics(t *testing.T) {
 func TestQueryCacheHit(t *testing.T) {
 	cache := NewQueryCache(10)
 	sql := "SELECT * FROM users"
-	stmt := &SelectStmt{TableName: "users"}
+	stmt := &ast.SelectStmt{TableName: "users"}
 
 	// Put entry
 	err := cache.Put(sql, stmt)
@@ -90,7 +92,7 @@ func TestQueryCacheEviction(t *testing.T) {
 	// Fill cache
 	for i := 0; i < 3; i++ {
 		sql := string(rune('A' + i)) // "A", "B", "C"
-		stmt := &SelectStmt{TableName: "table"}
+		stmt := &ast.SelectStmt{TableName: "table"}
 		_ = cache.Put(sql, stmt)
 	}
 
@@ -100,7 +102,7 @@ func TestQueryCacheEviction(t *testing.T) {
 	}
 
 	// Add one more - should evict LRU
-	_ = cache.Put("D", &SelectStmt{TableName: "table"})
+	_ = cache.Put("D", &ast.SelectStmt{TableName: "table"})
 
 	stats = cache.Stats()
 	if stats.CurrentEntries != 3 {
@@ -121,17 +123,17 @@ func TestQueryCacheLRUOrdering(t *testing.T) {
 	cache := NewQueryCache(3)
 
 	// Add 3 entries
-	_ = cache.Put("A", &SelectStmt{TableName: "table"})
+	_ = cache.Put("A", &ast.SelectStmt{TableName: "table"})
 	time.Sleep(time.Millisecond)
-	_ = cache.Put("B", &SelectStmt{TableName: "table"})
+	_ = cache.Put("B", &ast.SelectStmt{TableName: "table"})
 	time.Sleep(time.Millisecond)
-	_ = cache.Put("C", &SelectStmt{TableName: "table"})
+	_ = cache.Put("C", &ast.SelectStmt{TableName: "table"})
 
 	// Access A (should move to front)
 	cache.Get("A")
 
 	// Add D - should evict B (oldest unused)
-	_ = cache.Put("D", &SelectStmt{TableName: "table"})
+	_ = cache.Put("D", &ast.SelectStmt{TableName: "table"})
 
 	// A should still be present
 	_, found := cache.Get("A")
@@ -150,7 +152,7 @@ func TestQueryCacheInvalidate(t *testing.T) {
 	cache := NewQueryCache(10)
 	sql := "SELECT * FROM users"
 
-	_ = cache.Put(sql, &SelectStmt{TableName: "users"})
+	_ = cache.Put(sql, &ast.SelectStmt{TableName: "users"})
 
 	// Verify cached
 	_, found := cache.Get(sql)
@@ -172,9 +174,9 @@ func TestQueryCacheInvalidateTable(t *testing.T) {
 	cache := NewQueryCache(10)
 
 	// Add queries for different tables
-	_ = cache.Put("SELECT * FROM users", &SelectStmt{TableName: "users"})
-	_ = cache.Put("SELECT * FROM orders", &SelectStmt{TableName: "orders"})
-	_ = cache.Put("INSERT INTO users VALUES (1)", &InsertStmt{TableName: "users"})
+	_ = cache.Put("SELECT * FROM users", &ast.SelectStmt{TableName: "users"})
+	_ = cache.Put("SELECT * FROM orders", &ast.SelectStmt{TableName: "orders"})
+	_ = cache.Put("INSERT INTO users VALUES (1)", &ast.InsertStmt{TableName: "users"})
 
 	stats := cache.Stats()
 	if stats.CurrentEntries != 3 {
@@ -200,9 +202,9 @@ func TestQueryCacheClear(t *testing.T) {
 	cache := NewQueryCache(10)
 
 	// Add some entries
-	_ = cache.Put("A", &SelectStmt{TableName: "table"})
-	_ = cache.Put("B", &SelectStmt{TableName: "table"})
-	_ = cache.Put("C", &SelectStmt{TableName: "table"})
+	_ = cache.Put("A", &ast.SelectStmt{TableName: "table"})
+	_ = cache.Put("B", &ast.SelectStmt{TableName: "table"})
+	_ = cache.Put("C", &ast.SelectStmt{TableName: "table"})
 
 	cache.Clear()
 
@@ -216,7 +218,7 @@ func TestQueryCacheHitRate(t *testing.T) {
 	cache := NewQueryCache(10)
 	sql := "SELECT * FROM test"
 
-	_ = cache.Put(sql, &SelectStmt{TableName: "test"})
+	_ = cache.Put(sql, &ast.SelectStmt{TableName: "test"})
 
 	// 3 hits
 	cache.Get(sql)
@@ -236,7 +238,7 @@ func TestQueryCacheHitRate(t *testing.T) {
 func TestQueryCacheWithPlan(t *testing.T) {
 	cache := NewQueryCache(10)
 	sql := "SELECT * FROM users"
-	stmt := &SelectStmt{TableName: "users"}
+	stmt := &ast.SelectStmt{TableName: "users"}
 	plan := "TableScan(users)" // Mock plan
 
 	err := cache.PutWithPlan(sql, stmt, plan)
@@ -263,7 +265,7 @@ func TestQueryCacheNormalizationWhitespaceAndSemicolon(t *testing.T) {
 	original := "SELECT   id,   name   FROM users WHERE id = 42;"
 	variant := "  SELECT id, name FROM users WHERE id = 42   "
 
-	err := cache.Put(original, &SelectStmt{TableName: "users"})
+	err := cache.Put(original, &ast.SelectStmt{TableName: "users"})
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}
@@ -284,7 +286,7 @@ func TestQueryCacheNormalizationPreservesLiteralCase(t *testing.T) {
 	queryA := "SELECT * FROM users WHERE name = 'ABC'"
 	queryB := "SELECT * FROM users WHERE name = 'abc'"
 
-	err := cache.Put(queryA, &SelectStmt{TableName: "users"})
+	err := cache.Put(queryA, &ast.SelectStmt{TableName: "users"})
 	if err != nil {
 		t.Fatalf("Put failed: %v", err)
 	}

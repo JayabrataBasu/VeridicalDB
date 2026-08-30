@@ -22,6 +22,7 @@ import (
 	"github.com/JayabrataBasu/VeridicalDB/pkg/observability"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/pgwire"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 func main() {
@@ -200,7 +201,7 @@ func main() {
 				return
 			}
 			switch stmt.(type) {
-			case *sql.SelectStmt:
+			case *ast.SelectStmt:
 				// allowed
 			default:
 				http.Error(w, "only SELECT statements are allowed via the UI", http.StatusForbidden)

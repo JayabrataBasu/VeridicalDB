@@ -6,6 +6,8 @@ import (
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/btree"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 // TestPlannerTableScan tests that the planner returns TableScan when no index is available.
@@ -35,12 +37,12 @@ func TestPlannerTableScan(t *testing.T) {
 	}
 
 	// Query without any index
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "test",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "id"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewInt32(5)},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "id"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(5)},
 		},
 	}
 
@@ -93,12 +95,12 @@ func TestPlannerIndexScan(t *testing.T) {
 	}
 
 	// Query on indexed column
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "users",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "id"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewInt32(42)},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "id"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewInt32(42)},
 		},
 	}
 
@@ -151,12 +153,12 @@ func TestPlannerNonIndexedColumn(t *testing.T) {
 	}
 
 	// Query on NON-indexed column 'name'
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "items",
-		Where: &BinaryExpr{
-			Left:  &ColumnRef{Name: "name"},
-			Op:    TOKEN_EQ,
-			Right: &LiteralExpr{Value: catalog.NewText("Widget")},
+		Where: &ast.BinaryExpr{
+			Left:  &ast.ColumnRef{Name: "name"},
+			Op:    token.TOKEN_EQ,
+			Right: &ast.LiteralExpr{Value: catalog.NewText("Widget")},
 		},
 	}
 
@@ -194,7 +196,7 @@ func TestPlannerNoWhere(t *testing.T) {
 	}
 
 	// Query without WHERE
-	stmt := &SelectStmt{
+	stmt := &ast.SelectStmt{
 		TableName: "test",
 		Where:     nil,
 	}

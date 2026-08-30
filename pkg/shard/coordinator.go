@@ -11,6 +11,8 @@ import (
 	"syscall"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/sql"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 )
 
 // ShardClient represents a connection to a shard node.
@@ -158,7 +160,7 @@ func (c *Coordinator) Route(query string, sessionID string) RouteResult {
 	return c.routeParsedStatement(stmt, sessionID)
 }
 
-func parseStatement(query string) (sql.Statement, error) {
+func parseStatement(query string) (ast.Statement, error) {
 	parser := sql.NewParser(query)
 	stmt, err := parser.Parse()
 	if err != nil {
@@ -168,11 +170,11 @@ func parseStatement(query string) (sql.Statement, error) {
 }
 
 // routeParsedStatement determines which shard(s) a parsed statement should go to.
-func (c *Coordinator) routeParsedStatement(stmt sql.Statement, sessionID string) RouteResult {
+func (c *Coordinator) routeParsedStatement(stmt ast.Statement, sessionID string) RouteResult {
 	// Bound transactions should continue to route to the same shard, but COMMIT/
 	// ROLLBACK must pass through routeStatement so the binding can be cleared.
 	switch stmt.(type) {
-	case *sql.CommitStmt, *sql.RollbackStmt, *sql.BeginStmt:
+	case *ast.CommitStmt, *ast.RollbackStmt, *ast.BeginStmt:
 		return c.routeStatement(stmt, sessionID)
 	}
 
@@ -188,29 +190,29 @@ func (c *Coordinator) routeParsedStatement(stmt sql.Statement, sessionID string)
 }
 
 // routeStatement determines routing based on statement type.
-func (c *Coordinator) routeStatement(stmt sql.Statement, sessionID string) RouteResult {
+func (c *Coordinator) routeStatement(stmt ast.Statement, sessionID string) RouteResult {
 	switch s := stmt.(type) {
-	case *sql.CreateTableStmt, *sql.DropTableStmt:
+	case *ast.CreateTableStmt, *ast.DropTableStmt:
 		// DDL goes to all shards
 		return RouteResult{ScatterGather: true}
 
-	case *sql.InsertStmt:
+	case *ast.InsertStmt:
 		return c.routeInsert(s)
 
-	case *sql.SelectStmt:
+	case *ast.SelectStmt:
 		return c.routeSelect(s)
 
-	case *sql.UpdateStmt:
+	case *ast.UpdateStmt:
 		return c.routeUpdate(s)
 
-	case *sql.DeleteStmt:
+	case *ast.DeleteStmt:
 		return c.routeDelete(s)
 
-	case *sql.BeginStmt:
+	case *ast.BeginStmt:
 		// BEGIN doesn't route yet - wait for first data statement
 		return RouteResult{ScatterGather: false, TargetShard: nil}
 
-	case *sql.CommitStmt, *sql.RollbackStmt:
+	case *ast.CommitStmt, *ast.RollbackStmt:
 		// Route to the shard bound to this session's transaction
 		c.txnMu.Lock()
 		if boundShard, ok := c.activeTxns[sessionID]; ok {
@@ -227,7 +229,7 @@ func (c *Coordinator) routeStatement(stmt sql.Statement, sessionID string) Route
 }
 
 // routeInsert routes an INSERT statement.
-func (c *Coordinator) routeInsert(stmt *sql.InsertStmt) RouteResult {
+func (c *Coordinator) routeInsert(stmt *ast.InsertStmt) RouteResult {
 	// For multi-row INSERT, we use the first row for routing
 	// In a full implementation, each row could go to different shards
 	if len(stmt.ValuesList) == 0 {
@@ -273,7 +275,7 @@ func (c *Coordinator) routeInsert(stmt *sql.InsertStmt) RouteResult {
 }
 
 // routeSelect routes a SELECT statement.
-func (c *Coordinator) routeSelect(stmt *sql.SelectStmt) RouteResult {
+func (c *Coordinator) routeSelect(stmt *ast.SelectStmt) RouteResult {
 	// Check if WHERE clause contains shard key equality
 	if stmt.Where == nil {
 		// No WHERE - scatter to all shards
@@ -297,7 +299,7 @@ func (c *Coordinator) routeSelect(stmt *sql.SelectStmt) RouteResult {
 }
 
 // routeUpdate routes an UPDATE statement.
-func (c *Coordinator) routeUpdate(stmt *sql.UpdateStmt) RouteResult {
+func (c *Coordinator) routeUpdate(stmt *ast.UpdateStmt) RouteResult {
 	if stmt.Where == nil {
 		// No WHERE - scatter to all shards
 		return RouteResult{ScatterGather: true}
@@ -318,7 +320,7 @@ func (c *Coordinator) routeUpdate(stmt *sql.UpdateStmt) RouteResult {
 }
 
 // routeDelete routes a DELETE statement.
-func (c *Coordinator) routeDelete(stmt *sql.DeleteStmt) RouteResult {
+func (c *Coordinator) routeDelete(stmt *ast.DeleteStmt) RouteResult {
 	if stmt.Where == nil {
 		return RouteResult{ScatterGather: true}
 	}
@@ -338,9 +340,9 @@ func (c *Coordinator) routeDelete(stmt *sql.DeleteStmt) RouteResult {
 }
 
 // extractLiteralValue extracts a literal value from an expression.
-func extractLiteralValue(expr sql.Expression) interface{} {
+func extractLiteralValue(expr ast.Expression) interface{} {
 	switch e := expr.(type) {
-	case *sql.LiteralExpr:
+	case *ast.LiteralExpr:
 		return getLiteralData(e.Value)
 	default:
 		return nil
@@ -354,24 +356,24 @@ func getLiteralData(v interface{}) interface{} {
 }
 
 // extractShardKeyFromWhere extracts the shard key value from a WHERE clause.
-func extractShardKeyFromWhere(where sql.Expression, keyCol string) interface{} {
+func extractShardKeyFromWhere(where ast.Expression, keyCol string) interface{} {
 	switch e := where.(type) {
-	case *sql.BinaryExpr:
+	case *ast.BinaryExpr:
 		// Check if this is keyCol = value
-		if e.Op == sql.TOKEN_EQ {
-			if col, ok := e.Left.(*sql.ColumnRef); ok {
+		if e.Op == token.TOKEN_EQ {
+			if col, ok := e.Left.(*ast.ColumnRef); ok {
 				if col.Name == keyCol {
 					return extractLiteralValue(e.Right)
 				}
 			}
-			if col, ok := e.Right.(*sql.ColumnRef); ok {
+			if col, ok := e.Right.(*ast.ColumnRef); ok {
 				if col.Name == keyCol {
 					return extractLiteralValue(e.Left)
 				}
 			}
 		}
 		// Check AND clauses recursively
-		if e.Op == sql.TOKEN_AND {
+		if e.Op == token.TOKEN_AND {
 			if val := extractShardKeyFromWhere(e.Left, keyCol); val != nil {
 				return val
 			}
@@ -436,7 +438,7 @@ func (c *Coordinator) Execute(ctx context.Context, query string, sessionID strin
 	return nil, fmt.Errorf("unable to route query")
 }
 
-func (c *Coordinator) executeOnShard(ctx context.Context, shardID ShardID, query string, stmt sql.Statement) (string, error) {
+func (c *Coordinator) executeOnShard(ctx context.Context, shardID ShardID, query string, stmt ast.Statement) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -548,9 +550,9 @@ func isLocallyClosedClientError(err error) bool {
 	return err != nil && err.Error() == "connection closed"
 }
 
-func isRetryableReadStatement(stmt sql.Statement) bool {
+func isRetryableReadStatement(stmt ast.Statement) bool {
 	switch stmt.(type) {
-	case *sql.SelectStmt, *sql.ShowStmt, *sql.ExplainStmt:
+	case *ast.SelectStmt, *ast.ShowStmt, *ast.ExplainStmt:
 		return true
 	default:
 		return false
@@ -586,7 +588,7 @@ func (c *Coordinator) observeExecutionError(err error) {
 }
 
 // scatterGather sends query to all shards and gathers results.
-func (c *Coordinator) scatterGather(ctx context.Context, query string, stmt sql.Statement) ([]string, error) {
+func (c *Coordinator) scatterGather(ctx context.Context, query string, stmt ast.Statement) ([]string, error) {
 	type shardExecResult struct {
 		shardID ShardID
 		result  string

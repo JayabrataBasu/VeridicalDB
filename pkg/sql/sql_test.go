@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/lex"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/token"
 	"github.com/JayabrataBasu/VeridicalDB/pkg/txn"
 )
 
@@ -43,48 +46,48 @@ func TestLexer(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected []TokenType
+		expected []token.TokenType
 	}{
 		{
 			name:     "simple select",
 			input:    "SELECT * FROM users",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_STAR, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_STAR, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_EOF},
 		},
 		{
 			name:     "select with columns",
 			input:    "SELECT id, name FROM users",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_IDENT, TOKEN_COMMA, TOKEN_IDENT, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_IDENT, token.TOKEN_COMMA, token.TOKEN_IDENT, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_EOF},
 		},
 		{
 			name:     "insert statement",
 			input:    "INSERT INTO users VALUES (1, 'alice')",
-			expected: []TokenType{TOKEN_INSERT, TOKEN_INTO, TOKEN_IDENT, TOKEN_VALUES, TOKEN_LPAREN, TOKEN_INT, TOKEN_COMMA, TOKEN_STRING, TOKEN_RPAREN, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_INSERT, token.TOKEN_INTO, token.TOKEN_IDENT, token.TOKEN_VALUES, token.TOKEN_LPAREN, token.TOKEN_INT, token.TOKEN_COMMA, token.TOKEN_STRING, token.TOKEN_RPAREN, token.TOKEN_EOF},
 		},
 		{
 			name:     "create table",
 			input:    "CREATE TABLE users (id INT)",
-			expected: []TokenType{TOKEN_CREATE, TOKEN_TABLE, TOKEN_IDENT, TOKEN_LPAREN, TOKEN_IDENT, TOKEN_INT_TYPE, TOKEN_RPAREN, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_CREATE, token.TOKEN_TABLE, token.TOKEN_IDENT, token.TOKEN_LPAREN, token.TOKEN_IDENT, token.TOKEN_INT_TYPE, token.TOKEN_RPAREN, token.TOKEN_EOF},
 		},
 		{
 			name:     "where clause",
 			input:    "SELECT * FROM users WHERE id = 1",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_STAR, TOKEN_FROM, TOKEN_IDENT, TOKEN_WHERE, TOKEN_IDENT, TOKEN_EQ, TOKEN_INT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_STAR, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_WHERE, token.TOKEN_IDENT, token.TOKEN_EQ, token.TOKEN_INT, token.TOKEN_EOF},
 		},
 		{
 			name:     "comparison operators",
 			input:    "a > 1 AND b < 2 OR c >= 3 AND d <= 4 AND e <> 5",
-			expected: []TokenType{TOKEN_IDENT, TOKEN_GT, TOKEN_INT, TOKEN_AND, TOKEN_IDENT, TOKEN_LT, TOKEN_INT, TOKEN_OR, TOKEN_IDENT, TOKEN_GE, TOKEN_INT, TOKEN_AND, TOKEN_IDENT, TOKEN_LE, TOKEN_INT, TOKEN_AND, TOKEN_IDENT, TOKEN_NE, TOKEN_INT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_IDENT, token.TOKEN_GT, token.TOKEN_INT, token.TOKEN_AND, token.TOKEN_IDENT, token.TOKEN_LT, token.TOKEN_INT, token.TOKEN_OR, token.TOKEN_IDENT, token.TOKEN_GE, token.TOKEN_INT, token.TOKEN_AND, token.TOKEN_IDENT, token.TOKEN_LE, token.TOKEN_INT, token.TOKEN_AND, token.TOKEN_IDENT, token.TOKEN_NE, token.TOKEN_INT, token.TOKEN_EOF},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lexer := NewLexer(tt.input)
-			var tokens []TokenType
+			lexer := lex.NewLexer(tt.input)
+			var tokens []token.TokenType
 			for {
 				tok := lexer.NextToken()
 				tokens = append(tokens, tok.Type)
-				if tok.Type == TOKEN_EOF || tok.Type == TOKEN_ILLEGAL {
+				if tok.Type == token.TOKEN_EOF || tok.Type == token.TOKEN_ILLEGAL {
 					break
 				}
 			}
@@ -270,7 +273,7 @@ func TestParseUsingColumn(t *testing.T) {
 				t.Fatalf("parse error: %v", err)
 			}
 
-			createStmt, ok := stmt.(*CreateTableStmt)
+			createStmt, ok := stmt.(*ast.CreateTableStmt)
 			if !ok {
 				t.Fatalf("expected CreateTableStmt, got %T", stmt)
 			}
@@ -1445,7 +1448,7 @@ func TestParseDistinct(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err == nil {
-				selectStmt, ok := stmt.(*SelectStmt)
+				selectStmt, ok := stmt.(*ast.SelectStmt)
 				if !ok {
 					t.Error("expected SelectStmt")
 				} else if !selectStmt.Distinct {
@@ -1537,7 +1540,7 @@ func TestParsePrimaryKey(t *testing.T) {
 		t.Fatalf("Parse() error: %v", err)
 	}
 
-	createStmt, ok := stmt.(*CreateTableStmt)
+	createStmt, ok := stmt.(*ast.CreateTableStmt)
 	if !ok {
 		t.Fatal("expected CreateTableStmt")
 	}
@@ -1633,7 +1636,7 @@ func TestParseDefault(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err == nil {
-				createStmt, ok := stmt.(*CreateTableStmt)
+				createStmt, ok := stmt.(*ast.CreateTableStmt)
 				if !ok {
 					t.Error("expected CreateTableStmt")
 				} else if !createStmt.Columns[0].HasDefault {
@@ -1719,7 +1722,7 @@ func TestParseAutoIncrement(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err == nil {
-				createStmt, ok := stmt.(*CreateTableStmt)
+				createStmt, ok := stmt.(*ast.CreateTableStmt)
 				if !ok {
 					t.Error("expected CreateTableStmt")
 				} else if !createStmt.Columns[0].AutoIncrement {
@@ -1832,7 +1835,7 @@ func TestParseJoin(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err == nil {
-				selectStmt, ok := stmt.(*SelectStmt)
+				selectStmt, ok := stmt.(*ast.SelectStmt)
 				if !ok {
 					t.Error("expected SelectStmt")
 				} else if len(selectStmt.Joins) != 1 {
@@ -2034,7 +2037,7 @@ func TestParseTableAlias(t *testing.T) {
 				return
 			}
 			if err == nil {
-				selectStmt, ok := stmt.(*SelectStmt)
+				selectStmt, ok := stmt.(*ast.SelectStmt)
 				if !ok {
 					t.Error("expected SelectStmt")
 				} else if selectStmt.TableAlias != tt.expectedAlias {
@@ -2103,7 +2106,7 @@ func TestJoinWithTableAliases(t *testing.T) {
 				return
 			}
 			if err == nil {
-				selectStmt, ok := stmt.(*SelectStmt)
+				selectStmt, ok := stmt.(*ast.SelectStmt)
 				if !ok {
 					t.Error("expected SelectStmt")
 				} else if len(selectStmt.Joins) > 0 && selectStmt.Joins[0].TableAlias != tt.joinAlias {
@@ -2411,7 +2414,7 @@ func TestParseTruncate(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
-				if trunc, ok := stmt.(*TruncateTableStmt); !ok {
+				if trunc, ok := stmt.(*ast.TruncateTableStmt); !ok {
 					t.Error("expected TruncateTableStmt")
 				} else if trunc.TableName != "users" {
 					t.Errorf("expected table name 'users', got %q", trunc.TableName)
@@ -2442,7 +2445,7 @@ func TestParseShow(t *testing.T) {
 				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if !tt.wantErr {
-				show, ok := stmt.(*ShowStmt)
+				show, ok := stmt.(*ast.ShowStmt)
 				if !ok {
 					t.Error("expected ShowStmt")
 					return
@@ -2624,7 +2627,7 @@ func TestParseExplain(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Parse failed: %v", err)
 			}
-			explainStmt, ok := stmt.(*ExplainStmt)
+			explainStmt, ok := stmt.(*ast.ExplainStmt)
 			if !ok {
 				t.Fatalf("expected *ExplainStmt, got %T", stmt)
 			}
@@ -2634,7 +2637,7 @@ func TestParseExplain(t *testing.T) {
 			if explainStmt.Statement == nil {
 				t.Error("expected Statement to be set")
 			}
-			if _, ok := explainStmt.Statement.(*SelectStmt); !ok {
+			if _, ok := explainStmt.Statement.(*ast.SelectStmt); !ok {
 				t.Errorf("expected Statement to be *SelectStmt, got %T", explainStmt.Statement)
 			}
 		})
@@ -2789,7 +2792,7 @@ func TestParseCaseWhen(t *testing.T) {
 				t.Fatalf("parsing failed: %v", err)
 			}
 
-			selectStmt, ok := stmt.(*SelectStmt)
+			selectStmt, ok := stmt.(*ast.SelectStmt)
 			if !ok {
 				t.Fatalf("expected SelectStmt, got %T", stmt)
 			}
@@ -2943,7 +2946,7 @@ func TestCheckConstraintParsing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to parse wrapped expression: %v", err)
 		}
-		selectStmt, ok := stmt.(*SelectStmt)
+		selectStmt, ok := stmt.(*ast.SelectStmt)
 		if !ok {
 			t.Fatalf("Expected SelectStmt, got %T", stmt)
 		}
@@ -4002,7 +4005,7 @@ func TestParseLeftRightJoin(t *testing.T) {
 				return
 			}
 			if !tt.wantErr {
-				selectStmt, ok := stmt.(*SelectStmt)
+				selectStmt, ok := stmt.(*ast.SelectStmt)
 				if !ok {
 					t.Fatal("expected SelectStmt")
 				}
@@ -5089,7 +5092,7 @@ func TestMergeParsing(t *testing.T) {
 			if err != nil {
 				t.Errorf("Failed to parse MERGE: %v", err)
 			}
-			if _, ok := stmt.(*MergeStmt); !ok {
+			if _, ok := stmt.(*ast.MergeStmt); !ok {
 				t.Errorf("Expected *MergeStmt, got %T", stmt)
 			}
 		})
@@ -5127,7 +5130,7 @@ func TestLateralParsing(t *testing.T) {
 			if err != nil {
 				t.Errorf("Failed to parse LATERAL: %v", err)
 			}
-			selectStmt, ok := stmt.(*SelectStmt)
+			selectStmt, ok := stmt.(*ast.SelectStmt)
 			if !ok {
 				t.Errorf("Expected *SelectStmt, got %T", stmt)
 			}
@@ -5369,7 +5372,7 @@ func TestGroupingSetsParsing(t *testing.T) {
 				t.Fatalf("Parse failed: %v", err)
 			}
 
-			selectStmt, ok := stmt.(*SelectStmt)
+			selectStmt, ok := stmt.(*ast.SelectStmt)
 			if !ok {
 				t.Fatalf("Expected *SelectStmt, got %T", stmt)
 			}
@@ -5514,7 +5517,7 @@ func TestCTEParsing(t *testing.T) {
 				t.Fatalf("Parse failed: %v", err)
 			}
 
-			selectStmt, ok := stmt.(*SelectStmt)
+			selectStmt, ok := stmt.(*ast.SelectStmt)
 			if !ok {
 				t.Fatalf("Expected *SelectStmt, got %T", stmt)
 			}
@@ -5636,48 +5639,48 @@ func TestFTSLexer(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected []TokenType
+		expected []token.TokenType
 	}{
 		{
 			name:     "to_tsvector function",
 			input:    "SELECT to_tsvector('english', content) FROM docs",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_TO_TSVECTOR, TOKEN_LPAREN, TOKEN_STRING, TOKEN_COMMA, TOKEN_IDENT, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_TO_TSVECTOR, token.TOKEN_LPAREN, token.TOKEN_STRING, token.TOKEN_COMMA, token.TOKEN_IDENT, token.TOKEN_RPAREN, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_EOF},
 		},
 		{
 			name:     "to_tsquery function",
 			input:    "SELECT to_tsquery('cat & dog')",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_TO_TSQUERY, TOKEN_LPAREN, TOKEN_STRING, TOKEN_RPAREN, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_TO_TSQUERY, token.TOKEN_LPAREN, token.TOKEN_STRING, token.TOKEN_RPAREN, token.TOKEN_EOF},
 		},
 		{
 			name:     "text search match operator",
 			input:    "SELECT * FROM docs WHERE content @@ 'cat'",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_STAR, TOKEN_FROM, TOKEN_IDENT, TOKEN_WHERE, TOKEN_IDENT, TOKEN_MATCH, TOKEN_STRING, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_STAR, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_WHERE, token.TOKEN_IDENT, token.TOKEN_MATCH, token.TOKEN_STRING, token.TOKEN_EOF},
 		},
 		{
 			name:     "ts_rank function",
 			input:    "SELECT ts_rank(content, 'cat') FROM docs",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_TS_RANK, TOKEN_LPAREN, TOKEN_IDENT, TOKEN_COMMA, TOKEN_STRING, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_TS_RANK, token.TOKEN_LPAREN, token.TOKEN_IDENT, token.TOKEN_COMMA, token.TOKEN_STRING, token.TOKEN_RPAREN, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_EOF},
 		},
 		{
 			name:     "ts_headline function",
 			input:    "SELECT ts_headline(content, 'cat') FROM docs",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_TS_HEADLINE, TOKEN_LPAREN, TOKEN_IDENT, TOKEN_COMMA, TOKEN_STRING, TOKEN_RPAREN, TOKEN_FROM, TOKEN_IDENT, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_TS_HEADLINE, token.TOKEN_LPAREN, token.TOKEN_IDENT, token.TOKEN_COMMA, token.TOKEN_STRING, token.TOKEN_RPAREN, token.TOKEN_FROM, token.TOKEN_IDENT, token.TOKEN_EOF},
 		},
 		{
 			name:     "plainto_tsquery function",
 			input:    "SELECT plainto_tsquery('cat and dog')",
-			expected: []TokenType{TOKEN_SELECT, TOKEN_PLAINTO_TSQUERY, TOKEN_LPAREN, TOKEN_STRING, TOKEN_RPAREN, TOKEN_EOF},
+			expected: []token.TokenType{token.TOKEN_SELECT, token.TOKEN_PLAINTO_TSQUERY, token.TOKEN_LPAREN, token.TOKEN_STRING, token.TOKEN_RPAREN, token.TOKEN_EOF},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lexer := NewLexer(tt.input)
-			var tokens []TokenType
+			lexer := lex.NewLexer(tt.input)
+			var tokens []token.TokenType
 			for {
 				tok := lexer.NextToken()
 				tokens = append(tokens, tok.Type)
-				if tok.Type == TOKEN_EOF || tok.Type == TOKEN_ILLEGAL {
+				if tok.Type == token.TOKEN_EOF || tok.Type == token.TOKEN_ILLEGAL {
 					break
 				}
 			}
@@ -5817,43 +5820,43 @@ func TestPartitionLexer(t *testing.T) {
 	tests := []struct {
 		name   string
 		input  string
-		tokens []TokenType
+		tokens []token.TokenType
 	}{
 		{
 			name:   "PARTITION BY RANGE",
 			input:  "PARTITION BY RANGE",
-			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_RANGE},
+			tokens: []token.TokenType{token.TOKEN_PARTITION, token.TOKEN_BY, token.TOKEN_RANGE},
 		},
 		{
 			name:   "PARTITION BY LIST",
 			input:  "PARTITION BY LIST",
-			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_LIST},
+			tokens: []token.TokenType{token.TOKEN_PARTITION, token.TOKEN_BY, token.TOKEN_LIST},
 		},
 		{
 			name:   "PARTITION BY HASH",
 			input:  "PARTITION BY HASH",
-			tokens: []TokenType{TOKEN_PARTITION, TOKEN_BY, TOKEN_HASH},
+			tokens: []token.TokenType{token.TOKEN_PARTITION, token.TOKEN_BY, token.TOKEN_HASH},
 		},
 		{
 			name:   "VALUES LESS THAN",
 			input:  "VALUES LESS THAN",
-			tokens: []TokenType{TOKEN_VALUES, TOKEN_LESS, TOKEN_THAN},
+			tokens: []token.TokenType{token.TOKEN_VALUES, token.TOKEN_LESS, token.TOKEN_THAN},
 		},
 		{
 			name:   "MAXVALUE",
 			input:  "MAXVALUE",
-			tokens: []TokenType{TOKEN_MAXVALUE},
+			tokens: []token.TokenType{token.TOKEN_MAXVALUE},
 		},
 		{
 			name:   "PARTITIONS",
 			input:  "PARTITIONS 4",
-			tokens: []TokenType{TOKEN_PARTITIONS, TOKEN_INT},
+			tokens: []token.TokenType{token.TOKEN_PARTITIONS, token.TOKEN_INT},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lexer := NewLexer(tt.input)
+			lexer := lex.NewLexer(tt.input)
 			for i, expected := range tt.tokens {
 				tok := lexer.NextToken()
 				if tok.Type != expected {
@@ -5869,28 +5872,28 @@ func TestPartitionParser(t *testing.T) {
 	tests := []struct {
 		name        string
 		input       string
-		expectType  PartitionType
+		expectType  ast.PartitionType
 		expectCols  []string
 		expectParts int
 	}{
 		{
 			name:        "RANGE partition",
 			input:       `CREATE TABLE sales (id INT, sale_year INT) PARTITION BY RANGE (sale_year) (PARTITION p2020 VALUES LESS THAN (2021), PARTITION p2021 VALUES LESS THAN (2022), PARTITION p_future VALUES LESS THAN MAXVALUE)`,
-			expectType:  PartitionRange,
+			expectType:  ast.PartitionRange,
 			expectCols:  []string{"sale_year"},
 			expectParts: 3,
 		},
 		{
 			name:        "LIST partition",
 			input:       `CREATE TABLE orders (id INT, region TEXT) PARTITION BY LIST (region) (PARTITION p_us VALUES IN ('US', 'USA'), PARTITION p_eu VALUES IN ('UK', 'DE', 'FR'))`,
-			expectType:  PartitionList,
+			expectType:  ast.PartitionList,
 			expectCols:  []string{"region"},
 			expectParts: 2,
 		},
 		{
 			name:        "HASH partition",
 			input:       `CREATE TABLE users (id INT, name TEXT) PARTITION BY HASH (id) PARTITIONS 4`,
-			expectType:  PartitionHash,
+			expectType:  ast.PartitionHash,
 			expectCols:  []string{"id"},
 			expectParts: 4,
 		},
@@ -5904,7 +5907,7 @@ func TestPartitionParser(t *testing.T) {
 				t.Fatalf("Parse error: %v", err)
 			}
 
-			createStmt, ok := stmt.(*CreateTableStmt)
+			createStmt, ok := stmt.(*ast.CreateTableStmt)
 			if !ok {
 				t.Fatalf("Expected CreateTableStmt, got %T", stmt)
 			}

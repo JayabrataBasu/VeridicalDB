@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/JayabrataBasu/VeridicalDB/pkg/catalog"
+	"github.com/JayabrataBasu/VeridicalDB/pkg/sql/ast"
 )
 
 // TestIntegration_BufferPoolQueryCacheStats tests the full integration of
@@ -23,9 +24,9 @@ func TestIntegration_BufferPoolQueryCacheStats(t *testing.T) {
 	executor := NewExecutor(tm)
 
 	// Test 1: Create table and insert data
-	_, err = executor.Execute(&CreateTableStmt{
+	_, err = executor.Execute(&ast.CreateTableStmt{
 		TableName: "users",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32, NotNull: true},
 			{Name: "name", Type: catalog.TypeText, NotNull: true},
 			{Name: "age", Type: catalog.TypeInt32},
@@ -37,14 +38,14 @@ func TestIntegration_BufferPoolQueryCacheStats(t *testing.T) {
 
 	// Insert test data
 	for i := 1; i <= 100; i++ {
-		_, err = executor.Execute(&InsertStmt{
+		_, err = executor.Execute(&ast.InsertStmt{
 			TableName: "users",
 			Columns:   []string{"id", "name", "age"},
-			ValuesList: [][]Expression{
+			ValuesList: [][]ast.Expression{
 				{
-					&LiteralExpr{Value: catalog.NewInt32(int32(i))},
-					&LiteralExpr{Value: catalog.NewText("User" + string(rune(i)))},
-					&LiteralExpr{Value: catalog.NewInt32(int32(20 + (i % 50)))},
+					&ast.LiteralExpr{Value: catalog.NewInt32(int32(i))},
+					&ast.LiteralExpr{Value: catalog.NewText("User" + string(rune(i)))},
+					&ast.LiteralExpr{Value: catalog.NewInt32(int32(20 + (i % 50)))},
 				},
 			},
 		})
@@ -56,7 +57,7 @@ func TestIntegration_BufferPoolQueryCacheStats(t *testing.T) {
 	// Test 2: Run ANALYZE to collect statistics
 	// Note: ANALYZE requires full table scan with proper schema
 	// For integration test, we'll verify it works with simpler approach
-	result, err := executor.Execute(&AnalyzeStmt{
+	result, err := executor.Execute(&ast.AnalyzeStmt{
 		TableName: "users",
 	})
 	if err != nil {
@@ -87,9 +88,9 @@ func TestIntegration_BufferPoolQueryCacheStats(t *testing.T) {
 
 	// Manually add a cached query for testing
 	testQuery := "SELECT id, name FROM users"
-	testStmt := &SelectStmt{
+	testStmt := &ast.SelectStmt{
 		TableName: "users",
-		Columns: []SelectColumn{
+		Columns: []ast.SelectColumn{
 			{Name: "id"},
 			{Name: "name"},
 		},
@@ -113,7 +114,7 @@ func TestIntegration_BufferPoolQueryCacheStats(t *testing.T) {
 	initialCacheSize := executor.queryCache.Stats().CurrentEntries
 
 	// DROP TABLE should invalidate cache
-	_, err = executor.Execute(&DropTableStmt{
+	_, err = executor.Execute(&ast.DropTableStmt{
 		TableName: "users",
 	})
 	if err != nil {
@@ -144,9 +145,9 @@ func TestIntegration_BufferPoolPerformance(t *testing.T) {
 	executor := NewExecutor(tm)
 
 	// Create table with some data
-	_, err = executor.Execute(&CreateTableStmt{
+	_, err = executor.Execute(&ast.CreateTableStmt{
 		TableName: "perf_test",
-		Columns: []ColumnDef{
+		Columns: []ast.ColumnDef{
 			{Name: "id", Type: catalog.TypeInt32},
 			{Name: "data", Type: catalog.TypeText},
 		},
@@ -157,13 +158,13 @@ func TestIntegration_BufferPoolPerformance(t *testing.T) {
 
 	// Insert rows
 	for i := 0; i < 50; i++ {
-		_, err = executor.Execute(&InsertStmt{
+		_, err = executor.Execute(&ast.InsertStmt{
 			TableName: "perf_test",
 			Columns:   []string{"id", "data"},
-			ValuesList: [][]Expression{
+			ValuesList: [][]ast.Expression{
 				{
-					&LiteralExpr{Value: catalog.NewInt32(int32(i))},
-					&LiteralExpr{Value: catalog.NewText("data" + string(rune(i)))},
+					&ast.LiteralExpr{Value: catalog.NewInt32(int32(i))},
+					&ast.LiteralExpr{Value: catalog.NewText("data" + string(rune(i)))},
 				},
 			},
 		})
