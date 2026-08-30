@@ -7,6 +7,20 @@ All notable changes to this project will be documented in this file.
 Structural cleanup and the start of a phased remediation plan (see the
 "VeridicalDB Atlas" document).
 
+### Changed (P2 — collapsing the two SQL executors, in progress)
+
+- Shared helpers that the shipping MVCC engine (`mvcc_executor.go` / `session.go`)
+  depended on were moved out of the dead pre-MVCC `executor.go` into eight
+  self-contained `pkg/sql/exec_*.go` files: `Result` / `ViewDef` (`exec_result.go`),
+  the value kernel `compareValues` / `coerceValue` / `evalArithmetic` / `matchLikePattern`
+  (`exec_values.go`), the ~660-line scalar-function library `evalFunction`
+  (`exec_functions.go`), row helpers (`exec_rows.go`), `generateCreateTableDDL`
+  (`exec_ddl.go`), `exprToString` (`exec_strings.go`), `splitQualifiedName`
+  (`exec_names.go`), and the aggregate-state structs (`exec_aggregate.go`). No
+  behaviour change — this is the prerequisite step of P2, which brings the MVCC
+  path to full parity and then deletes `executor.go` (~7.9k LOC). The `exec_*.go`
+  names are chosen so P4 can later `git mv` them into an `exec` package.
+
 ### Changed (P4 — splitting `pkg/sql`: front half done)
 
 - The SQL lexer moved out of the monolithic `pkg/sql` package. `pkg/sql/lexer.go`
